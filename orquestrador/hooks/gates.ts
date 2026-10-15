@@ -208,11 +208,19 @@ export const phaseRefusal = (phase: Pick<Phase, 'id' | 'title'>, open: readonly 
       open.map(v => `${v.gate} ${STATE_WORD[v.state]} — needs ${GATES[v.gate]?.how ?? v.gate}`).join('; ') +
       ` (checked in ${where}). Run the gate in that session, or ask the owner: only they can skip a gate, from the panel.`
 
-/** Phase sessions still alive: started by this session and not archived. */
-export const liveSessions = <T extends { startedBy: string | undefined; isArchived: boolean }>(
+/**
+ * Phase sessions still alive: started by this session and not archived. A session in the
+ * coordinator's own folder is a side chat or fork the owner opened, not a phase: phases
+ * always run in a worktree of their own.
+ */
+export const liveSessions = <T extends { startedBy: string | undefined; isArchived: boolean; cwd?: string }>(
   rows: readonly T[],
   selfId: string | undefined,
-): T[] => (selfId === undefined ? [] : rows.filter(row => row.startedBy === selfId && !row.isArchived))
+  selfCwd?: string,
+): T[] =>
+  selfId === undefined
+    ? []
+    : rows.filter(row => row.startedBy === selfId && !row.isArchived && (selfCwd === undefined || row.cwd !== selfCwd))
 
 export const GH_MERGE = /\bgh\s+pr\s+merge\b/
 export const PROTECTED_DIR = '/.claude/orquestrador/'

@@ -603,7 +603,7 @@ const refuseStart = async ($: EngineInterface): Promise<string | undefined> => {
   const [self] = parseSessionRows((await callTool($, { tool: GET_SESSION, session_id: 'self' })).text)
   const family = parseSessionRows((await callTool($, { tool: LIST_SESSIONS, linked: true, limit: 50 })).text)
   if (self === undefined) return 'the orchestrator could not read this session, so it cannot count the live phase sessions.'
-  const live = liveSessions(family, self.sessionId)
+  const live = liveSessions(family, self.sessionId, self.cwd)
   if (live.length < MAX_LIVE_SESSIONS) return undefined
   return (
     `${live.length} phase sessions are alive (${live.map(r => r.name ?? r.title).join(', ')}); the ceiling is ` +

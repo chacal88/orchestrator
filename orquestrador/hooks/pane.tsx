@@ -585,7 +585,7 @@ export const renderPane = (
     if (run === undefined) return []
     const counts = phaseCounts(run)
     const total = STATUS_ORDER.reduce((sum, s) => sum + counts[s], 0)
-    const live = liveSessions(view.children, view.self?.sessionId).length
+    const live = liveSessions(view.children, view.self?.sessionId, view.self?.cwd).length
     const finalGates = gateViews(
       run.finalGates,
       FINAL_SCOPE,

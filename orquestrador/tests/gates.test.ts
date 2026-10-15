@@ -117,4 +117,10 @@ test('live phase sessions are the ones this session started and did not archive'
   ]
   expect(liveSessions(rows, 'me')).toHaveLength(1)
   expect(liveSessions(rows, undefined)).toHaveLength(0)
+  const withChat = [
+    { startedBy: 'me', isArchived: false, cwd: '/w/.claude/worktrees/api' },
+    { startedBy: 'me', isArchived: false, cwd: '/w' },
+  ]
+  // a side chat in the coordinator's own folder is not a phase session
+  expect(liveSessions(withChat, 'me', '/w')).toHaveLength(1)
 })
