@@ -54,6 +54,8 @@ export type PaneActions = {
   answerFlow: (change: string, step: string, outcome: string) => () => void
   /** The same answer with the owner's note typed in the panel (a mockup adjustment). */
   noteFlow: (change: string, step: string, outcome: string) => (value: string) => void
+  /** The owner's "Mover no Jira": the only way an issue changes state. */
+  moveJira: (change: string, key: string, transitionId: string) => () => void
 }
 
 /** Hex, not theme keys: the Svg bar and the legend squares must match exactly. */
@@ -88,6 +90,7 @@ const ATTENTION_KIND: Record<Attention['kind'], string> = {
   question: 'Pergunta',
   pr: 'PR para revisar',
   flow: 'Passo do flow',
+  jira: 'Jira',
 }
 
 const JIRA_HEX: Record<JiraCategory, string> = {
@@ -579,6 +582,11 @@ export const renderPane = (
                       {choice.label}
                     </Button>
                   ))}
+                {item.jira !== undefined && (
+                  <Button key={`jira-move:${item.jira.key}`} variant="primary" onPress={actions.moveJira(item.jira.change, item.jira.key, item.jira.transitionId)}>
+                    Mover no Jira
+                  </Button>
+                )}
                 {item.prUrl !== undefined && <Link href={item.prUrl}>Abrir PR</Link>}
                 {canOpen && item.card !== undefined && openControl(item.card, 'Abrir sessão')}
               </Box>

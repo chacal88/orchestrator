@@ -15,6 +15,8 @@ import type {
   GateSkip,
   GateView,
   JiraIssue,
+  JiraMove,
+  JiraTransition,
   OpenSpecView,
   OrchestrationRun,
   PanelView,
@@ -72,7 +74,7 @@ import {
   rejectPlan,
 } from './grill'
 import { renderPane } from './pane'
-import { firstSite, issueUrl, jiraKeys, parseIssue } from './jira'
+import { firstSite, issueUrl, jiraKeys, moveFor, parseIssue, parseTransitions, wishes } from './jira'
 import { changeDir, openSpecView } from './openspec'
 import {
   activityKey,
@@ -113,6 +115,7 @@ const ANSWERED = { plugin: 'orquestrador', key: 'answered' } as const
 const GATES_SEEN = { plugin: 'orquestrador', key: 'gates' } as const
 const EDITED_AT = { plugin: 'orquestrador', key: 'editedAt' } as const
 const START_SESSION = 'mcp__ccd_session__start_session'
+const TRANSITION_SUFFIX = '__transitionJiraIssue'
 const ARCHIVE_SESSION = 'mcp__ccd_session_mgmt__archive_session'
 const EDIT_TOOLS = new Set(['Edit', 'Write', 'MultiEdit', 'NotebookEdit'])
 
@@ -376,6 +379,120 @@ const loadJira = async (
   }
 }
 
+/** The connector's cloud id for the plan's site, or why there is none (said to the owner as is). */
+const jiraConnection = async (
+  $: EngineInterface,
+  run: OrchestrationRun,
+): Promise<{ cloudId: string; getTransitions: string; transition: string | undefined } | { note: string }> => {
+  const getTransitions = await findTool($, '__getTransitionsForJiraIssue')
+  const getSites = await findTool($, '__getAccessibleAtlassianResources')
+  if (getTransitions === undefined || getSites === undefined) {
+    return { note: 'o conector Atlassian não está autenticado nesta sessão (claude.ai › Configurações › Conectores).' }
+  }
+  const site = firstSite((await callTool($, { tool: getSites })).text)
+  const cloudId = run.jiraSite ?? site?.cloudId
+  if (cloudId === undefined) return { note: 'a autorização do conector Atlassian não inclui nenhum site do Jira.' }
+  return { cloudId, getTransitions, transition: await findTool($, TRANSITION_SUFFIX) }
+}
+
+const transitionCache = new Map<string, { list: JiraTransition[]; at: number }>()
+
+const issueTransitions = async (
+  $: EngineInterface,
+  conn: { cloudId: string; getTransitions: string },
+  issue: JiraIssue,
+  fresh: boolean,
+): Promise<JiraTransition[] | undefined> => {
+  const id = `${issue.key}|${issue.status}`
+  const now = await $.clock.now()
+  const cached = transitionCache.get(id)
+  if (!fresh && cached !== undefined && now - cached.at < JIRA_TTL_MS) return cached.list
+  const ran = await callTool($, { tool: conn.getTransitions, cloudId: conn.cloudId, issueIdOrKey: issue.key }).catch(
+    () => ({ isError: true }) as CallResult,
+  )
+  if (ran.isError === true) return undefined
+  const list = parseTransitions(ran.text)
+  transitionCache.set(id, { list, at: now })
+  return list
+}
+
+/** The issues the flow's current step says should change state; the panel offers each move, nothing moves here. */
+const loadJiraMoves = async (
+  $: EngineInterface,
+  run: OrchestrationRun | undefined,
+  state: FlowState | undefined,
+  issues: Record<string, JiraIssue>,
+): Promise<JiraMove[]> => {
+  if (run === undefined || state === undefined || (state.status !== 'running' && state.status !== 'done')) return []
+  const stepId = state.status === 'done' ? state.flow.steps.at(-1)?.id : state.current
+  if (stepId === undefined) return []
+  const wanted = wishes(run, state.flow.steps, stepId)
+  if (wanted.length === 0) return []
+  const conn = await jiraConnection($, run)
+  const moves: JiraMove[] = []
+  for (const wish of wanted) {
+    const issue = issues[wish.key]
+    const note = 'note' in conn ? conn.note : undefined
+    const transitions =
+      'note' in conn || issue === undefined || issue.status === undefined ? undefined : await issueTransitions($, conn, issue, false)
+    const move = moveFor(wish, issue, transitions, stepId, note)
+    if (move !== undefined) moves.push(move)
+  }
+  return moves
+}
+
+/**
+ * The owner's "Mover no Jira" press, the only road to transitionJiraIssue: the transition is looked up again,
+ * then approved for that one call, which the tool.call hook refuses otherwise.
+ */
+const pressJiraMove = async ($: EngineInterface, change: string, key: string, transitionId: string): Promise<void> => {
+  const run = await loadRun($, await $.session.root())
+  if (run === undefined) return
+  const conn = await jiraConnection($, run)
+  if ('note' in conn || conn.transition === undefined) {
+    $.ui.toast(`Não movi ${key}: ${'note' in conn ? conn.note : 'o conector não oferece transitionJiraIssue.'}`)
+    return
+  }
+  const issue = (await loadJira($, run)).issues[key]
+  const transitions = issue === undefined ? undefined : await issueTransitions($, conn, issue, true)
+  const hit = transitions?.find(t => t.id === transitionId)
+  if (issue === undefined || hit === undefined) {
+    $.ui.toast(`Não movi ${key}: essa transição não está mais disponível. O painel vai se atualizar.`)
+    await refreshQuietly($)
+    return
+  }
+  approvedMove = `${key}|${transitionId}`
+  const ran = await callTool($, {
+    tool: conn.transition,
+    cloudId: conn.cloudId,
+    issueIdOrKey: key,
+    transition: { id: transitionId },
+  })
+    .catch(() => ({ isError: true }) as CallResult)
+    .finally(() => {
+      approvedMove = undefined
+    })
+  if (ran.isError === true || ran.deny !== undefined) {
+    $.ui.toast(`O Jira recusou mover ${key}${ran.text === undefined ? '.' : `: ${ran.text.slice(0, 120)}`}`)
+    return
+  }
+  jiraCache.delete(key)
+  transitionCache.clear()
+  const state = await loadFlowState($, change)
+  if (state !== undefined) {
+    const log = await flowFile($, change, 'ndjson')
+    const prior = (await readText($, log)) ?? ''
+    const note = `${key}: "${issue.status ?? '?'}" → "${hit.to ?? hit.name}" (transição "${hit.name}"), pelo clique do dono`
+    const event: FlowEvent = { seq: state.seq, at: await $.clock.now(), kind: 'jira-moved', step: state.current, by: 'owner', note }
+    await $.fs.write(log, `${prior}${JSON.stringify(event)}\n`)
+  }
+  $.ui.toast(`${key} movida para ${hit.to ?? hit.name}.`)
+  await refreshQuietly($)
+}
+
+/** The one move the owner approved, while its call runs. */
+let approvedMove: string | undefined
+
 /** Each source fails on its own: a broken session list never hides the plan, and the panel names what failed. */
 const refresh = async ($: EngineInterface): Promise<void> => {
   await restoreActivity($).catch(() => undefined)
@@ -414,6 +531,11 @@ const refresh = async ($: EngineInterface): Promise<void> => {
     problems.push(describeError('flow', error))
     return undefined
   })
+  const flowState = flow === undefined ? undefined : await loadFlowState($, flow.change).catch(() => undefined)
+  const jiraMoves = await loadJiraMoves($, run, flowState, jira.issues).catch(error => {
+    problems.push(describeError('jira', error))
+    return []
+  })
   const prep = flow === undefined ? undefined : await loadPrepView($, flow.change).catch(() => undefined)
 
   const repoUrl = await $.session
@@ -428,6 +550,7 @@ const refresh = async ($: EngineInterface): Promise<void> => {
     openspec,
     jira: jira.issues,
     jiraNote: jira.note,
+    jiraMoves,
     skips,
     flow,
     prep,
@@ -706,6 +829,7 @@ const isGuarded = (tool: string, input: Record<string, unknown>): boolean =>
   tool === FLOW_TOOL ||
   tool === START_SESSION ||
   tool === ARCHIVE_SESSION ||
+  tool.endsWith(TRANSITION_SUFFIX) ||
   (tool === 'Bash' && typeof input.command === 'string' && GH_MERGE.test(input.command))
 
 const FLOW_SCHEMA = {
@@ -1252,6 +1376,9 @@ export const register: Register = on => {
     if (touchesGateFiles(tool, input)) {
       return { deny: 'Orchestrator: ~/.claude/orquestrador is written by the mod only (gate records and owner skips).' }
     }
+    if (tool.endsWith(TRANSITION_SUFFIX) && approvedMove !== `${String(input.issueIdOrKey)}|${String((input.transition as { id?: unknown } | undefined)?.id)}`) {
+      return { deny: 'Orchestrator: a Jira issue moves only when the owner presses "Mover no Jira" in the panel.' }
+    }
     const refusal =
       tool === START_SESSION
         ? await refuseStart($)
@@ -1358,6 +1485,9 @@ export const register: Register = on => {
           return
         }
         void pressFlow($, change, step, outcome, value).catch(() => $.ui.toast('Não consegui registrar sua resposta ao flow.'))
+      },
+      moveJira: (change, key, transitionId) => () => {
+        void pressJiraMove($, change, key, transitionId).catch(() => $.ui.toast(`Não consegui mover ${key} no Jira.`))
       },
       accept: (item: Attention) => () => {
         void update($, ANSWERED, list => [...(list ?? []), item.title].slice(-50))

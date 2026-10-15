@@ -74,6 +74,8 @@ export type FlowStep = {
   detect: FlowDetect | undefined
   /** On its pass the mod archives the change's remaining phase sessions and removes its sidebar group. */
   cleanup: boolean
+  /** The Jira state this step implies for the change's issue: a target, or false for none; absent, the default of the step id. */
+  jira?: JiraTarget | false
 }
 
 /** Commands whose success answers a step, and the outcome they give it; logged with actor "detect". */
@@ -142,6 +144,8 @@ export type FlowEvent = {
     | 'session-archived'
     | 'noted'
     | 'cleanup'
+    /** The owner moved a Jira issue from the panel. */
+    | 'jira-moved'
   step: string
   by: FlowActor | 'mod'
   outcome?: string
@@ -259,6 +263,30 @@ export type Phase = {
 /** Jira's own status category: "new" (to do), "indeterminate" (in progress) or "done". */
 export type JiraCategory = 'new' | 'indeterminate' | 'done' | 'unknown'
 
+/** The state an issue should be in: any of these status names (case-insensitive), else a status category. */
+export type JiraTarget = { status: string[]; category?: 'new' | 'indeterminate' | 'done' }
+
+/** One transition the connector offers for an issue. */
+export type JiraTransition = { id: string; name: string; to?: string; category: JiraCategory }
+
+/** An issue that should change state, and whether the panel can offer the move. */
+export type JiraMove = {
+  key: string
+  title?: string
+  /** The status now, when the connector read it. */
+  from?: string
+  /** The target as the owner reads it ("Em QA"). */
+  toLabel: string
+  step: string
+  state: 'ready' | 'no-transition' | 'no-connector'
+  transitionId?: string
+  transitionName?: string
+  /** What the issue can move to now, to say plainly why nothing matched. */
+  available: string[]
+  /** no-connector: why. */
+  note?: string
+}
+
 export type JiraIssue = {
   key: string
   title: string | undefined
@@ -315,7 +343,7 @@ export type OrchestrationRun = {
 /** One row of "Precisa de você": a decision, a waiting session or an open PR. */
 export type Attention = {
   id: string
-  kind: 'decision' | 'permission' | 'question' | 'pr' | 'flow'
+  kind: 'decision' | 'permission' | 'question' | 'pr' | 'flow' | 'jira'
   title: string
   detail: string | undefined
   recommendation: string | undefined
@@ -323,6 +351,8 @@ export type Attention = {
   prUrl: string | undefined
   /** kind 'flow': the step the owner answers, pressed only in the panel. */
   flow?: { change: string; step: string; choices: FlowChoice[] }
+  /** kind 'jira': the move only the owner's press makes. */
+  jira?: { change: string; key: string; transitionId: string; toLabel: string }
 }
 
 export type PanelView = {
@@ -337,6 +367,8 @@ export type PanelView = {
   jira: Record<string, JiraIssue>
   /** Why the Jira status is missing, when it is. */
   jiraNote: string | undefined
+  /** Issues that should change state with the flow's step; moved only by the owner's press. */
+  jiraMoves?: JiraMove[]
   /** Gates the owner skipped, by skip key. */
   skips: Record<string, GateSkip>
   /** The flow of the change this coordinator runs, when one was started. */
