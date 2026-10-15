@@ -11,7 +11,7 @@ Repositório: ~/.claude/mods-local (git, branch main). Cada fase trabalha numa w
 | 2 | 🛠️ Fases, pós-PR e arquivamento | 4.6–4.7 | flow-ciclo (local_48e7d814, arquivada) | claude/flow-ciclo-91441f | fechada (112 testes após merge) | — |
 | 2 | 🛠️ Painel: Gates e Tarefas | 4.9 | flow-painel (local_bbdf6775, arquivada) | claude/flow-painel-61b177 | fechada (121 testes após merge) | conferir no app |
 | 3 | 🏷️ Jira com ok do dono | 4.8 | flow-jira (local_f21efe5f, arquivada) | claude/flow-jira-bfc9b0 | fechada (132 testes após merge) | conferir com issue real (4.11) |
-| 3 | 📖 Skill segue o flow | 4.10 | flow-skill (local_a6fafb59) | flow-skill | em voo | aguardar "FASE 3b" |
+| 3 | 📖 Skill segue o flow | 4.10 | flow-skill (local_a6fafb59, arquivada) | claude/flow-skill-49c794 | fechada (SKILL.md 205→173 linhas) | — |
 | 3 | 🧪 Conferência com change real | 4.11 | — | — | pendente | após 4.8 e 4.10 |
 
 Sessões arquivadas nesta rodada: local_10744b7c (OpenSpec/Jira), local_32aeb6ae (harness), local_cd63bd42 (teste).
