@@ -27,6 +27,7 @@
 - [x] 4.8 Jira: o painel avisa quando a issue deve mudar de estado e só move depois do clique do dono
 - [x] 4.9 Painel: caixa Gates como lista no estilo "Tarefas em segundo plano" (um passo por linha, concluídos recolhidos); caixa Tarefas com as fases do OpenSpec e suas tarefas; ordem OpenSpec, Gates, Precisa de você, Tarefas. `/orquestrador` passa a abrir e fechar o painel, e uma faixa fina acima do campo de mensagem (só quando há orquestração) mostra onda, fases em voo e pendências do dono, com um botão para abrir e fechar o painel
 - [x] 4.10 Skill change-orchestrator passa a seguir o flow: a coordenação pergunta ao mod qual é o próximo passo em vez de decidir sozinha
+- [ ] 4.12 Campo de resposta no painel para as perguntas abertas da rodada do grill: o dono escreve ali, a resposta chega à coordenação como mensagem dele e completa a rodada (achado do teste real: botão de resposta envia no clique, sem texto)
 - [ ] 4.11 Testes, validação do mod e conferência no app com uma change real
 
 ## 5. Depois
