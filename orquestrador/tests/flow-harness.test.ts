@@ -15,8 +15,8 @@ const PANE = {
 const STATE = '/h/.claude/orquestrador/flows/demo.json'
 const LOG = '/h/.claude/orquestrador/flows/demo.ndjson'
 
-/** A coordinator at /w with an in-memory disk; Bash commands holding FAIL exit 1. */
-const world = (on: On): Map<string, string> => {
+/** A coordinator at /w with an in-memory disk; Bash commands holding FAIL exit 1; toasts land in `toasts`. */
+const world = (on: On, toasts: string[] = []): Map<string, string> => {
   mock.store(on)
   const disk = new Map<string, string>()
   on('env.get', () => ({ value: '/h' }))
@@ -46,7 +46,10 @@ const world = (on: On): Map<string, string> => {
     return { result: 'ok', text: 'ok' } as never
   })
   on('ui.open', () => ({ value: { isPlaced: true } }) as never)
-  on('ui.toast', () => ({ value: undefined }) as never)
+  on('ui.toast', ($, e) => {
+    toasts.push(e.text)
+    return { value: undefined } as never
+  })
   return disk
 }
 
@@ -130,6 +133,30 @@ test("an owner step moves only on the owner's press in the panel", async ($, on)
   await ui.unmount()
   expect(saved(disk).current).toBe('planejar')
   expect(saved(disk).records.grill?.by).toBe('owner')
+})
+
+test('an owner press shows a toast naming the answer recorded and the next step', async ($, on) => {
+  const toasts: string[] = []
+  const disk = world(on, toasts)
+  disk.set(
+    '/w/.orquestrador/flows/rapido.json',
+    JSON.stringify({
+      id: 'rapido',
+      title: 'Rápido da casa',
+      steps: [
+        { id: 'qa', title: 'Conferência do dono', kind: 'owner', outcomes: { aprovado: { label: 'Instalei e funciona', next: 'lancar' } } },
+        { id: 'lancar', title: 'Lançar a versão', kind: 'owner', outcomes: { lancado: { label: 'Lancei', next: 'fim' } } },
+      ],
+    }),
+  )
+  await flow($, { action: 'start', change: 'demo', flow: 'rapido' })
+  const ui = await $.ui.mount({ plugin: 'orquestrador', surface: 'desktop', ...PANE })
+  await ui.press({ key: 'flow:qa:aprovado' })
+  expect(toasts).toEqual(['Registrado: Instalei e funciona. Próximo passo: Lançar a versão.'])
+  await ui.press({ key: 'flow:lancar:lancado' })
+  await ui.unmount()
+  expect(toasts.at(-1)).toBe('Registrado: Lancei. Flow concluído.')
+  expect(saved(disk).status).toBe('done')
 })
 
 test('the flow files are the mod\'s alone, and a project flow overrides a default', async ($, on) => {

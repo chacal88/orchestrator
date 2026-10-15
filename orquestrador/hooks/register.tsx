@@ -53,6 +53,7 @@ import {
   mergeFlows,
   ownerPress,
   parseFlow,
+  pressedToast,
   startFlow,
 } from './flow'
 import type { Moved } from './flow'
@@ -1244,6 +1245,7 @@ const pressFlow = async ($: EngineInterface, change: string, step: string, outco
   if (prep !== undefined) await savePrep($, state, prep, undefined)
   await saveFlow($, moved.state, moved.events)
   await refreshQuietly($)
+  $.ui.toast(pressedToast(state, moved.state, step, outcome))
 }
 
 /**

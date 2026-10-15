@@ -36,7 +36,11 @@ A skill `change-orchestrator`, que vem junto, ensina a sessão coordenadora a se
 Dentro do Claude Code:
 
 ```
-/plugin install orquestrador --marketplace chacal88/orquestrador
+/plugin marketplace add chacal88/orquestrador
+```
+
+```
+/plugin install orquestrador@orquestrador
 ```
 
 Ou pelo terminal:

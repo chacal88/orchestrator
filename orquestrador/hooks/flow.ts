@@ -340,6 +340,19 @@ export const ownerPress = (state: FlowState, step: string, outcome: string, at: 
     ? resolveEscalation(state, outcome, at)
     : applyOutcome(state, { step, outcome, by: 'owner', ...(note === undefined ? {} : { note }) }, at)
 
+/** What the owner sees after a press: the answer recorded, in their words, and where the flow went. */
+export const pressedToast = (before: FlowState, after: FlowState, step: string, outcome: string): string => {
+  const label =
+    stepOf(before.flow, step)?.outcomes[outcome]?.label ?? ESCALATION_CHOICES.find(c => c.outcome === outcome)?.label ?? outcome
+  const next =
+    after.status === 'done'
+      ? 'Flow concluído.'
+      : after.status === 'aborted'
+        ? 'Flow encerrado.'
+        : `Próximo passo: ${stepOf(after.flow, after.current)?.title ?? after.current}.`
+  return `Registrado: ${label}. ${next}`
+}
+
 /** Words of a declared command, matched in what the shell ran: `openspec validate` in `npx openspec validate x --strict`. */
 const commandPattern = (command: string): RegExp =>
   new RegExp(
