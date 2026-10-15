@@ -276,10 +276,10 @@ export const resolveEscalation = (state: FlowState, choice: string, at: number):
 }
 
 /** The owner's press: an escalation's choice while one is open, else the owner step's outcome. */
-export const ownerPress = (state: FlowState, step: string, outcome: string, at: number): Moved | { error: string } =>
+export const ownerPress = (state: FlowState, step: string, outcome: string, at: number, note?: string): Moved | { error: string } =>
   state.status === 'escalated' && state.escalation?.step === step
     ? resolveEscalation(state, outcome, at)
-    : applyOutcome(state, { step, outcome, by: 'owner' }, at)
+    : applyOutcome(state, { step, outcome, by: 'owner', ...(note === undefined ? {} : { note }) }, at)
 
 /** Words of a declared command, matched in what the shell ran: `openspec validate` in `npx openspec validate x --strict`. */
 const commandPattern = (command: string): RegExp =>

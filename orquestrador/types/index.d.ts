@@ -105,7 +105,20 @@ export type FlowState = {
 export type FlowEvent = {
   seq: number
   at: number
-  kind: 'started' | 'outcome' | 'entered' | 'skipped' | 'escalated' | 'retried' | 'aborted' | 'done' | 'refused'
+  kind:
+    | 'started'
+    | 'outcome'
+    | 'entered'
+    | 'skipped'
+    | 'escalated'
+    | 'retried'
+    | 'aborted'
+    | 'done'
+    | 'refused'
+    /** A grill round recorded, a mockup attached, the execution plan refused in plan mode. */
+    | 'round'
+    | 'attached'
+    | 'plan-rejected'
   step: string
   by: FlowActor | 'mod'
   outcome?: string
@@ -140,6 +153,41 @@ export type FlowView = {
   ownerChoices: FlowChoice[]
   escalation: FlowEscalation | undefined
   steps: FlowStepView[]
+}
+
+/** One grill question; answered, it becomes an acceptance criterion (its own wording, else the answer). */
+export type GrillItem = { question: string; answer?: string; criterion?: string }
+
+export type GrillRound = { n: number; at: number; items: GrillItem[] }
+
+/** The owner's "Pedir ajuste" on a mockup: the note and the mockup it was about. */
+export type MockupAdjustment = { note: string; at: number; artifact?: string }
+
+/** What the owner steps before execution gathered, saved by the mod (prep/<change>.json). */
+export type PrepState = {
+  change: string
+  rounds: GrillRound[]
+  /** The mockup awaiting the owner, an Artifact URL or a file path. */
+  mockup?: { artifact: string; at: number }
+  adjustments: MockupAdjustment[]
+  /** The owner's refusals of the execution plan in plan mode, with their words. */
+  planRejections: { feedback: string; at: number }[]
+  /** The execution plan the owner approved in plan mode. */
+  release?: { at: number; plan?: string; filePath?: string }
+}
+
+/** What the panel shows of the pre-execution steps. */
+export type PrepView = {
+  change: string
+  rounds: number
+  /** The latest round's questions still without an answer. */
+  openQuestions: string[]
+  criteria: string[]
+  mockup?: string
+  mockupIsUrl?: boolean
+  lastAdjustment?: string
+  lastPlanFeedback?: string
+  released: boolean
 }
 
 /** One row of the app's session list, as far as the panel needs it. */
@@ -270,6 +318,8 @@ export type PanelView = {
   skips: Record<string, GateSkip>
   /** The flow of the change this coordinator runs, when one was started. */
   flow?: FlowView
+  /** Grill rounds, mockup and plan release of that flow's change. */
+  prep?: PrepView
 }
 
 declare module 'claude-code' {
