@@ -75,7 +75,8 @@ diagnóstico pronto ao dono.
    resto é seu: fase pesada (bancada, suíte inteira, `turbo --force`) conta como 2; duas
    coordenações dividem o teto; máquina quente → 1 fase por vez. Vaga só abre quando
    uma fase fecha.
-3. **Disparar.** Uma sessão por fase da onda corrente. Título
+3. **Disparar.** Uma sessão por fase da onda corrente, sempre em worktree própria
+   (`use_worktree: true`): o mod lê a atividade e os gates de cada fase pela pasta dela. Título
    `<ícone> <curto>: <fase> (<tarefas>)`; mova-a para o grupo (`move_sessions`).
 
    | Ícone | Natureza                          |
@@ -101,7 +102,8 @@ diagnóstico pronto ao dono.
    | Bancada 🔬 (rito mecânico, evidência literal)              | `claude-sonnet-5-5`                       | medium  |
    | Docs 📖 🧹, tarefas `cx: simple`                            | `claude-sonnet-5-5` ou `claude-haiku-5-5` | low     |
 
-   O prompt da sessão é **autocontido**: change e caminho, o que ler antes, SOMENTE as
+   O prompt da sessão é **autocontido** e traz o **id desta coordenação por extenso**
+   (nunca "quem te propôs"): change e caminho, o que ler antes, SOMENTE as
    tarefas N.N, regras/ADRs aplicáveis, o que NÃO fazer (fases futuras), portões que ela
    roda, critério de pronto (checkbox só com evidência real, trabalho commitado) e o
    aviso de volta (§ 5).
