@@ -9,6 +9,7 @@ import type {
   FlowState,
   FlowView,
   GateCheck,
+  GrillAnswer,
   PrepState,
   PrepView,
   GateRecord,
@@ -61,6 +62,7 @@ import {
   MOCKUP_STEP,
   RELEASE_OUTCOME,
   RELEASE_STEP,
+  answersPrompt,
   approvePlan,
   attachMockup,
   describePrep,
@@ -69,6 +71,7 @@ import {
   parseRoundItems,
   planVerdict,
   pressMockup,
+  ownerAnswers,
   prepView,
   recordRound,
   rejectPlan,
@@ -116,6 +119,7 @@ const ANSWERED = { plugin: 'orquestrador', key: 'answered' } as const
 const GATES_SEEN = { plugin: 'orquestrador', key: 'gates' } as const
 const EDITED_AT = { plugin: 'orquestrador', key: 'editedAt' } as const
 const PANE_OPEN = { plugin: 'orquestrador', key: 'paneOpen' } as const
+const GRILL_DRAFTS = { plugin: 'orquestrador', key: 'grillDrafts' } as const
 const START_SESSION = 'mcp__ccd_session__start_session'
 const TRANSITION_SUFFIX = '__transitionJiraIssue'
 const ARCHIVE_SESSION = 'mcp__ccd_session_mgmt__archive_session'
@@ -1220,6 +1224,29 @@ const pressFlow = async ($: EngineInterface, change: string, step: string, outco
   await refreshQuietly($)
 }
 
+/**
+ * The owner's answers typed in the panel: recorded in the latest grill round (grill.md and the
+ * acceptance criteria follow), then sent to this session as the owner's own message.
+ */
+const answerGrill = async ($: EngineInterface, change: string, answers: readonly GrillAnswer[]): Promise<void> => {
+  const state = await loadFlowState($, change)
+  if (state === undefined) return
+  const done = ownerAnswers(await loadPrep($, change), state, answers, await $.clock.now())
+  if ('error' in done) {
+    $.ui.toast(`Não consegui registrar: ${done.error}`)
+    return
+  }
+  const sent = answers.filter(a => a.answer.trim() !== '')
+  await savePrep($, state, done.prep, done.event)
+  await update($, GRILL_DRAFTS, drafts => {
+    const left = { ...(drafts ?? {}) }
+    for (const a of sent) delete left[a.question]
+    return left
+  })
+  await refreshQuietly($)
+  await $.prompt.submit({ text: answersPrompt(sent), asUser: true })
+}
+
 /** When each step of a change's flow was entered and answered, from its log. */
 const loadFlowTimes = async ($: EngineInterface, change: string) =>
   stepTimes(parseEvents(await readText($, await flowFile($, change, 'ndjson'))))
@@ -1506,6 +1533,7 @@ export const register: Register = on => {
     }
     const { value: collapsed = {} } = await $.state.get(COLLAPSED)
     const { value: answered = [] } = await $.state.get(ANSWERED)
+    const { value: drafts = {} } = await $.state.get(GRILL_DRAFTS)
     const { Box, Text, Button, Link } = $.ui.resolve(e)
     const Svg = e.surface === 'desktop' ? $.ui.resolve(e).Svg : undefined
     const Input = e.surface === 'mobile' ? undefined : $.ui.resolve(e).Input
@@ -1537,6 +1565,17 @@ export const register: Register = on => {
           return
         }
         void pressFlow($, change, step, outcome, value).catch(() => $.ui.toast('Não consegui registrar sua resposta ao flow.'))
+      },
+      drafts,
+      draftAnswer: question => (value: string) => {
+        void update($, GRILL_DRAFTS, map => ({ ...(map ?? {}), [question]: value }))
+      },
+      answerGrill: (change, answers) => () => {
+        if (answers.every(a => a.answer.trim() === '')) {
+          $.ui.toast('Escreva a resposta antes de enviar.')
+          return
+        }
+        void answerGrill($, change, answers).catch(() => $.ui.toast('Não consegui registrar sua resposta ao grill.'))
       },
       moveJira: (change, key, transitionId) => () => {
         void pressJiraMove($, change, key, transitionId).catch(() => $.ui.toast(`Não consegui mover ${key} no Jira.`))

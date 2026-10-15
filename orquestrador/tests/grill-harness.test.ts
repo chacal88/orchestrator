@@ -20,8 +20,11 @@ const GRILL_MD = '/w/openspec/changes/demo/grill.md'
 /** How the app's plan dialog answers the next ExitPlanMode. */
 type Dialog = { answer: 'approve' | 'refuse'; words?: string }
 
+/** What reached the person: the toasts and the prompts the mod submitted. */
+type Sink = { toasts: string[]; prompts: { text: string; asUser: boolean }[] }
+
 /** A coordinator at /w with an in-memory disk, and a plan dialog the test answers. */
-const world = (on: On, dialog: Dialog): Map<string, string> => {
+const world = (on: On, dialog: Dialog, sink: Sink = { toasts: [], prompts: [] }): Map<string, string> => {
   mock.store(on)
   const disk = new Map<string, string>()
   on('env.get', () => ({ value: '/h' }))
@@ -52,7 +55,15 @@ const world = (on: On, dialog: Dialog): Map<string, string> => {
     return { result: 'ok', text: 'ok' } as never
   })
   on('ui.open', () => ({ value: { isPlaced: true } }) as never)
-  on('ui.toast', () => ({ value: undefined }) as never)
+  on('ui.toast', ($, e) => {
+    sink.toasts.push(e.text)
+    return { value: undefined } as never
+  })
+  on('prompt.submit', ($, e) => {
+    const origin = e.origin as { kind: string; asUser?: true }
+    sink.prompts.push({ text: e.text, asUser: origin.kind === 'plugin' && origin.asUser === true })
+    return { text: e.text } as never
+  })
   return disk
 }
 
@@ -84,7 +95,7 @@ test('grill rounds go to grill.md and the panel, and only the owner closes the u
   for (const surface of ['desktop', 'terminal', 'mobile'] as const) {
     const ui = await $.ui.mount({ plugin: 'orquestrador', surface, ...PANE })
     expect(await ui.find({ type: 'Text', text: /1 rodada · 1 critério de aceite/ })).toBeDefined()
-    expect(await ui.find({ type: 'Text', text: /• Tem mobile\?/ })).toBeDefined()
+    expect(await ui.find({ type: 'Text', text: /Tem mobile\?/ })).toBeDefined()
     await ui.unmount()
   }
 
@@ -175,4 +186,84 @@ test('a plan approved while the flow is elsewhere moves nothing', async ($, on) 
   await $.tool.call({ tool: 'ExitPlanMode' } as never)
   expect(saved(disk).current).toBe('grill')
   expect(disk.has(PREP)).toBe(false)
+})
+
+const mount = <S extends 'desktop' | 'terminal' | 'mobile'>($: Engine, surface: S) =>
+  $.ui.mount({ plugin: 'orquestrador', surface, ...PANE })
+
+const openRound = async ($: Engine) => {
+  await flow($, { action: 'start', change: 'demo', flow: 'completo', changePath: 'openspec/changes/demo' })
+  await flow($, {
+    action: 'round',
+    questions: [{ question: 'Quem aprova?', answer: 'Só o dono' }, { question: 'Tem mobile?' }, { question: 'E o Jira?' }],
+  })
+}
+
+for (const surface of ['desktop', 'terminal'] as const) {
+  test(`grill answers typed in the panel fill the round and reach the coordinator as the owner's words (${surface})`, async ($, on) => {
+    const sink: Sink = { toasts: [], prompts: [] }
+    const disk = world(on, { answer: 'approve' }, sink)
+    await openRound($)
+
+    const ui = await mount($, surface)
+    expect(await ui.find({ key: 'grill-answer:1' })).toBeUndefined()
+    expect(await ui.find({ key: 'grill-answer:2' })).toBeDefined()
+    expect(await ui.find({ key: 'grill-send:3' })).toBeDefined()
+    expect(await ui.find({ key: 'grill-send-all' })).toBeUndefined()
+
+    await ui.input({ key: 'grill-answer:2', text: 'Não, só desktop', kind: 'change' } as never)
+    expect(await ui.find({ key: 'grill-send-all' })).toBeUndefined()
+    await ui.input({ key: 'grill-answer:3', text: 'Fica para depois', kind: 'change' } as never)
+    expect(await ui.find({ key: 'grill-send-all' })).toBeDefined()
+    await ui.press({ key: 'grill-send-all' })
+
+    const items = prep(disk).rounds[0]!.items
+    expect(prep(disk).rounds.length).toBe(1)
+    expect(items.map(i => i.answer)).toEqual(['Só o dono', 'Não, só desktop', 'Fica para depois'])
+    expect(disk.get(GRILL_MD)).toMatch(/- \[ \] Não, só desktop/)
+    expect(disk.get(GRILL_MD)).toMatch(/- \[ \] Fica para depois/)
+    const last = JSON.parse((disk.get(LOG) ?? '').trim().split('\n').pop()!) as { kind: string; by: string }
+    expect(last).toMatchObject({ kind: 'round', by: 'owner' })
+    expect(sink.prompts).toEqual([
+      { text: 'Resposta à pergunta 2: Não, só desktop\nResposta à pergunta 3: Fica para depois', asUser: true },
+    ])
+    expect(await ui.find({ key: 'grill-answer:2' })).toBeUndefined()
+    expect(await ui.find({ type: 'Text', text: /Perguntas em aberto/ })).toBeUndefined()
+    await ui.unmount()
+  })
+}
+
+test('one grill answer goes by Enter or by "Responder"; an empty one is refused', async ($, on) => {
+  const sink: Sink = { toasts: [], prompts: [] }
+  const disk = world(on, { answer: 'approve' }, sink)
+  await openRound($)
+  const ui = await mount($, 'desktop')
+
+  await ui.press({ key: 'grill-send:2' })
+  expect(sink.toasts).toEqual(['Escreva a resposta antes de enviar.'])
+  await ui.input({ key: 'grill-answer:2', text: '   ' } as never)
+  expect(sink.toasts.length).toBe(2)
+  expect(sink.prompts).toEqual([])
+  expect(prep(disk).rounds[0]!.items[1]!.answer).toBeUndefined()
+
+  await ui.input({ key: 'grill-answer:2', text: 'Não' } as never)
+  expect(sink.prompts).toEqual([{ text: 'Resposta à pergunta 2: Não', asUser: true }])
+  expect(prep(disk).rounds[0]!.items[1]!.answer).toBe('Não')
+
+  await ui.input({ key: 'grill-answer:3', text: 'Depois', kind: 'change' } as never)
+  await ui.press({ key: 'grill-send:3' })
+  expect(sink.prompts[1]).toEqual({ text: 'Resposta à pergunta 3: Depois', asUser: true })
+  expect(prep(disk).rounds[0]!.items.every(i => i.answer !== undefined)).toBe(true)
+  expect(String((await flow($, { action: 'status' })).result)).toMatch(/0 open question\(s\), 3 acceptance criteria/)
+  await ui.unmount()
+})
+
+test('without a text field (mobile) the open questions say to answer in the chat', async ($, on) => {
+  world(on, { answer: 'approve' })
+  await openRound($)
+  const ui = await mount($, 'mobile')
+  expect(await ui.find({ type: 'Text', text: /2\. Tem mobile\?/ })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: /Responda no chat/ })).toBeDefined()
+  expect(await ui.find({ key: 'grill-send:2' })).toBeUndefined()
+  await ui.unmount()
 })

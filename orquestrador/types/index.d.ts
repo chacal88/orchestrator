@@ -185,6 +185,9 @@ export type FlowView = {
 /** One grill question; answered, it becomes an acceptance criterion (its own wording, else the answer). */
 export type GrillItem = { question: string; answer?: string; criterion?: string }
 
+/** One answer the owner typed in the panel for an open grill question, by its number in the round. */
+export type GrillAnswer = { n: number; question: string; answer: string }
+
 export type GrillRound = { n: number; at: number; items: GrillItem[] }
 
 /** The owner's "Pedir ajuste" on a mockup: the note and the mockup it was about. */
@@ -209,6 +212,8 @@ export type PrepView = {
   rounds: number
   /** The latest round's questions still without an answer. */
   openQuestions: string[]
+  /** The same questions with their number in the round (1-based), for the panel's answer fields. */
+  openItems: { n: number; question: string }[]
   criteria: string[]
   mockup?: string
   mockupIsUrl?: boolean
@@ -394,6 +399,8 @@ declare module 'claude-code' {
       editedAt: number | null
       /** Whether the pane is up, so the band's button says "Abrir" or "Fechar". */
       paneOpen: boolean
+      /** What the owner has typed so far in the grill's answer fields, by question text. */
+      grillDrafts: Record<string, string>
     }
   }
 }

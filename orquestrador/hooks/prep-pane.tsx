@@ -13,9 +13,9 @@ export const hiddenFlowChoices = (els: PaneElements, view: PanelView): string[] 
  * questions, the mockup with a field to ask for an adjustment, or where to approve the plan.
  */
 export const prepDetails = (
-  { Box, Text, Link, Input }: PaneElements,
+  { Box, Text, Link, Button, Input }: PaneElements,
   view: PanelView,
-  actions: Pick<PaneActions, 'noteFlow'>,
+  actions: Pick<PaneActions, 'noteFlow' | 'drafts' | 'draftAnswer' | 'answerGrill'>,
 ): RenderElement[] => {
   const flow = view.flow
   const prep = view.prep
@@ -32,9 +32,61 @@ export const prepDetails = (
           : `${rounds} ${rounds === 1 ? 'rodada' : 'rodadas'} · ${criteria} ${criteria === 1 ? 'critério de aceite' : 'critérios de aceite'}`}
       </Text>,
     )
-    const open = prep?.openQuestions ?? []
+    const open = prep?.openItems ?? []
     if (open.length > 0) {
-      lines.push(<Text bold>Perguntas em aberto</Text>, ...open.map(q => <Text wrap="wrap">{`• ${q}`}</Text>))
+      lines.push(<Text bold>Perguntas em aberto</Text>)
+      if (Input === undefined) {
+        lines.push(
+          ...open.map(q => <Text wrap="wrap">{`${q.n}. ${q.question}`}</Text>),
+          <Text dimColor wrap="wrap">Responda no chat.</Text>,
+        )
+      } else {
+        // only the owner's typing fills these fields: the drafts are written by onInput alone
+        const draftOf = (question: string) => actions.drafts[question] ?? ''
+        lines.push(
+          ...open.map(q => (
+            <Box flexDirection="column" borderStyle="round" borderDimColor paddingX={1} minWidth={0}>
+              <Box flexShrink={1} minWidth={0}>
+                <Text wrap="wrap">
+                  <Text dimColor>{`${q.n}. `}</Text>
+                  {q.question}
+                </Text>
+              </Box>
+              <Input
+                key={`grill-answer:${q.n}`}
+                placeholder="sua resposta"
+                submitLabel="responder"
+                {...(draftOf(q.question) === '' ? {} : { value: draftOf(q.question) })}
+                onInput={actions.draftAnswer(q.question)}
+                onSubmit={value => actions.answerGrill(flow.change, [{ ...q, answer: value }])()}
+              />
+              <Box flexDirection="row" flexShrink={0}>
+                <Button
+                  key={`grill-send:${q.n}`}
+                  variant="secondary"
+                  onPress={actions.answerGrill(flow.change, [{ ...q, answer: draftOf(q.question) }])}
+                >
+                  Responder
+                </Button>
+              </Box>
+            </Box>
+          )),
+        )
+        const filled = open.filter(q => draftOf(q.question).trim() !== '')
+        if (filled.length > 1) {
+          lines.push(
+            <Box flexDirection="row" flexShrink={0}>
+              <Button
+                key="grill-send-all"
+                variant="primary"
+                onPress={actions.answerGrill(flow.change, filled.map(q => ({ ...q, answer: draftOf(q.question) })))}
+              >
+                {`Enviar todas (${filled.length})`}
+              </Button>
+            </Box>,
+          )
+        }
+      }
     }
   } else if (step === MOCKUP_STEP) {
     if (prep?.mockup === undefined) {
