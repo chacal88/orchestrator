@@ -12,6 +12,8 @@ export type Waiting = {
 
 /** What a session's own copy of the mod publishes for the others to read. */
 export type ActivityRecord = {
+  /** The app's id of the publishing session; absent in a record from before 0.7.1, keyed by folder. */
+  sessionId?: string
   cwd: string
   plan: PlanItem[]
   lastTool: string | undefined
@@ -397,6 +399,8 @@ declare module 'claude-code' {
       answered: string[]
       gates: Record<string, GateRecord>
       editedAt: number | null
+      /** This session's id in the app's session list, once asked; its activity file is keyed by it. */
+      selfId: string
       /** Whether the pane is up, so the band's button says "Abrir" or "Fechar". */
       paneOpen: boolean
       /** What the owner has typed so far in the grill's answer fields, by question text. */

@@ -33,7 +33,7 @@
 - [ ] 4.15 Fechar no plano uma fase já feita antes do flow, sem exigir que o gate rode de novo na coordenação (ex.: o dono marca como feita no painel, registrado no log)
 - [ ] 4.16 Coordenação aberta por outra sessão entra no grupo da change mesmo aninhada (mover a sessão pelo id em vez de "self", ou explicar ao dono quando o app recusar)
 - [ ] 4.17 Quando a coordenação não pode abrir uma sessão (aberta por outra sessão), o painel mostra em "Precisa de você" o cartão a iniciar, com o que ele faz
-- [ ] 4.18 Atividade de cada sessão identificada pelo id da sessão, não pela pasta: hoje uma fase que roda na mesma pasta da coordenação nunca prova gate (register.tsx descarta a atividade de filha com o mesmo cwd, defeito introduzido na 0.4.2)
+- [x] 4.18 Atividade de cada sessão identificada pelo id da sessão, não pela pasta: hoje uma fase que roda na mesma pasta da coordenação nunca prova gate (register.tsx descarta a atividade de filha com o mesmo cwd, defeito introduzido na 0.4.2)
 - [ ] 4.19 O pulo de gate pelo dono no painel não foi gravado na rodada plugin-publico (antes e depois do /reload-plugins): reproduzir com o plano de uma fase de outra sessão, corrigir e cobrir com teste
 - [ ] 4.11 Testes, validação do mod e conferência no app com uma change real
 

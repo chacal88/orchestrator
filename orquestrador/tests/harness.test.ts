@@ -189,6 +189,28 @@ test('an app restart keeps what the session proved: the task list and the gate p
   await ui.unmount()
 })
 
+test("after a restart a session sharing its folder never takes the folder's old file as its own", async ($, on) => {
+  const w = world(on, [{ sessionId: 'local_irma', cwd: '/w', title: 'irmã', isArchived: false }])
+  w.disk.set(
+    '/h/.claude/orquestrador/sessions/w.json',
+    JSON.stringify({
+      cwd: '/w',
+      plan: [],
+      updatedAt: 60,
+      gates: { testes: { gate: 'testes', result: 'passed', evidence: 'claude plugin test', at: 50 } },
+    }),
+  )
+  await $.tool.call({
+    tool: 'mcp__orquestrador__plano',
+    change: 'demo',
+    waves: [{ phases: [{ id: '1', title: 'Conferir', status: 'running', gates: ['testes'] }] }],
+  } as never)
+
+  const ui = await $.ui.mount({ plugin: 'orquestrador', surface: 'desktop', ...PANE })
+  expect(await ui.find({ type: 'Text', text: /testes ✓/ })).toBeUndefined()
+  await ui.unmount()
+})
+
 test('a shell may read the gate files but never write them', async ($, on) => {
   world(on, [])
   const bash = async (command: string) => ((await $.tool.call({ tool: 'Bash', command } as never)) as { deny?: string }).deny

@@ -200,3 +200,39 @@ test('after QA asks for changes the loop waits for the new tasks; the deploy is 
     ['done', undefined],
   ])
 })
+
+test('a phase sharing the coordinator\'s folder proves its gate by its own session id', async ($, on) => {
+  const w = world(on)
+  const SAME = { sessionId: 'a', cwd: '/w', title: 'Fase A', name: 'fase-a', startedBy: 'me' }
+  w.rows = [ME, SAME, B]
+  plan(w)
+  await toExecutar($)
+  w.disk.set(TASKS, '## 1. Base\n- [x] 1.1 Modelo\n- [x] 1.2 Rotas\n\n## 2. Tela\n- [x] 2.1 Lista\n')
+
+  const unproven = await flow($, { action: 'close', phase: 'A' })
+  expect(String(unproven.result)).toMatch(/testes not run/)
+
+  // what the phase's own mod publishes after its test run, in the same folder as this session
+  const record: ActivityRecord = {
+    sessionId: 'a', cwd: '/w', plan: [], lastTool: 'Bash', waiting: undefined, updatedAt: 2_000,
+    gates: { testes: { gate: 'testes', result: 'passed', evidence: 'claude plugin test orquestrador', at: 2_000 } },
+  }
+  w.disk.set(`${BASE}/sessions/id-a.json`, JSON.stringify(record))
+  const closed = await flow($, { action: 'close', phase: 'A' })
+  expect(String(closed.result)).toBe('Phase A closed, session "fase-a" archived. Still open: B (Tela).')
+})
+
+test('each session publishes its activity under its own id, and a sibling in the same folder never inherits it', async ($, on) => {
+  const w = world(on)
+  const SAME = { sessionId: 'a', cwd: '/w', title: 'Fase A', name: 'fase-a', startedBy: 'me' }
+  w.rows = [ME, SAME, B]
+  plan(w)
+  await toExecutar($)
+  await bash($, 'npm test')
+  const own = JSON.parse(w.disk.get(`${BASE}/sessions/id-me.json`) ?? '{}') as ActivityRecord
+  expect([own.sessionId, own.cwd]).toEqual(['me', '/w'])
+  expect(w.disk.has(`${BASE}/sessions/${activityKey('/w')}.json`)).toBe(false)
+
+  w.disk.set(TASKS, '## 1. Base\n- [x] 1.1 Modelo\n- [x] 1.2 Rotas\n\n## 2. Tela\n- [x] 2.1 Lista\n')
+  expect(String((await flow($, { action: 'close', phase: 'A' })).result)).toMatch(/testes not run/)
+})
