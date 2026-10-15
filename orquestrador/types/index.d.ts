@@ -213,6 +213,9 @@ export type PrepView = {
   released: boolean
 }
 
+/** When a step was last entered and, once answered, when it finished (epoch ms). */
+export type StepTime = { from: number; to?: number }
+
 /** One row of the app's session list, as far as the panel needs it. */
 export type SessionRow = {
   sessionId: string
@@ -343,6 +346,8 @@ export type PanelView = {
   flow?: FlowView
   /** Grill rounds, mockup and plan release of that flow's change. */
   prep?: PrepView
+  /** Per step id, from the flow's log: the elapsed time the Gates list shows. */
+  flowTimes?: Record<string, StepTime>
 }
 
 declare module 'claude-code' {
@@ -355,6 +360,8 @@ declare module 'claude-code' {
       answered: string[]
       gates: Record<string, GateRecord>
       editedAt: number | null
+      /** Whether the pane is up, so the band's button says "Abrir" or "Fechar". */
+      paneOpen: boolean
     }
   }
 }
