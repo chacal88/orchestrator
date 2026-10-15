@@ -6,7 +6,7 @@ Repositório: ~/.claude/mods-local (git, branch main). Cada fase trabalha numa w
 | Onda | Fase | Tarefas | Sessão | Branch | Estado | Próximo passo |
 |---|---|---|---|---|---|---|
 | 0 | Git na pasta do mod | — | coordenação | main | fechada (0aa6a48) | — |
-| 1 | 🛠️ Motor do flow | 4.1–4.4 | flow-motor (local_9b505d6f) | worktree flow-motor | em voo | aguardar "FASE 1" |
+| 1 | 🛠️ Motor do flow | 4.1–4.4 | flow-motor (local_9b505d6f, arquivada) | claude/flow-motor-b1c268 | fechada (merge 1f5910f, 88 testes) | — |
 | 2 | 🛠️ Grill e mockup | 4.5 | — | — | pendente | após onda 1 |
 | 2 | 🛠️ Fases, pós-PR e arquivamento | 4.6–4.7 | — | — | pendente | após onda 1 |
 | 2 | 🛠️ Painel: Gates e Tarefas | 4.9 | — | — | pendente | após onda 1 |
