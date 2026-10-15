@@ -120,6 +120,7 @@ const ANSWERED = { plugin: 'orquestrador', key: 'answered' } as const
 const GATES_SEEN = { plugin: 'orquestrador', key: 'gates' } as const
 const EDITED_AT = { plugin: 'orquestrador', key: 'editedAt' } as const
 const SELF_ID = { plugin: 'orquestrador', key: 'selfId' } as const
+const ACTIVITY_TTL_MS = 7 * 24 * 60 * 60 * 1000
 const PANE_OPEN = { plugin: 'orquestrador', key: 'paneOpen' } as const
 const GRILL_DRAFTS = { plugin: 'orquestrador', key: 'grillDrafts' } as const
 const START_SESSION = 'mcp__ccd_session__start_session'
@@ -320,9 +321,13 @@ const loadSessions = async (
   }
   const dir = `${base}/sessions`
   const files = (await $.fs.exists(dir)) ? await $.fs.list(dir) : []
-  const records = (
-    await Promise.all(files.filter(f => f.name.endsWith('.json')).map(f => readJson<ActivityRecord>($, `${dir}/${f.name}`)))
-  ).filter((r): r is ActivityRecord => r !== undefined)
+  // a file per session id is never removed (the mod cannot delete), so a refresh skips the
+  // ones untouched for a week instead of opening every session this machine ever ran
+  const cutoff = (await $.clock.now()) - ACTIVITY_TTL_MS
+  const fresh = files.filter(f => f.name.endsWith('.json') && f.mtimeMs >= cutoff)
+  const records = (await Promise.all(fresh.map(f => readJson<ActivityRecord>($, `${dir}/${f.name}`)))).filter(
+    (r): r is ActivityRecord => r !== undefined,
+  )
   const children = [...others.values()].map(row => toCard(row, activityFor(records, row, selfRow?.cwd)))
   const self =
     selfRow === undefined
@@ -720,8 +725,8 @@ const publishPlan = async ($: EngineInterface, input: Record<string, unknown>): 
  * only kind the app lets a session place), else through the app's `claude://` link, which the
  * pane cannot follow itself. Says where to look when neither works.
  */
-const openSession = async ($: EngineInterface, card: SessionCard, selfId: string | undefined): Promise<void> => {
-  if (selfId !== undefined && card.startedBy === selfId) {
+const openSession = async ($: EngineInterface, card: SessionCard, ownId: string | undefined): Promise<void> => {
+  if (ownId !== undefined && card.startedBy === ownId) {
     const ran = await callTool($, { tool: OPEN_SESSION, session_id: card.sessionId, target: 'split' }).catch(
       () => ({ isError: true }) as CallResult,
     )
@@ -1387,21 +1392,22 @@ const observeRelease = async ($: EngineInterface, input: Record<string, unknown>
 }
 
 /**
- * An app restart empties the session's state; what the session already proved lives on in
- * its activity file. Put back the task list, the gate passes and the last edit before
- * anything publishes over that file, so a restart never undoes a passed gate.
- */
-/**
  * Whether the file a copy from before 0.7.1 keyed by this folder can only be this session's:
  * no other live session of the family works in the same folder.
  */
 const folderIsOwn = async ($: EngineInterface, sessionId: string | undefined, cwd: string): Promise<boolean> => {
   if (sessionId === undefined) return true
   if (!(await canCall($, LIST_SESSIONS))) return false
+  // a family past 50 live sessions is far above the ceiling of 3 phases; the panel reads the same page
   const family = parseSessionRows((await callTool($, { tool: LIST_SESSIONS, linked: true, limit: 50 })).text)
   return !family.some(row => !row.isArchived && row.sessionId !== sessionId && row.cwd === cwd)
 }
 
+/**
+ * An app restart empties the session's state; what the session already proved lives on in
+ * its activity file. Put back the task list, the gate passes and the last edit before
+ * anything publishes over that file, so a restart never undoes a passed gate.
+ */
 const restoreActivity = async ($: EngineInterface): Promise<void> => {
   const cwd = await $.session.root()
   const sessionId = await selfId($).catch(() => undefined)
@@ -1567,16 +1573,16 @@ export const register: Register = on => {
     const { Box, Text, Button, Link } = $.ui.resolve(e)
     const Svg = e.surface === 'desktop' ? $.ui.resolve(e).Svg : undefined
     const Input = e.surface === 'mobile' ? undefined : $.ui.resolve(e).Input
-    const selfId = view.self?.sessionId
+    const ownId = view.self?.sessionId
     return renderPane({ Box, Text, Button, Link, Svg, Input }, view, ownPlan, {
       collapsed,
       answered,
-      canOpenBeside: card => selfId !== undefined && card.startedBy === selfId,
+      canOpenBeside: card => ownId !== undefined && card.startedBy === ownId,
       toggle: (id, byDefault) => () => {
         void update($, COLLAPSED, map => ({ ...map, [id]: !(map?.[id] ?? !byDefault) }))
       },
       openBeside: card => () => {
-        void openSession($, card, selfId)
+        void openSession($, card, ownId)
       },
       skip: (gate: GateView) => () => {
         const change = view.run?.change ?? view.flow?.change

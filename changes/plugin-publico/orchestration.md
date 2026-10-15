@@ -1,12 +1,13 @@
 # Orquestração — plugin-publico
 
-Flow `rapido` (do repositório). Coordenação: 🧭 plugin-publico: coordenação.
+Flow `rapido` (do repositório). Coordenação: 🧭 plugin-publico: coordenação, depois a coordenação principal.
 
 | Fase | Ícone | Sessão | Estado | Próximo passo |
 | ---- | ----- | ------ | ------ | ------------- |
 | 1 Empacotar (1.1–1.2) | 🏷️ | coordenação | fechada | — |
-| 2 Instalação local (2.1–2.2) | 🏷️ | pp-instalacao | feita (35a9b14, 137 testes), não fechada no flow | gate invisível: fase na mesma pasta da coordenação |
+| 2 Instalação local (2.1–2.2) | 🏷️ | pp-instalacao | fechada (gate rodado na própria sessão) | — |
+| 3 Correções da revisão (3.1–3.3) | 🏷️ | coordenação principal | em execução | revisão de novo |
 
-Encerrado pelo dono em 2026-10-15 antes da revisão: a rodada não usa OpenSpec e não testa o que a 4.11 pede.
-Nada publicado (sem repositório nem release). Correção do mod para gate na mesma pasta: commit 672442a na branch
-claude/strange-bhaskara-c49728 (0.7.1, 140 testes), PR pendente da criação do repositório.
+A rodada foi parada pelo dono e depois retomada pela coordenação principal. O repositório público foi criado antes
+do passo de publicar, e o dono decidiu mantê-lo público: "Deixa público; a coordenação principal termina os gates."
+A primeira revisão reprovou; as correções são a fase 3.

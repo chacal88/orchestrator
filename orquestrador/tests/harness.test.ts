@@ -19,15 +19,14 @@ const child = (name: string, archived = false) => ({
   isArchived: archived,
 })
 
-type World = { disk: Map<string, string>; family: Record<string, unknown>[]; calls: string[] }
+type World = { disk: Map<string, string>; mtimes: Map<string, number>; family: Record<string, unknown>[]; calls: string[]; now: number }
 
 /** A coordinator at /w with its family, a disk in memory, and an engine that answers every tool. */
 const world = (on: On, family: Record<string, unknown>[]): World => {
   mock.store(on)
-  const w: World = { disk: new Map(), family, calls: [] }
+  const w: World = { disk: new Map(), mtimes: new Map(), family, calls: [], now: 1_000 }
   on('env.get', () => ({ value: '/h' }))
-  let now = 1_000
-  on('clock.now', () => ({ value: (now += 10) }))
+  on('clock.now', () => ({ value: (w.now += 10) }))
   on('session.root', () => ({ value: '/w' }))
   on('session.repo', () => ({ value: null }))
   on('fs.exists', ($, e) => ({ value: w.disk.has(e.path) || [...w.disk.keys()].some(k => k.startsWith(`${e.path}/`)) }))
@@ -39,7 +38,7 @@ const world = (on: On, family: Record<string, unknown>[]): World => {
   on('fs.list', ($, e) => ({
     value: [...w.disk.keys()]
       .filter(k => k.startsWith(`${e.path}/`) && !k.slice(e.path.length + 1).includes('/'))
-      .map(k => ({ name: k.slice(e.path.length + 1), kind: 'file', size: 1, mtimeMs: 0, isLink: false })) as never,
+      .map(k => ({ name: k.slice(e.path.length + 1), kind: 'file', size: 1, mtimeMs: w.mtimes.get(k) ?? w.now, isLink: false })) as never,
   }))
   on('tool.list', () => ({
     value: [{ name: 'mcp__ccd_session_mgmt__list_sessions' }, { name: 'mcp__ccd_session_mgmt__get_session' }] as never,
@@ -208,6 +207,33 @@ test("after a restart a session sharing its folder never takes the folder's old 
 
   const ui = await $.ui.mount({ plugin: 'orquestrador', surface: 'desktop', ...PANE })
   expect(await ui.find({ type: 'Text', text: /testes ✓/ })).toBeUndefined()
+  await ui.unmount()
+})
+
+test('an activity file untouched for a week is no longer read, so old sessions stop costing every refresh', async ($, on) => {
+  const w = world(on, [child('api'), child('old')])
+  const DAY = 24 * 60 * 60 * 1000
+  w.now = 30 * DAY
+  const record = (name: string) =>
+    JSON.stringify({
+      sessionId: `local_${name}`, cwd: `/w/.claude/worktrees/${name}`, updatedAt: 1,
+      plan: [{ content: `Tarefa de ${name}`, status: 'in_progress' }],
+    })
+  w.disk.set('/h/.claude/orquestrador/sessions/id-local_api.json', record('api'))
+  w.disk.set('/h/.claude/orquestrador/sessions/id-local_old.json', record('old'))
+  w.mtimes.set('/h/.claude/orquestrador/sessions/id-local_old.json', 20 * DAY)
+  await $.tool.call({
+    tool: 'mcp__orquestrador__plano',
+    change: 'demo',
+    waves: [{ phases: [
+      { id: '1', title: 'API', status: 'running', session: 'api' },
+      { id: '2', title: 'Antiga', status: 'running', session: 'old' },
+    ] }],
+  } as never)
+
+  const ui = await $.ui.mount({ plugin: 'orquestrador', surface: 'desktop', ...PANE })
+  expect(await ui.find({ type: 'Text', text: /Tarefa de api/ })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: /Tarefa de old/ })).toBeUndefined()
   await ui.unmount()
 })
 
