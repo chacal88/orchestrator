@@ -17,10 +17,10 @@
 
 ## 4. Flows e gates
 
-- [ ] 4.1 Flow descrito em arquivo JSON (passos, tipo de cada passo, para onde vai em cada resultado, limite de tentativas); flows padrão "completo" e "rápido" no mod, e flows do projeto numa pasta do repositório valendo mais que os padrões
-- [ ] 4.2 Motor do flow: passo atual, transições, limite de 3 tentativas que escala para o dono, registro de eventos e estado salvo por change (sobrevive a reinício)
-- [ ] 4.3 Três tipos de passo: sessão (uma sessão faz e informa o resultado), automático (um script decide pelo código de saída) e dono (só um clique no painel responde; uma sessão nunca responde por ele)
-- [ ] 4.4 Ferramenta para a coordenação informar o resultado de um passo; o mod recusa pular etapas (por exemplo, executar fases sem a liberação do dono)
+- [x] 4.1 Flow descrito em arquivo JSON (passos, tipo de cada passo, para onde vai em cada resultado, limite de tentativas); flows padrão "completo" e "rápido" no mod, e flows do projeto numa pasta do repositório valendo mais que os padrões
+- [x] 4.2 Motor do flow: passo atual, transições, limite de 3 tentativas que escala para o dono, registro de eventos e estado salvo por change (sobrevive a reinício)
+- [x] 4.3 Três tipos de passo: sessão (uma sessão faz e informa o resultado), automático (um script decide pelo código de saída) e dono (só um clique no painel responde; uma sessão nunca responde por ele)
+- [x] 4.4 Ferramenta para a coordenação informar o resultado de um passo; o mod recusa pular etapas (por exemplo, executar fases sem a liberação do dono)
 - [ ] 4.5 Grill com rodadas até o dono clicar "Entendimento fechado"; respostas viram critérios de aceite. Mockup só quando a change é visual, com aprovar ou pedir ajuste
 - [ ] 4.6 Execução das fases do tasks.md como um laço do flow, usando os gates de fase existentes; ao fechar a fase, a sessão dela é arquivada (com o trabalho já commitado)
 - [ ] 4.7 Depois do PR: "Em QA" (QA aprovou / QA pediu ajustes, que volta para as fases), "Em produção" (detecção automática quando o agente faz o deploy, ou botão), e arquivamento da change (openspec archive, sessões restantes e grupo da barra lateral)

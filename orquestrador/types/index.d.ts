@@ -49,6 +49,99 @@ export type GateView = {
   skipKey: string
 }
 
+export type FlowStepKind = 'session' | 'automatic' | 'owner' | 'loop'
+
+/** Where one outcome of a step leads; `label` is what the owner reads (pt-BR). */
+export type FlowOutcome = { label: string; next: string }
+
+export type FlowStep = {
+  id: string
+  /** Plain words for the owner (pt-BR). */
+  title: string
+  description: string | undefined
+  kind: FlowStepKind
+  outcomes: Record<string, FlowOutcome>
+  maxAttempts: number
+  /** automatic: the command the mod watches a session run; its exit code decides passou/falhou. */
+  command: string | undefined
+  /** automatic: a pass also needs evidence.md recorded in the change folder. */
+  requiresEvidence: boolean
+  /** The step runs only when the change has this trait; otherwise the flow goes on to the next step. */
+  when: 'visual' | undefined
+  /** loop: what it iterates over. */
+  over: 'tasks' | undefined
+}
+
+export type FlowDef = { id: string; title: string; description: string; steps: FlowStep[] }
+
+export type FlowActor = 'session' | 'automatic' | 'owner'
+
+export type FlowStatus = 'running' | 'escalated' | 'done' | 'aborted'
+
+/** A step hit its attempt ceiling: only the owner says whether it goes again. */
+export type FlowEscalation = { step: string; from: string; outcome: string; attempts: number }
+
+/** The last outcome a step finished with, until the flow comes back to it. */
+export type FlowStepRecord = { outcome: string; by: FlowActor; at: number; note?: string }
+
+/** One change's run through a flow, saved by the mod in its home folder (flows/<change>.json). */
+export type FlowState = {
+  change: string
+  coordinatorCwd: string
+  changePath?: string
+  /** The flow as it stood when the run started, so editing the file later never strands a run. */
+  flow: FlowDef
+  traits: { visual: boolean }
+  current: string
+  status: FlowStatus
+  attempts: Record<string, number>
+  records: Record<string, FlowStepRecord>
+  escalation?: FlowEscalation
+  seq: number
+  startedAt: number
+  updatedAt: number
+}
+
+export type FlowEvent = {
+  seq: number
+  at: number
+  kind: 'started' | 'outcome' | 'entered' | 'skipped' | 'escalated' | 'retried' | 'aborted' | 'done' | 'refused'
+  step: string
+  by: FlowActor | 'mod'
+  outcome?: string
+  note?: string
+}
+
+export type FlowStepView = {
+  id: string
+  title: string
+  description: string | undefined
+  kind: FlowStepKind
+  state: 'done' | 'current' | 'pending' | 'skipped'
+  attempts: number
+  maxAttempts: number
+  outcome: string | undefined
+  outcomeLabel: string | undefined
+}
+
+/** One button the owner may press now. */
+export type FlowChoice = { outcome: string; label: string }
+
+/** What the panel needs of one change's flow. */
+export type FlowView = {
+  change: string
+  flowId: string
+  flowTitle: string
+  status: FlowStatus
+  current: FlowStepView | undefined
+  /** Who moves the flow now: nobody once it is done or aborted. */
+  waitingOn: FlowActor | undefined
+  /** The buttons the owner may press now (an owner step's outcomes, or an escalation's choices). */
+  ownerChoices: FlowChoice[]
+  escalation: FlowEscalation | undefined
+  steps: FlowStepView[]
+}
+
 /** One row of the app's session list, as far as the panel needs it. */
 export type SessionRow = {
   sessionId: string
@@ -151,12 +244,14 @@ export type OrchestrationRun = {
 /** One row of "Precisa de você": a decision, a waiting session or an open PR. */
 export type Attention = {
   id: string
-  kind: 'decision' | 'permission' | 'question' | 'pr'
+  kind: 'decision' | 'permission' | 'question' | 'pr' | 'flow'
   title: string
   detail: string | undefined
   recommendation: string | undefined
   card: SessionCard | undefined
   prUrl: string | undefined
+  /** kind 'flow': the step the owner answers, pressed only in the panel. */
+  flow?: { change: string; step: string; choices: FlowChoice[] }
 }
 
 export type PanelView = {
@@ -173,6 +268,8 @@ export type PanelView = {
   jiraNote: string | undefined
   /** Gates the owner skipped, by skip key. */
   skips: Record<string, GateSkip>
+  /** The flow of the change this coordinator runs, when one was started. */
+  flow?: FlowView
 }
 
 declare module 'claude-code' {

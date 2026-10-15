@@ -4,6 +4,10 @@ import type { EngineInterface, Register, ToolCallResult } from 'claude-code'
 import type {
   ActivityRecord,
   Attention,
+  FlowDef,
+  FlowEvent,
+  FlowState,
+  FlowView,
   GateCheck,
   GateRecord,
   GateSkip,
@@ -32,6 +36,19 @@ import {
   observeTool,
   phaseRefusal,
 } from './gates'
+import {
+  DEFAULT_FLOW_IDS,
+  applyOutcome,
+  automaticOutcome,
+  currentStep,
+  describeFlow,
+  flowView,
+  mergeFlows,
+  ownerPress,
+  parseFlow,
+  startFlow,
+} from './flow'
+import { defaultFlows } from './flows/index'
 import { renderPane } from './pane'
 import { firstSite, issueUrl, jiraKeys, parseIssue } from './jira'
 import { changeDir, openSpecView } from './openspec'
@@ -54,6 +71,7 @@ import {
 const PANE = 'orquestrador'
 /** Typed as string: the laid MCP types predate this mod's own tool. */
 const PLAN_TOOL: string = 'mcp__orquestrador__plano'
+const FLOW_TOOL: string = 'mcp__orquestrador__flow'
 const LIST_SESSIONS = 'mcp__ccd_session_mgmt__list_sessions'
 const GET_SESSION = 'mcp__ccd_session_mgmt__get_session'
 const OPEN_SESSION = 'mcp__ccd_window__open_session_in'
@@ -369,6 +387,10 @@ const refresh = async ($: EngineInterface): Promise<void> => {
       : await loadJira($, run).catch(error => ({ issues: {}, note: describeError('jira', error) }))
 
   const skips = run === undefined ? {} : await loadSkips($, run.change).catch(() => ({}))
+  const flow = await loadFlowView($, run, cwd).catch(error => {
+    problems.push(describeError('flow', error))
+    return undefined
+  })
 
   const repoUrl = await $.session
     .repo()
@@ -383,6 +405,7 @@ const refresh = async ($: EngineInterface): Promise<void> => {
     jira: jira.issues,
     jiraNote: jira.note,
     skips,
+    flow,
     updatedAt: await $.clock.now(),
     warning: problems.length === 0 ? undefined : problems.join(' · '),
   }
@@ -539,6 +562,7 @@ const openSession = async ($: EngineInterface, card: SessionCard, selfId: string
 }
 
 const PLAN_FAILED = { result: 'Plan not published: the orchestrator panel failed to store it.', isError: true } as const
+const FLOW_FAILED = { result: 'Flow: the orchestrator failed to read or store the flow; nothing changed. Try again.', isError: true } as const
 
 /** The gates' files are the mod's alone: a record or a skip written by the model would forge a pass. */
 /** Commands that only read: the gate files may be looked at, never written from a shell. */
@@ -654,9 +678,222 @@ const observeGates = async (
 /** Calls whose guard must hold even when the mod itself fails: refused, never let through. */
 const isGuarded = (tool: string, input: Record<string, unknown>): boolean =>
   tool === PLAN_TOOL ||
+  tool === FLOW_TOOL ||
   tool === START_SESSION ||
   tool === ARCHIVE_SESSION ||
   (tool === 'Bash' && typeof input.command === 'string' && GH_MERGE.test(input.command))
+
+const FLOW_SCHEMA = {
+  type: 'object',
+  properties: {
+    action: {
+      type: 'string',
+      enum: ['list', 'start', 'status', 'report'],
+      description:
+        'list: the flows on offer. start: begin a flow for a change. status: where the change stands and who ' +
+        'answers the current step. report: the outcome of the current session or loop step.',
+    },
+    change: {
+      type: 'string',
+      description: 'Change id. Optional for status/report when this coordinator runs a single flow.',
+    },
+    flow: { type: 'string', description: 'start: the flow id, e.g. "completo" or "rapido".' },
+    visual: { type: 'boolean', description: 'start: the change alters what the user sees (enables the mockup step).' },
+    changePath: { type: 'string', description: 'start: path to the change folder (holds evidence.md).' },
+    step: { type: 'string', description: 'report: the id of the step being reported; must be the current step.' },
+    outcome: { type: 'string', description: 'report: one of the outcomes the step declares.' },
+    note: { type: 'string', description: 'report: one line on what was done (pt-BR).' },
+  },
+  required: ['action'],
+}
+
+const flowsDir = async ($: EngineInterface): Promise<string> => `${await baseDir($)}/flows`
+
+/** Every flow file of one folder, the ones that do not parse named in `problems`. */
+const readFlowDir = async ($: EngineInterface, dir: string): Promise<{ flows: FlowDef[]; problems: string[] }> => {
+  if (!(await $.fs.exists(dir))) return { flows: [], problems: [] }
+  const files = (await $.fs.list(dir)).filter(f => f.kind === 'file' && f.name.endsWith('.json'))
+  const flows: FlowDef[] = []
+  const problems: string[] = []
+  for (const file of files) {
+    let raw: unknown
+    try {
+      raw = JSON.parse(await $.fs.read(`${dir}/${file.name}`))
+    } catch {
+      problems.push(`${dir}/${file.name}: not valid JSON.`)
+      continue
+    }
+    const parsed = parseFlow(raw, `${dir}/${file.name}`)
+    if ('error' in parsed) problems.push(parsed.error)
+    else flows.push(parsed)
+  }
+  return { flows, problems }
+}
+
+/** The mod's default flows, then the project's own in `<repo>/.orquestrador/flows`, which win by id. */
+const loadFlows = async ($: EngineInterface): Promise<{ flows: Record<string, FlowDef>; problems: string[] }> => {
+  const project = await readFlowDir($, `${await $.session.root()}/.orquestrador/flows`)
+  return { flows: mergeFlows(defaultFlows(), project.flows), problems: project.problems }
+}
+
+const flowFile = async ($: EngineInterface, change: string, ext: 'json' | 'ndjson'): Promise<string> =>
+  `${await flowsDir($)}/${runKey(change)}.${ext}`
+
+const loadFlowState = async ($: EngineInterface, change: string): Promise<FlowState | undefined> =>
+  readJson<FlowState>($, await flowFile($, change, 'json'))
+
+const allFlowStates = async ($: EngineInterface): Promise<FlowState[]> => {
+  const dir = await flowsDir($)
+  if (!(await $.fs.exists(dir))) return []
+  const files = (await $.fs.list(dir)).filter(f => f.kind === 'file' && f.name.endsWith('.json'))
+  const states = await Promise.all(files.map(f => readJson<FlowState>($, `${dir}/${f.name}`)))
+  return states.filter((s): s is FlowState => s !== undefined && typeof s.change === 'string')
+}
+
+/** The state file and its append-only log, both written by the mod alone. */
+const saveFlow = async ($: EngineInterface, state: FlowState, events: readonly FlowEvent[]): Promise<void> => {
+  await $.fs.write(await flowFile($, state.change, 'json'), JSON.stringify(state))
+  const log = await flowFile($, state.change, 'ndjson')
+  const prior = (await readText($, log)) ?? ''
+  await $.fs.write(log, prior + events.map(e => `${JSON.stringify(e)}\n`).join(''))
+}
+
+const logFlowRefusal = async ($: EngineInterface, state: FlowState, step: string, by: FlowEvent['by'], note: string): Promise<void> => {
+  const log = await flowFile($, state.change, 'ndjson')
+  const prior = (await readText($, log)) ?? ''
+  const event: FlowEvent = { seq: state.seq, at: await $.clock.now(), kind: 'refused', step, by, note }
+  await $.fs.write(log, `${prior}${JSON.stringify(event)}\n`)
+}
+
+/** A flow belongs to the coordinator's checkout and to every worktree under it. */
+const ownsFlow = (state: FlowState, root: string): boolean =>
+  root === state.coordinatorCwd || root.startsWith(`${state.coordinatorCwd}/`)
+
+/** The flow this session works on: the named change, else the one flow its checkout runs. */
+const pickFlow = async ($: EngineInterface, change: unknown): Promise<FlowState | { error: string }> => {
+  if (typeof change === 'string' && change.trim() !== '') {
+    return (await loadFlowState($, change.trim())) ?? { error: `no flow was started for ${change}; start one with action "start".` }
+  }
+  const root = await $.session.root()
+  const mine = (await allFlowStates($)).filter(s => ownsFlow(s, root) && s.status !== 'done' && s.status !== 'aborted')
+  if (mine.length === 1) return mine[0]!
+  return mine.length === 0
+    ? { error: 'no flow is running for this checkout; start one with action "start".' }
+    : { error: `several flows run here (${mine.map(s => s.change).join(', ')}); name the change.` }
+}
+
+type FlowReply = ToolCallResult<string>
+const flowError = (why: string): FlowReply => ({ result: `Flow: ${why}`, isError: true as const })
+
+const handleFlowTool = async ($: EngineInterface, input: Record<string, unknown>): Promise<FlowReply> => {
+  const action = input.action
+  if (action === 'list') {
+    const { flows, problems } = await loadFlows($)
+    const lines = Object.values(flows).map(f => `${f.id} — ${f.title}: ${f.steps.map(s => s.id).join(' → ')} → fim`)
+    return { result: [...lines, ...problems.map(p => `ignored: ${p}`)].join('\n') }
+  }
+  if (action === 'start') {
+    const change = typeof input.change === 'string' ? input.change.trim() : ''
+    if (change === '') return flowError('`change` is required to start a flow.')
+    const { flows, problems } = await loadFlows($)
+    const flow = typeof input.flow === 'string' ? flows[input.flow] : undefined
+    if (flow === undefined) {
+      return flowError(
+        `unknown flow "${String(input.flow)}"; choose one of ${Object.keys(flows).join(', ') || DEFAULT_FLOW_IDS.join(', ')}.` +
+          (problems.length > 0 ? ` Ignored files: ${problems.join(' ')}` : ''),
+      )
+    }
+    const existing = await loadFlowState($, change)
+    if (existing !== undefined && existing.status !== 'done' && existing.status !== 'aborted') {
+      return flowError(`${change} already runs flow ${existing.flow.id}. ${describeFlow(existing)}`)
+    }
+    const started = startFlow(
+      flow,
+      {
+        change,
+        coordinatorCwd: await $.session.root(),
+        ...(typeof input.changePath === 'string' ? { changePath: input.changePath } : {}),
+        visual: input.visual === true,
+      },
+      await $.clock.now(),
+    )
+    await saveFlow($, started.state, started.events)
+    await refreshQuietly($)
+    return { result: `Started. ${describeFlow(started.state)}` }
+  }
+  const picked = await pickFlow($, input.change)
+  if ('error' in picked) return flowError(picked.error)
+  if (action === 'status') return { result: describeFlow(picked) }
+  if (action !== 'report') return flowError('action must be list, start, status or report.')
+  if (typeof input.step !== 'string' || typeof input.outcome !== 'string') {
+    return flowError('`step` and `outcome` are required to report.')
+  }
+  const moved = applyOutcome(
+    picked,
+    { step: input.step, outcome: input.outcome, by: 'session', ...(typeof input.note === 'string' ? { note: input.note } : {}) },
+    await $.clock.now(),
+  )
+  if ('error' in moved) {
+    await logFlowRefusal($, picked, input.step, 'session', moved.error)
+    return flowError(`refused: ${moved.error}`)
+  }
+  await saveFlow($, moved.state, moved.events)
+  await refreshQuietly($)
+  return { result: `Recorded ${input.step} → ${input.outcome}. ${describeFlow(moved.state)}` }
+}
+
+const EVIDENCE_OK = new Set(['recorded', 'green'])
+
+/** Whether evidence.md of the flow's change is filled in; a flow with no change folder has none. */
+const hasEvidence = async ($: EngineInterface, state: FlowState): Promise<boolean> => {
+  if (state.changePath === undefined) return false
+  const home = (await $.env.get('HOME')) ?? ''
+  const dir = changeDir(state.changePath.replace(/^~(?=\/)/, home), state.coordinatorCwd)
+  const evidence = await readText($, `${dir}/evidence.md`)
+  return EVIDENCE_OK.has(openSpecView({ tasks: undefined, proposal: undefined, evidence }).evidence)
+}
+
+/** An automatic step moves only when the mod itself sees its command finish, never on a session's word. */
+const observeFlows = async ($: EngineInterface, command: string, failed: boolean): Promise<void> => {
+  const root = await $.session.root()
+  for (const state of await allFlowStates($)) {
+    if (state.status !== 'running' || !ownsFlow(state, root)) continue
+    const step = currentStep(state)
+    if (step === undefined) continue
+    const outcome = automaticOutcome(step, command, failed)
+    if (outcome === undefined) continue
+    if (outcome === 'passou' && step.requiresEvidence && !(await hasEvidence($, state))) {
+      await logFlowRefusal($, state, step.id, 'automatic', 'passed, but evidence.md is not recorded')
+      $.ui.toast(`Flow ${state.change}: ${step.title} passou, mas o evidence.md ainda não foi preenchido.`)
+      continue
+    }
+    const moved = applyOutcome(state, { step: step.id, outcome, by: 'automatic' }, await $.clock.now())
+    if ('error' in moved) continue
+    await saveFlow($, moved.state, moved.events)
+  }
+}
+
+/** Only the panel's press reaches this: no tool call answers an owner step. */
+const pressFlow = async ($: EngineInterface, change: string, step: string, outcome: string): Promise<void> => {
+  const state = await loadFlowState($, change)
+  if (state === undefined) return
+  const moved = ownerPress(state, step, outcome, await $.clock.now())
+  if ('error' in moved) {
+    $.ui.toast(`Não consegui registrar: ${moved.error}`)
+    return
+  }
+  await saveFlow($, moved.state, moved.events)
+  await refreshQuietly($)
+}
+
+/** The flow the panel shows: the published plan's change, else the latest flow of this checkout. */
+const loadFlowView = async ($: EngineInterface, run: OrchestrationRun | undefined, cwd: string): Promise<FlowView | undefined> => {
+  const state =
+    run === undefined
+      ? (await allFlowStates($)).filter(s => s.coordinatorCwd === cwd).sort((a, b) => b.updatedAt - a.updatedAt)[0]
+      : await loadFlowState($, run.change)
+  return state === undefined ? undefined : flowView(state)
+}
 
 /**
  * An app restart empties the session's state; what the session already proved lives on in
@@ -688,6 +925,15 @@ export const register: Register = on => {
         'on the owner. Send the whole plan each time a phase changes state; it replaces the previous one.',
       inputSchema: PLAN_SCHEMA,
     })
+    await $.tool.register({
+      name: 'flow',
+      description:
+        'The declared flow a change follows (e.g. completo, rapido). Start a flow for a change, read the current ' +
+        'step and who answers it, and report the outcome of a session or loop step. Steps cannot be skipped: ' +
+        'owner steps are answered only by the owner in the panel, automatic steps only by the mod watching their ' +
+        'command run, and only outcomes the step declares are accepted.',
+      inputSchema: FLOW_SCHEMA,
+    })
     $.clock.every(REFRESH_MS, () => void refreshQuietly($))
     void refreshQuietly($).then(async () => {
       const { value } = await $.state.get(VIEW)
@@ -705,6 +951,7 @@ export const register: Register = on => {
   on('tool.call', async ($, e, next) => {
     const tool = e.tool as string
     if (tool === PLAN_TOOL) return publishPlan($, e as unknown as Record<string, unknown>)
+    if (tool === FLOW_TOOL) return handleFlowTool($, e as unknown as Record<string, unknown>)
     const input = e as unknown as Record<string, unknown>
     if (touchesGateFiles(tool, input)) {
       return { deny: 'Orchestrator: ~/.claude/orquestrador is written by the mod only (gate records and owner skips).' }
@@ -726,6 +973,11 @@ export const register: Register = on => {
     await observeGates($, tool, input, ran as CallResult & { result?: unknown }).catch(error =>
       $.ui.log(`orquestrador: ${describeError('portões', error)}`),
     )
+    if (tool === 'Bash' && ran.deny === undefined && typeof input.command === 'string' && input.run_in_background !== true) {
+      await observeFlows($, input.command, ran.isError === true).catch(error =>
+        $.ui.log(`orquestrador: ${describeError('flow', error)}`),
+      )
+    }
     if (tool.startsWith('mcp__ccd_session_mgmt__') || tool.startsWith('mcp__ccd_sidebar__') || tool === OPEN_SESSION) {
       return ran
     }
@@ -751,6 +1003,7 @@ export const register: Register = on => {
   }).catch(($, e, next) => {
     const tool = e.tool as string
     if (next.called || !isGuarded(tool, e as unknown as Record<string, unknown>)) return next(e)
+    if (tool === FLOW_TOOL) return FLOW_FAILED
     return tool === PLAN_TOOL ? PLAN_FAILED : { deny: 'Orchestrator gate: the check itself failed, so the call is refused; try again.' }
   })
 
@@ -795,6 +1048,9 @@ export const register: Register = on => {
           .then(() => refreshQuietly($))
           .then(() => $.ui.toast(`Portão ${gate.label} pulado por decisão sua.`))
           .catch(() => $.ui.toast('Não consegui registrar o pulo do portão.'))
+      },
+      answerFlow: (change, step, outcome) => () => {
+        void pressFlow($, change, step, outcome).catch(() => $.ui.toast('Não consegui registrar sua resposta ao flow.'))
       },
       accept: (item: Attention) => () => {
         void update($, ANSWERED, list => [...(list ?? []), item.title].slice(-50))
