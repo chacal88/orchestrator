@@ -2,3 +2,4 @@
 orquestrador/.claude-plugin/types/
 node_modules/
 .DS_Store
+.claude/

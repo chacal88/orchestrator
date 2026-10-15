@@ -1,11 +1,17 @@
 {
-  "name": "mods-local",
-  "owner": { "name": "kaue rodrigues dos santos" },
+  "name": "orquestrador",
+  "owner": {
+    "name": "kaue rodrigues dos santos",
+    "url": "https://github.com/chacal88"
+  },
+  "metadata": {
+    "description": "Orquestrador: painel lateral e flows declarados para orquestrar changes com várias sessões do Claude Code."
+  },
   "plugins": [
     {
       "name": "orquestrador",
       "source": "./orquestrador",
-      "description": "Painel lateral da orquestração: ondas, fases, sessões filhas, pendências do dono e PRs"
+      "description": "Painel lateral e flow declarado para orquestrar changes com várias sessões do Claude Code, com gates de qualidade e decisões do dono no painel."
     }
   ]
 }

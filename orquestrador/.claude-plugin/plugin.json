@@ -1,6 +1,11 @@
 {
   "name": "orquestrador",
-  "version": "0.6.3",
-  "description": "Painel lateral da orquestração: ondas, fases, sessões filhas, progresso OpenSpec e issues do Jira, portões de qualidade por fase",
+  "version": "0.7.0",
+  "description": "Painel lateral e flow declarado para orquestrar changes com várias sessões do Claude Code: grill, mockup, plano OpenSpec, fases com gates de qualidade, PR, QA, produção e arquivamento, com as decisões do dono em botões do painel.",
+  "author": { "name": "kaue rodrigues dos santos", "url": "https://github.com/chacal88" },
+  "homepage": "https://github.com/chacal88/orquestrador",
+  "repository": "https://github.com/chacal88/orquestrador",
+  "license": "MIT",
+  "keywords": ["orchestration", "openspec", "workflow", "gates", "multi-session"],
   "types": "./types/index.d.ts"
 }
