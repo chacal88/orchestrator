@@ -2,6 +2,7 @@ import type {
   FlowActor,
   FlowChoice,
   FlowDef,
+  FlowDetect,
   FlowEvent,
   FlowOutcome,
   FlowState,
@@ -23,10 +24,13 @@ export const ESCALATION_CHOICES: readonly FlowChoice[] = [
   { outcome: 'encerrar', label: 'Encerrar o flow' },
 ]
 
-/** Which actor may answer a step of each kind: a session never answers for the owner or for a command. */
+/** The outcome a loop step ends on, given by the mod once every phase closed. */
+export const LOOP_DONE = 'concluidas'
+
+/** Which actor may answer a step of each kind: a session never answers for the owner, a command or the loop. */
 const ANSWERED_BY: Record<FlowStepKind, FlowActor> = {
   session: 'session',
-  loop: 'session',
+  loop: 'mod',
   automatic: 'automatic',
   owner: 'owner',
 }
@@ -78,6 +82,11 @@ export const parseFlow = (raw: unknown, source: string): FlowDef | { error: stri
     }
     if (s.when !== undefined && s.when !== 'visual') return fail(`step "${stepId}": \`when\` may only be "visual".`)
     if (s.over !== undefined && s.over !== 'tasks') return fail(`step "${stepId}": \`over\` may only be "tasks".`)
+    if (kind === 'loop' && outcomes[LOOP_DONE] === undefined) {
+      return fail(`step "${stepId}": a loop step declares the outcome ${LOOP_DONE}, given when every phase closed.`)
+    }
+    const detect = parseDetect(s.detect, outcomes)
+    if (typeof detect === 'string') return fail(`step "${stepId}": ${detect}`)
     steps.push({
       id: stepId,
       title: stepTitle,
@@ -89,6 +98,8 @@ export const parseFlow = (raw: unknown, source: string): FlowDef | { error: stri
       requiresEvidence: s.requiresEvidence === true,
       when: s.when === 'visual' ? 'visual' : undefined,
       over: kind === 'loop' ? 'tasks' : undefined,
+      detect,
+      cleanup: s.cleanup === true,
     })
   }
   const ids = new Set(steps.map(s => s.id))
@@ -102,6 +113,24 @@ export const parseFlow = (raw: unknown, source: string): FlowDef | { error: stri
   return { id, title, description: text(raw.description) ?? '', steps }
 }
 
+/**
+ * A step's `detect`: one command or a list (`"vercel --prod"`), or `{ commands, outcome }`; the
+ * outcome may be left out when the step declares only one.
+ */
+const parseDetect = (raw: unknown, outcomes: Record<string, FlowOutcome>): FlowDetect | undefined | string => {
+  if (raw === undefined) return undefined
+  const spec = isRecord(raw) ? raw : { commands: raw }
+  const list = typeof spec.commands === 'string' ? [spec.commands] : spec.commands
+  const commands = Array.isArray(list) ? list.map(text).filter((c): c is string => c !== undefined) : []
+  if (commands.length === 0) return '`detect` needs at least one command.'
+  const names = Object.keys(outcomes)
+  const outcome = text(spec.outcome) ?? (names.length === 1 ? names[0] : undefined)
+  if (outcome === undefined || outcomes[outcome] === undefined) {
+    return `\`detect.outcome\` must name one of the step's outcomes (${names.join(', ')}).`
+  }
+  return { commands, outcome }
+}
+
 /** The flows on offer: the mod's defaults, each replaced by a project's flow of the same id. */
 export const mergeFlows = (defaults: readonly FlowDef[], project: readonly FlowDef[]): Record<string, FlowDef> => {
   const all: Record<string, FlowDef> = {}
@@ -109,9 +138,9 @@ export const mergeFlows = (defaults: readonly FlowDef[], project: readonly FlowD
   return all
 }
 
-type Moved = { state: FlowState; events: FlowEvent[] }
+export type Moved = { state: FlowState; events: FlowEvent[] }
 
-const stepOf = (flow: FlowDef, id: string): FlowStep | undefined => flow.steps.find(s => s.id === id)
+export const stepOf = (flow: FlowDef, id: string): FlowStep | undefined => flow.steps.find(s => s.id === id)
 const indexOf = (flow: FlowDef, id: string): number => flow.steps.findIndex(s => s.id === id)
 
 const applies = (step: FlowStep, state: FlowState): boolean => step.when !== 'visual' || state.traits.visual
@@ -142,6 +171,24 @@ const enter = (state: FlowState, target: string, by: FlowActor, cause: { from: s
   const records = Object.fromEntries(
     Object.entries(state.records).filter(([sid]) => indexOf(state.flow, sid) < from),
   )
+  // going back keeps why (e.g. QA's request), until the flow reaches that step again
+  const cause_ = state.records[cause.from]
+  const source = stepOf(state.flow, cause.from)
+  const reopened =
+    cause_ !== undefined && source !== undefined && from <= indexOf(state.flow, cause.from)
+      ? {
+          step: cause.from,
+          outcome: cause.outcome,
+          label: source.outcomes[cause.outcome]?.label ?? cause.outcome,
+          by: cause_.by,
+          at,
+          ...(cause_.note === undefined ? {} : { note: cause_.note }),
+        }
+      : state.reopened !== undefined && id !== state.reopened.step
+        ? state.reopened
+        : undefined
+  const { reopened: _drop, ...rest } = state
+  state = reopened === undefined ? rest : { ...rest, reopened }
   const attempts = state.attempts[id] ?? 0
   if (by !== 'owner' && attempts >= step.maxAttempts) {
     const escalation = { step: id, from: cause.from, outcome: cause.outcome, attempts }
@@ -193,6 +240,8 @@ const WHO: Record<FlowActor, string> = {
   session: 'a session (through the flow tool)',
   automatic: 'the mod, watching its command run',
   owner: 'the owner, pressing a button in the panel',
+  mod: 'the mod, once every phase is closed (close each with action "close")',
+  detect: "the mod, seeing the step's detect command succeed",
 }
 
 /**
@@ -228,14 +277,19 @@ export const applyOutcome = (
         `. "${current.id}" is answered by ${WHO[ANSWERED_BY[current.kind]]}.`,
     }
   }
-  if (ANSWERED_BY[asked.kind] !== report.by) {
+  const detected = report.by === 'detect' && asked.detect !== undefined
+  if (ANSWERED_BY[asked.kind] !== report.by && !detected) {
     return { error: `step "${asked.id}" (${asked.title}) is a ${asked.kind} step: only ${WHO[ANSWERED_BY[asked.kind]]} answers it.` }
+  }
+  if (detected && report.outcome !== asked.detect?.outcome) {
+    return { error: `step "${asked.id}": a detected command gives only ${asked.detect?.outcome}.` }
   }
   const outcome = asked.outcomes[report.outcome]
   if (outcome === undefined) {
     return { error: `step "${asked.id}" has no outcome "${report.outcome}"; it declares ${Object.keys(asked.outcomes).join(', ')}.` }
   }
-  const record = { outcome: report.outcome, by: report.by, at, ...(report.note === undefined ? {} : { note: report.note }) }
+  const note = report.note ?? state.pendingNote
+  const record = { outcome: report.outcome, by: report.by, at, ...(note === undefined ? {} : { note }) }
   const reported: FlowEvent = {
     seq: state.seq + 1,
     at,
@@ -243,10 +297,11 @@ export const applyOutcome = (
     step: asked.id,
     by: report.by,
     outcome: report.outcome,
-    ...(report.note === undefined ? {} : { note: report.note }),
+    ...(note === undefined ? {} : { note }),
   }
+  const { pendingNote: _used, ...unnoted } = state
   const moved = enter(
-    { ...state, records: { ...state.records, [asked.id]: record }, seq: state.seq + 1 },
+    { ...unnoted, records: { ...state.records, [asked.id]: record }, seq: state.seq + 1 },
     outcome.next,
     report.by,
     { from: asked.id, outcome: report.outcome },
@@ -301,6 +356,23 @@ export const automaticOutcome = (step: FlowStep, command: string, failed: boolea
   if (!commandPattern(step.command).test(code)) return undefined
   if (!failed && masksExitCode(code)) return undefined
   return failed ? 'falhou' : 'passou'
+}
+
+/** A step's detect command seen succeeding: its outcome. A masked exit code or a failure proves nothing. */
+export const detectedOutcome = (step: FlowStep, command: string, failed: boolean): string | undefined => {
+  if (step.detect === undefined || failed) return undefined
+  const code = executedText(command)
+  if (masksExitCode(code)) return undefined
+  return step.detect.commands.some(c => commandPattern(c).test(code)) ? step.detect.outcome : undefined
+}
+
+/** A session's note for the owner step that waits now; it joins the owner's answer. */
+export const noteOwnerStep = (state: FlowState, note: string, at: number): Moved | { error: string } => {
+  const step = currentStep(state)
+  if (step === undefined || state.status !== 'running') return { error: 'no step is waiting.' }
+  if (step.kind !== 'owner') return { error: `step "${step.id}" is not the owner's; report its outcome instead.` }
+  const event: FlowEvent = { seq: state.seq + 1, at, kind: 'noted', step: step.id, by: 'session', note }
+  return { state: { ...state, pendingNote: note, seq: state.seq + 1, updatedAt: at }, events: [event] }
 }
 
 export const currentStep = (state: FlowState): FlowStep | undefined =>
@@ -365,10 +437,25 @@ export const describeFlow = (state: FlowState): string => {
     return `${where}; it hit its attempt ceiling and waits on the owner in the panel (retry or end the flow).`
   }
   const outcomes = Object.entries(step.outcomes).map(([o, d]) => `${o} → ${d.next}`).join(', ')
+  const back = state.reopened
+  const reopened =
+    back === undefined ? '' : ` Came back from "${back.step}" (${back.label})${back.note === undefined ? '' : `: ${back.note}`}.`
+  return describeStep(state, step, where, outcomes) + reopened
+}
+
+const describeStep = (state: FlowState, step: FlowStep, where: string, outcomes: string): string => {
   switch (step.kind) {
     case 'session':
-    case 'loop':
       return `${where}. Do the step, then report one of its outcomes with action "report": ${outcomes}.`
+    case 'loop': {
+      const closed = Object.keys(state.closed ?? {})
+      return (
+        `${where}. Run the phases of tasks.md; close each with action "close" and its \`phase\` id once its gates ` +
+        'passed, its tasks are ticked and its work is committed (the mod then archives its session). The step ends ' +
+        `on its own when every phase is closed (→ ${step.outcomes[LOOP_DONE]?.next}).` +
+        (closed.length > 0 ? ` Closed: ${closed.join(', ')}.` : '')
+      )
+    }
     case 'automatic':
       return (
         `${where}. Run \`${step.command}\` in this session; the mod reads its exit code ` +
@@ -377,6 +464,12 @@ export const describeFlow = (state: FlowState): string => {
         '. It cannot be reported.'
       )
     case 'owner':
-      return `${where}. Waits on the owner's press in the panel (${Object.values(step.outcomes).map(o => o.label).join(' / ')}); no session can answer it.`
+      return (
+        `${where}. Waits on the owner's press in the panel (${Object.values(step.outcomes).map(o => o.label).join(' / ')}); ` +
+        'no session can answer it, but action "note" leaves a note that joins the answer' +
+        (step.detect === undefined
+          ? '.'
+          : `. The mod also answers ${step.detect.outcome} when it sees ${step.detect.commands.map(c => `\`${c}\``).join(' or ')} succeed.`)
+      )
   }
 }

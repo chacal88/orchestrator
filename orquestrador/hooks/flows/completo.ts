@@ -63,7 +63,7 @@ export const completo: unknown = {
     {
       "id": "executar",
       "title": "Executar fases",
-      "description": "As fases do tasks.md, uma a uma; cada fase passa pelos seus portões.",
+      "description": "As fases do tasks.md, uma a uma: o mod fecha cada fase quando os portões passaram, as tarefas estão marcadas e o trabalho foi commitado.",
       "kind": "loop",
       "over": "tasks",
       "outcomes": { "concluidas": { "label": "Fases concluídas", "next": "revisao-codigo" } }
@@ -112,14 +112,19 @@ export const completo: unknown = {
       "title": "Em produção",
       "description": "A change chegou em produção: pelo botão do dono ou quando o mod vê o deploy.",
       "kind": "owner",
+      "detect": {
+        "commands": ["npm run deploy", "pnpm run deploy", "yarn deploy", "bun run deploy", "vercel --prod", "vercel deploy --prod", "netlify deploy --prod", "fly deploy", "flyctl deploy", "firebase deploy", "gcloud app deploy", "railway up"],
+        "outcome": "publicado"
+      },
       "outcomes": { "publicado": { "label": "Está em produção", "next": "arquivar" } }
     },
     {
       "id": "arquivar",
       "title": "Arquivar change",
-      "description": "Uma sessão roda o `openspec archive`; o mod vê o código de saída.",
+      "description": "Uma sessão roda o `openspec archive`; quando passa, o mod arquiva as sessões restantes e remove o grupo da barra lateral.",
       "kind": "automatic",
       "command": "openspec archive",
+      "cleanup": true,
       "outcomes": {
         "passou": { "label": "Arquivada", "next": "fim" },
         "falhou": { "label": "Falhou", "next": "arquivar" }
