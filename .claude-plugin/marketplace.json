@@ -1,0 +1,11 @@
+{
+  "name": "mods-local",
+  "owner": { "name": "kaue rodrigues dos santos" },
+  "plugins": [
+    {
+      "name": "orquestrador",
+      "source": "./orquestrador",
+      "description": "Painel lateral da orquestração: ondas, fases, sessões filhas, pendências do dono e PRs"
+    }
+  ]
+}

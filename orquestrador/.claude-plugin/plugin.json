@@ -1,0 +1,6 @@
+{
+  "name": "orquestrador",
+  "version": "0.4.6",
+  "description": "Painel lateral da orquestração: ondas, fases, sessões filhas, progresso OpenSpec e issues do Jira, portões de qualidade por fase",
+  "types": "./types/index.d.ts"
+}
