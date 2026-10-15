@@ -2,6 +2,7 @@ import type {
   BoxProps,
   ButtonProps,
   ElementConstructor,
+  InputProps,
   LinkProps,
   RenderElement,
   SvgProps,
@@ -26,6 +27,7 @@ import { FINAL_SCOPE, MAX_LIVE_SESSIONS, familyCheck, gateViews, isOpenGate, liv
 import { divergence } from './jira'
 import { tasksForPhase } from './openspec'
 import { attentionItems, nowAndNext, phaseCounts, phaseViews, planProgress } from './model'
+import { hiddenFlowChoices, prepDetails } from './prep-pane'
 
 export type PaneElements = {
   Box: ElementConstructor<BoxProps>
@@ -34,6 +36,8 @@ export type PaneElements = {
   Link: ElementConstructor<LinkProps>
   /** Only the desktop draws Svg; elsewhere the bar is drawn with text. */
   Svg: ElementConstructor<SvgProps> | undefined
+  /** A text field, where the surface has one (not on mobile). */
+  Input?: ElementConstructor<InputProps> | undefined
 }
 
 /** What the hooks module hands in: state it owns and the closures that reach `$`. */
@@ -48,6 +52,8 @@ export type PaneActions = {
   skip: (gate: GateView) => () => void
   /** The owner's answer to a flow step: the only way an owner step moves. */
   answerFlow: (change: string, step: string, outcome: string) => () => void
+  /** The same answer with the owner's note typed in the panel (a mockup adjustment). */
+  noteFlow: (change: string, step: string, outcome: string) => (value: string) => void
 }
 
 /** Hex, not theme keys: the Svg bar and the legend squares must match exactly. */
@@ -157,11 +163,12 @@ const barSvg = (segments: readonly { value: number; hex: string }[]): string => 
 
 /** Pure drawing: the hooks module owns `$` and hands in the elements, the data and the actions. */
 export const renderPane = (
-  { Box, Text, Button, Link, Svg }: PaneElements,
+  elements: PaneElements,
   view: PanelView,
   ownPlan: readonly PlanItem[],
   actions: PaneActions,
 ): RenderElement => {
+  const { Box, Text, Button, Link, Svg } = elements
   const isOpen = (id: string, byDefault: boolean): boolean => !(actions.collapsed[id] ?? !byDefault)
 
   const bar = (segments: readonly { value: number; hex: string }[], alt: string) => {
@@ -529,6 +536,7 @@ export const renderPane = (
   const run = view.run
 
   const attention = attentionItems(view).filter(a => a.kind === 'flow' || !actions.answered.includes(a.title))
+  const hiddenFlow = hiddenFlowChoices(elements, view)
   const attentionCard =
     attention.length === 0
       ? undefined
@@ -554,6 +562,7 @@ export const renderPane = (
                   {item.detail}
                 </Text>
               )}
+              {item.kind === 'flow' && prepDetails(elements, view, actions)}
               <Box flexDirection="row" columnGap={1} marginTop={1} flexWrap="wrap">
                 {item.kind === 'decision' && item.recommendation !== undefined && (
                   <Button key={`accept:${item.id}`} variant="primary" onPress={actions.accept(item)}>
@@ -561,7 +570,7 @@ export const renderPane = (
                   </Button>
                 )}
                 {item.flow !== undefined &&
-                  item.flow.choices.map((choice, i) => (
+                  item.flow.choices.filter(c => !hiddenFlow.includes(c.outcome)).map((choice, i) => (
                     <Button
                       key={`flow:${item.flow!.step}:${choice.outcome}`}
                       variant={i === 0 ? 'primary' : 'secondary'}

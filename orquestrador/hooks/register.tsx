@@ -9,6 +9,8 @@ import type {
   FlowState,
   FlowView,
   GateCheck,
+  PrepState,
+  PrepView,
   GateRecord,
   GateSkip,
   GateView,
@@ -49,6 +51,22 @@ import {
   startFlow,
 } from './flow'
 import { defaultFlows } from './flows/index'
+import {
+  MOCKUP_STEP,
+  RELEASE_OUTCOME,
+  RELEASE_STEP,
+  approvePlan,
+  attachMockup,
+  describePrep,
+  emptyPrep,
+  grillMarkdown,
+  parseRoundItems,
+  planVerdict,
+  pressMockup,
+  prepView,
+  recordRound,
+  rejectPlan,
+} from './grill'
 import { renderPane } from './pane'
 import { firstSite, issueUrl, jiraKeys, parseIssue } from './jira'
 import { changeDir, openSpecView } from './openspec'
@@ -391,6 +409,7 @@ const refresh = async ($: EngineInterface): Promise<void> => {
     problems.push(describeError('flow', error))
     return undefined
   })
+  const prep = flow === undefined ? undefined : await loadPrepView($, flow.change).catch(() => undefined)
 
   const repoUrl = await $.session
     .repo()
@@ -406,6 +425,7 @@ const refresh = async ($: EngineInterface): Promise<void> => {
     jiraNote: jira.note,
     skips,
     flow,
+    prep,
     updatedAt: await $.clock.now(),
     warning: problems.length === 0 ? undefined : problems.join(' · '),
   }
@@ -688,10 +708,12 @@ const FLOW_SCHEMA = {
   properties: {
     action: {
       type: 'string',
-      enum: ['list', 'start', 'status', 'report'],
+      enum: ['list', 'start', 'status', 'report', 'round', 'mockup'],
       description:
         'list: the flows on offer. start: begin a flow for a change. status: where the change stands and who ' +
-        'answers the current step. report: the outcome of the current session or loop step.',
+        'answers the current step. report: the outcome of the current session or loop step. round: record one ' +
+        'grill round (questions and the owner\'s answers) while the flow is on the grill. mockup: attach the ' +
+        'mockup the owner reviews while the flow is on the mockup.',
     },
     change: {
       type: 'string',
@@ -703,6 +725,23 @@ const FLOW_SCHEMA = {
     step: { type: 'string', description: 'report: the id of the step being reported; must be the current step.' },
     outcome: { type: 'string', description: 'report: one of the outcomes the step declares.' },
     note: { type: 'string', description: 'report: one line on what was done (pt-BR).' },
+    questions: {
+      type: 'array',
+      description:
+        'round: the round\'s questions (pt-BR), each with the owner\'s answer once given and, optionally, the ' +
+        'acceptance criterion the answer becomes.',
+      items: {
+        type: 'object',
+        properties: {
+          question: { type: 'string' },
+          answer: { type: 'string' },
+          criterion: { type: 'string' },
+        },
+        required: ['question'],
+      },
+    },
+    amend: { type: 'boolean', description: 'round: merge into the latest round (fill answers) instead of adding one.' },
+    artifact: { type: 'string', description: 'mockup: the mockup\'s Artifact URL or file path.' },
   },
   required: ['action'],
 }
@@ -819,12 +858,13 @@ const handleFlowTool = async ($: EngineInterface, input: Record<string, unknown>
     )
     await saveFlow($, started.state, started.events)
     await refreshQuietly($)
-    return { result: `Started. ${describeFlow(started.state)}` }
+    return { result: `Started. ${await describeWithPrep($, started.state)}` }
   }
   const picked = await pickFlow($, input.change)
   if ('error' in picked) return flowError(picked.error)
-  if (action === 'status') return { result: describeFlow(picked) }
-  if (action !== 'report') return flowError('action must be list, start, status or report.')
+  if (action === 'status') return { result: await describeWithPrep($, picked) }
+  if (action === 'round' || action === 'mockup') return handlePrepAction($, picked, input)
+  if (action !== 'report') return flowError('action must be list, start, status, report, round or mockup.')
   if (typeof input.step !== 'string' || typeof input.outcome !== 'string') {
     return flowError('`step` and `outcome` are required to report.')
   }
@@ -839,7 +879,7 @@ const handleFlowTool = async ($: EngineInterface, input: Record<string, unknown>
   }
   await saveFlow($, moved.state, moved.events)
   await refreshQuietly($)
-  return { result: `Recorded ${input.step} → ${input.outcome}. ${describeFlow(moved.state)}` }
+  return { result: `Recorded ${input.step} → ${input.outcome}. ${await describeWithPrep($, moved.state)}` }
 }
 
 const EVIDENCE_OK = new Set(['recorded', 'green'])
@@ -874,14 +914,26 @@ const observeFlows = async ($: EngineInterface, command: string, failed: boolean
 }
 
 /** Only the panel's press reaches this: no tool call answers an owner step. */
-const pressFlow = async ($: EngineInterface, change: string, step: string, outcome: string): Promise<void> => {
+const pressFlow = async ($: EngineInterface, change: string, step: string, outcome: string, note?: string): Promise<void> => {
   const state = await loadFlowState($, change)
   if (state === undefined) return
-  const moved = ownerPress(state, step, outcome, await $.clock.now())
+  const running = state.status === 'running' && state.current === step
+  if (running && step === RELEASE_STEP && outcome === RELEASE_OUTCOME) {
+    $.ui.toast('A liberação vem do plan mode: aprove o plano de execução no diálogo do app.')
+    return
+  }
+  const at = await $.clock.now()
+  const prep = running && step === MOCKUP_STEP ? pressMockup(await loadPrep($, change), outcome, note, at) : undefined
+  if (prep !== undefined && 'error' in prep) {
+    $.ui.toast(`Não consegui registrar: ${prep.error}`)
+    return
+  }
+  const moved = ownerPress(state, step, outcome, at, note === undefined || note.trim() === '' ? undefined : note.trim())
   if ('error' in moved) {
     $.ui.toast(`Não consegui registrar: ${moved.error}`)
     return
   }
+  if (prep !== undefined) await savePrep($, state, prep, undefined)
   await saveFlow($, moved.state, moved.events)
   await refreshQuietly($)
 }
@@ -893,6 +945,96 @@ const loadFlowView = async ($: EngineInterface, run: OrchestrationRun | undefine
       ? (await allFlowStates($)).filter(s => s.coordinatorCwd === cwd).sort((a, b) => b.updatedAt - a.updatedAt)[0]
       : await loadFlowState($, run.change)
   return state === undefined ? undefined : flowView(state)
+}
+
+const prepFile = async ($: EngineInterface, change: string): Promise<string> =>
+  `${await baseDir($)}/prep/${runKey(change)}.json`
+
+const loadPrep = async ($: EngineInterface, change: string): Promise<PrepState> =>
+  (await readJson<PrepState>($, await prepFile($, change))) ?? emptyPrep(change)
+
+const loadPrepView = async ($: EngineInterface, change: string): Promise<PrepView> => prepView(await loadPrep($, change))
+
+/** The prep file, one event in the flow's log, and grill.md in the change folder when the flow has one. */
+const savePrep = async (
+  $: EngineInterface,
+  state: FlowState,
+  prep: PrepState,
+  event: Pick<FlowEvent, 'kind' | 'step' | 'by' | 'note'> | undefined,
+): Promise<void> => {
+  await $.fs.write(await prepFile($, state.change), JSON.stringify(prep))
+  if (event !== undefined) {
+    const log = await flowFile($, state.change, 'ndjson')
+    const prior = (await readText($, log)) ?? ''
+    await $.fs.write(log, `${prior}${JSON.stringify({ seq: state.seq, at: await $.clock.now(), ...event })}\n`)
+  }
+  if (event?.kind === 'round' && state.changePath !== undefined) {
+    const home = (await $.env.get('HOME')) ?? ''
+    const dir = changeDir(state.changePath.replace(/^~(?=\/)/, home), state.coordinatorCwd)
+    await $.fs.write(`${dir}/grill.md`, grillMarkdown(prep))
+  }
+}
+
+/** A grill round or a mockup, sent by the coordinator; neither answers an owner step. */
+const handlePrepAction = async ($: EngineInterface, state: FlowState, input: Record<string, unknown>): Promise<FlowReply> => {
+  const prep = await loadPrep($, state.change)
+  const at = await $.clock.now()
+  let done: ReturnType<typeof attachMockup>
+  if (input.action === 'round') {
+    const items = parseRoundItems(input.questions)
+    if ('error' in items) return flowError(items.error)
+    done = recordRound(prep, state, items, input.amend === true, at)
+  } else {
+    done = attachMockup(prep, state, input.artifact, at)
+  }
+  if ('error' in done) {
+    await logFlowRefusal($, state, String(input.action), 'session', done.error)
+    return flowError(`refused: ${done.error}`)
+  }
+  await savePrep($, state, done.prep, done.event)
+  await refreshQuietly($)
+  return { result: `Recorded. ${describePrep(state, done.prep) ?? describeFlow(state)}` }
+}
+
+/** Where the flow stands, with what the pre-execution step gathered so far. */
+const describeWithPrep = async ($: EngineInterface, state: FlowState): Promise<string> => {
+  const prep = describePrep(state, await loadPrep($, state.change))
+  return prep === undefined ? describeFlow(state) : `${describeFlow(state)} ${prep}`
+}
+
+/**
+ * The owner's release: the coordinator's ExitPlanMode, answered by the owner in the app's own plan
+ * dialog. Approved, the release step takes its outcome in the owner's name; refused, the flow stays
+ * and the owner's words are kept for the next plan.
+ */
+const observeRelease = async ($: EngineInterface, input: Record<string, unknown>, ran: CallResult): Promise<void> => {
+  const verdict = planVerdict(input, ran as unknown as Parameters<typeof planVerdict>[1])
+  if (verdict === undefined) return
+  const root = await $.session.root()
+  const waiting = (await allFlowStates($)).filter(
+    s => s.status === 'running' && s.current === RELEASE_STEP && ownsFlow(s, root),
+  )
+  if (waiting.length !== 1) {
+    if (waiting.length > 1) $.ui.toast('Vários flows esperam a liberação; aprovação do plano não registrada.')
+    return
+  }
+  const state = waiting[0]!
+  const prep = await loadPrep($, state.change)
+  const at = await $.clock.now()
+  if (!verdict.approved) {
+    const rejected = rejectPlan(prep, verdict.feedback, at)
+    await savePrep($, state, rejected.prep, rejected.event)
+    await refreshQuietly($)
+    return
+  }
+  const moved = applyOutcome(state, { step: RELEASE_STEP, outcome: RELEASE_OUTCOME, by: 'owner', note: 'aprovado no plan mode' }, at)
+  if ('error' in moved) {
+    await logFlowRefusal($, state, RELEASE_STEP, 'owner', moved.error)
+    return
+  }
+  await savePrep($, state, approvePlan(prep, verdict, at), undefined)
+  await saveFlow($, moved.state, moved.events)
+  await refreshQuietly($)
 }
 
 /**
@@ -978,6 +1120,9 @@ export const register: Register = on => {
         $.ui.log(`orquestrador: ${describeError('flow', error)}`),
       )
     }
+    if (tool === 'ExitPlanMode') {
+      await observeRelease($, input, ran).catch(error => $.ui.log(`orquestrador: ${describeError('liberação', error)}`))
+    }
     if (tool.startsWith('mcp__ccd_session_mgmt__') || tool.startsWith('mcp__ccd_sidebar__') || tool === OPEN_SESSION) {
       return ran
     }
@@ -1030,8 +1175,9 @@ export const register: Register = on => {
     const { value: answered = [] } = await $.state.get(ANSWERED)
     const { Box, Text, Button, Link } = $.ui.resolve(e)
     const Svg = e.surface === 'desktop' ? $.ui.resolve(e).Svg : undefined
+    const Input = e.surface === 'mobile' ? undefined : $.ui.resolve(e).Input
     const selfId = view.self?.sessionId
-    return renderPane({ Box, Text, Button, Link, Svg }, view, ownPlan, {
+    return renderPane({ Box, Text, Button, Link, Svg, Input }, view, ownPlan, {
       collapsed,
       answered,
       canOpenBeside: card => selfId !== undefined && card.startedBy === selfId,
@@ -1051,6 +1197,13 @@ export const register: Register = on => {
       },
       answerFlow: (change, step, outcome) => () => {
         void pressFlow($, change, step, outcome).catch(() => $.ui.toast('Não consegui registrar sua resposta ao flow.'))
+      },
+      noteFlow: (change, step, outcome) => (value: string) => {
+        if (value.trim() === '') {
+          $.ui.toast('Escreva o que ajustar antes de enviar.')
+          return
+        }
+        void pressFlow($, change, step, outcome, value).catch(() => $.ui.toast('Não consegui registrar sua resposta ao flow.'))
       },
       accept: (item: Attention) => () => {
         void update($, ANSWERED, list => [...(list ?? []), item.title].slice(-50))
