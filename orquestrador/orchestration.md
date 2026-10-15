@@ -15,3 +15,4 @@ Repositório: ~/.claude/mods-local (git, branch main). Cada fase trabalha numa w
 | 3 | 🧪 Conferência com change real | 4.11 | — | — | pendente | após 4.8 e 4.10 |
 
 Sessões arquivadas nesta rodada: local_10744b7c (OpenSpec/Jira), local_32aeb6ae (harness), local_cd63bd42 (teste).
+| 3 | 🛠️ Resposta do grill no painel | 4.12 | flow-resposta (local_d93e2688, arquivada) | claude/flow-resposta-42ac00 | fechada (137 testes após merge) | — |
