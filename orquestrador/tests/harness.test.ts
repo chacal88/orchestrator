@@ -183,7 +183,8 @@ test('an app restart keeps what the session proved: the task list and the gate p
   } as never)
 
   const ui = await $.ui.mount({ plugin: 'orquestrador', surface: 'desktop', ...PANE })
-  expect(await ui.find({ type: 'Text', text: /passou/ })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: /testes ✓/ })).toBeDefined()
+  expect(await ui.find({ key: 'arm:1:testes' })).toBeUndefined()
   expect(await ui.find({ type: 'Text', text: /Conferir o painel/ })).toBeDefined()
   await ui.unmount()
 })

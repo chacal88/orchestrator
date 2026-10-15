@@ -125,9 +125,9 @@ test('publishing a plan fills the OpenSpec card and the Jira rows; ⓘ opens the
     expect(await ui.find({ type: 'Text', text: /1\. Setup/ })).toBeDefined()
     expect(await ui.find({ type: 'Text', text: /check\.sh verde/ })).toBeDefined()
     expect(await ui.find({ type: 'Text', text: /Fase fechada, mas EP-1/ })).toBeDefined()
-    // a closed wave starts folded
+    // closed phases start folded
     expect(await ui.find({ type: 'Text', text: /Fase A no Jira/ })).toBeUndefined()
-    await ui.press({ key: 'group:wave:0' })
+    await ui.press({ key: 'group:tasks:done' })
     expect(await ui.find({ type: 'Text', text: /EP-2 · A fazer/ })).toBeDefined()
     expect(await ui.find({ type: 'Text', text: /Fase fechada, mas EP-2/ })).toBeDefined()
     expect(await ui.find({ type: 'Text', text: /Fase A no Jira/ })).toBeUndefined()
@@ -138,7 +138,7 @@ test('publishing a plan fills the OpenSpec card and the Jira rows; ⓘ opens the
     await ui.press({ key: 'info:openspec:proposal' })
     expect(await ui.find({ type: 'Text', text: /Por que existe/ })).toBeDefined()
     await ui.press({ key: 'info:openspec:proposal' })
-    await ui.press({ key: 'group:wave:0' })
+    await ui.press({ key: 'group:tasks:done' })
     await ui.unmount()
   }
 })

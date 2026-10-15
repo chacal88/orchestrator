@@ -49,7 +49,8 @@ import {
   startFlow,
 } from './flow'
 import { defaultFlows } from './flows/index'
-import { renderPane } from './pane'
+import { bandSummary, parseEvents, stepTimes } from './glance'
+import { renderBand, renderPane } from './pane'
 import { firstSite, issueUrl, jiraKeys, parseIssue } from './jira'
 import { changeDir, openSpecView } from './openspec'
 import {
@@ -89,6 +90,7 @@ const WAITING = { plugin: 'orquestrador', key: 'waiting' } as const
 const ANSWERED = { plugin: 'orquestrador', key: 'answered' } as const
 const GATES_SEEN = { plugin: 'orquestrador', key: 'gates' } as const
 const EDITED_AT = { plugin: 'orquestrador', key: 'editedAt' } as const
+const PANE_OPEN = { plugin: 'orquestrador', key: 'paneOpen' } as const
 const START_SESSION = 'mcp__ccd_session__start_session'
 const ARCHIVE_SESSION = 'mcp__ccd_session_mgmt__archive_session'
 const EDIT_TOOLS = new Set(['Edit', 'Write', 'MultiEdit', 'NotebookEdit'])
@@ -391,6 +393,7 @@ const refresh = async ($: EngineInterface): Promise<void> => {
     problems.push(describeError('flow', error))
     return undefined
   })
+  const flowTimes = flow === undefined ? undefined : await loadFlowTimes($, flow.change).catch(() => undefined)
 
   const repoUrl = await $.session
     .repo()
@@ -406,6 +409,7 @@ const refresh = async ($: EngineInterface): Promise<void> => {
     jiraNote: jira.note,
     skips,
     flow,
+    ...(flowTimes === undefined ? {} : { flowTimes }),
     updatedAt: await $.clock.now(),
     warning: problems.length === 0 ? undefined : problems.join(' · '),
   }
@@ -533,7 +537,7 @@ const publishPlan = async ($: EngineInterface, input: Record<string, unknown>): 
   await $.fs.write(`${await baseDir($)}/runs/${runKey(parsed.change)}.json`, JSON.stringify(parsed))
   await groupQuietly($, parsed.change)
   await refreshQuietly($)
-  await $.ui.open({ id: PANE, title: '🧭 Orquestrador' })
+  await showPane($)
   const counts = phaseCounts(parsed)
   return {
     result:
@@ -886,6 +890,29 @@ const pressFlow = async ($: EngineInterface, change: string, step: string, outco
   await refreshQuietly($)
 }
 
+/** When each step of a change's flow was entered and answered, from its log. */
+const loadFlowTimes = async ($: EngineInterface, change: string) =>
+  stepTimes(parseEvents(await readText($, await flowFile($, change, 'ndjson'))))
+
+/** Opens the pane and remembers it is up, so the band's button offers to close it. */
+const showPane = async ($: EngineInterface): Promise<boolean> => {
+  const opened = await $.ui.open({ id: PANE, title: '🧭 Orquestrador' })
+  await $.state.set(PANE_OPEN, true)
+  return opened.isPlaced
+}
+
+/** `/orquestrador` and the band's button: close the pane when it is up, else open it. */
+const togglePane = async ($: EngineInterface): Promise<'opened' | 'waiting' | 'closed'> => {
+  const isUp = (await $.ui.panes()).some(pane => pane.id === PANE)
+  if (isUp) {
+    await $.ui.close({ id: PANE })
+    await $.state.set(PANE_OPEN, false)
+    return 'closed'
+  }
+  await refreshQuietly($)
+  return (await showPane($)) ? 'opened' : 'waiting'
+}
+
 /** The flow the panel shows: the published plan's change, else the latest flow of this checkout. */
 const loadFlowView = async ($: EngineInterface, run: OrchestrationRun | undefined, cwd: string): Promise<FlowView | undefined> => {
   const state =
@@ -915,7 +942,7 @@ export const register: Register = on => {
     await restoreActivity($).catch(() => undefined)
     await $.command.register({
       name: 'orquestrador',
-      description: 'Abre o painel da orquestração: ondas, fases e sessões filhas',
+      description: 'Abre ou fecha o painel da orquestração: OpenSpec, gates, pendências e tarefas',
     })
     await $.tool.register({
       name: 'plano',
@@ -937,15 +964,40 @@ export const register: Register = on => {
     $.clock.every(REFRESH_MS, () => void refreshQuietly($))
     void refreshQuietly($).then(async () => {
       const { value } = await $.state.get(VIEW)
-      if (value?.run !== undefined) await $.ui.open({ id: PANE, title: '🧭 Orquestrador' })
+      if (value?.run !== undefined) await showPane($)
     })
     return next(e)
   })
 
   on('command.run', { command: 'orquestrador' }, async $ => {
-    await refreshQuietly($)
-    const opened = await $.ui.open({ id: PANE, title: '🧭 Orquestrador' })
-    return { text: opened.isPlaced ? 'Painel do orquestrador aberto.' : 'Painel pronto; amplie a janela para vê-lo.' }
+    const done = await togglePane($)
+    return {
+      text:
+        done === 'closed'
+          ? 'Painel do orquestrador fechado.'
+          : done === 'opened'
+            ? 'Painel do orquestrador aberto.'
+            : 'Painel pronto; amplie a janela para vê-lo.',
+    }
+  })
+
+  on('ui.close', async ($, e, next) => {
+    const closed = await next(e)
+    if (e.id === PANE) await $.state.set(PANE_OPEN, false)
+    return closed
+  }).catch(($, e, next) => (next.called ? undefined : next(e)))
+
+  on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
+    if (e.props.hasSurvey) return next(e)
+    const { value: view } = await $.state.get(VIEW)
+    const { value: answered = [] } = await $.state.get(ANSWERED)
+    const summary = view === undefined ? undefined : bandSummary(view, answered)
+    if (summary === undefined) return next(e)
+    const { value: paneOpen = false } = await $.state.get(PANE_OPEN)
+    const { Box, Text, Button } = $.ui.resolve(e)
+    return renderBand({ Box, Text, Button }, summary, paneOpen, () => {
+      void togglePane($).catch(() => $.ui.toast('Não consegui abrir ou fechar o painel.'))
+    })
   })
 
   on('tool.call', async ($, e, next) => {

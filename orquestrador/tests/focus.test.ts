@@ -52,36 +52,37 @@ const PLAN = {
   ],
 }
 
-test('the current wave leads with its phases in plain words; later and closed waves start folded', async ($, on) => {
+test('Tarefas leads with the phase in progress; pending phases are one line each, closed ones fold into one line', async ($, on) => {
   world(on)
   await $.tool.call(PLAN as never)
 
   for (const surface of ['desktop', 'terminal'] as const) {
     const ui = await $.ui.mount({ plugin: 'orquestrador', surface, ...PANE })
     expect(await ui.find({ type: 'Text', text: /2 de 4 fases/ })).toBeDefined()
-    expect(await ui.find({ type: 'Text', text: /Agora · Onda 2 · evolução/ })).toBeDefined()
+    expect(await ui.find({ type: 'Text', text: /Agora: Onda 2 · evolução/ })).toBeDefined()
     expect(await ui.find({ type: 'Text', text: /A fase só fecha com os testes passando/ })).toBeDefined()
     expect(await ui.find({ type: 'Text', text: /Próximas camadas do painel/ })).toBeDefined()
+    // the separate Agora / Depois / Concluído cards are gone
+    expect(await ui.find({ key: 'card:now' })).toBeUndefined()
+    expect(await ui.find({ key: 'card:later' })).toBeUndefined()
+    expect(await ui.find({ key: 'card:done' })).toBeUndefined()
 
-    // later and closed waves are one line each until pressed
-    expect(await ui.find({ type: 'Text', text: /Reiniciar e conferir/ })).toBeUndefined()
-    await ui.press({ key: 'group:wave:2' })
+    // a pending phase is one line; pressing it opens what it is
     expect(await ui.find({ type: 'Text', text: /Reiniciar e conferir/ })).toBeDefined()
     expect(await ui.find({ type: 'Text', text: /após 2\.2/ })).toBeDefined()
     expect(await ui.find({ type: 'Text', text: /Conferir no app/ })).toBeUndefined()
     await ui.press({ key: 'summary:2:3.1' })
     expect(await ui.find({ type: 'Text', text: /Conferir no app/ })).toBeDefined()
 
-    // the closed waves sit folded in one card
-    expect(await ui.find({ type: 'Text', text: /Onda 1 · painel v1/ })).toBeUndefined()
-    await ui.press({ key: 'card:done' })
-    await ui.press({ key: 'group:wave:0' })
+    // closed phases sit folded in one line
+    expect(await ui.find({ type: 'Text', text: /✓ 2 concluídas/ })).toBeDefined()
+    expect(await ui.find({ type: 'Text', text: /^Painel$/ })).toBeUndefined()
+    await ui.press({ key: 'group:tasks:done' })
     expect(await ui.find({ type: 'Text', text: /^Painel$/ })).toBeDefined()
+    expect(await ui.find({ type: 'Text', text: /^Visão OpenSpec$/ })).toBeDefined()
 
     await ui.press({ key: 'summary:2:3.1' })
-    await ui.press({ key: 'group:wave:2' })
-    await ui.press({ key: 'group:wave:0' })
-    await ui.press({ key: 'card:done' })
+    await ui.press({ key: 'group:tasks:done' })
     await ui.unmount()
   }
 })
@@ -92,7 +93,7 @@ test('the phase in progress lists the tasks.md items it delivers, ticked as they
   await $.tool.call({ ...PLAN, changePath: 'openspec/changes/demo', waves: PLAN.waves.map((wave, w) => (w === 1 ? { ...wave, phases: wave.phases.map(p => (p.id === '2.2' ? { ...p, tasks: '2.1–2.2' } : p)) } : wave)) } as never)
 
   const ui = await $.ui.mount({ plugin: 'orquestrador', surface: 'desktop', ...PANE })
-  expect(await ui.find({ type: 'Text', text: /^Tarefas$/ })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: /^tasks\.md$/ })).toBeDefined()
   expect(await ui.find({ type: 'Text', text: /1 de 2/ })).toBeDefined()
   expect(await ui.find({ type: 'Text', text: /Mostrar na fase/ })).toBeDefined()
   expect(await ui.find({ type: 'Text', text: /Outra fase/ })).toBeUndefined()

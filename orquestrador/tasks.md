@@ -25,7 +25,7 @@
 - [ ] 4.6 Execução das fases do tasks.md como um laço do flow, usando os gates de fase existentes; ao fechar a fase, a sessão dela é arquivada (com o trabalho já commitado)
 - [ ] 4.7 Depois do PR: "Em QA" (QA aprovou / QA pediu ajustes, que volta para as fases), "Em produção" (detecção automática quando o agente faz o deploy, ou botão), e arquivamento da change (openspec archive, sessões restantes e grupo da barra lateral)
 - [ ] 4.8 Jira: o painel avisa quando a issue deve mudar de estado e só move depois do clique do dono
-- [ ] 4.9 Painel: caixa Gates como lista no estilo "Tarefas em segundo plano" (um passo por linha, concluídos recolhidos); caixa Tarefas com as fases do OpenSpec e suas tarefas; ordem OpenSpec, Gates, Precisa de você, Tarefas. `/orquestrador` passa a abrir e fechar o painel, e uma faixa fina acima do campo de mensagem (só quando há orquestração) mostra onda, fases em voo e pendências do dono, com um botão para abrir e fechar o painel
+- [x] 4.9 Painel: caixa Gates como lista no estilo "Tarefas em segundo plano" (um passo por linha, concluídos recolhidos); caixa Tarefas com as fases do OpenSpec e suas tarefas; ordem OpenSpec, Gates, Precisa de você, Tarefas. `/orquestrador` passa a abrir e fechar o painel, e uma faixa fina acima do campo de mensagem (só quando há orquestração) mostra onda, fases em voo e pendências do dono, com um botão para abrir e fechar o painel
 - [ ] 4.10 Skill change-orchestrator passa a seguir o flow: a coordenação pergunta ao mod qual é o próximo passo em vez de decidir sozinha
 - [ ] 4.11 Testes, validação do mod e conferência no app com uma change real
 

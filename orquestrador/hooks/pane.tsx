@@ -11,6 +11,8 @@ import type {
 import type {
   Attention,
   EvidenceState,
+  FlowStepKind,
+  FlowStepView,
   GateCheck,
   GateState,
   GateView,
@@ -25,6 +27,8 @@ import type {
 import { FINAL_SCOPE, MAX_LIVE_SESSIONS, familyCheck, gateViews, isOpenGate, liveSessions } from './gates'
 import { divergence } from './jira'
 import { tasksForPhase } from './openspec'
+import { formatElapsed } from './glance'
+import type { BandSummary } from './glance'
 import { attentionItems, nowAndNext, phaseCounts, phaseViews, planProgress } from './model'
 
 export type PaneElements = {
@@ -121,6 +125,10 @@ const GATE_WORD: Record<GateState, string> = {
   skipped: 'pulado por você',
 }
 const NO_CHECK: GateCheck = { records: {}, editedAt: undefined }
+
+/** Who moves a step: a script, a session, or the owner's press in the panel. */
+const KIND_ICON: Record<FlowStepKind, string> = { automatic: '⚙', session: '🤖', loop: '🤖', owner: '✋' }
+const STEP_MARK: Record<FlowStepView['state'], string> = { done: '✓', current: '▶', pending: '○', skipped: '⏭' }
 
 const formatTime = (ms: number): string =>
   new Date(ms).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })
@@ -586,12 +594,6 @@ export const renderPane = (
     const counts = phaseCounts(run)
     const total = STATUS_ORDER.reduce((sum, s) => sum + counts[s], 0)
     const live = liveSessions(view.children, view.self?.sessionId, view.self?.cwd).length
-    const finalGates = gateViews(
-      run.finalGates,
-      FINAL_SCOPE,
-      familyCheck([view.self?.gates ?? NO_CHECK, ...view.children.map(c => c.gates ?? NO_CHECK)]),
-      skips,
-    )
     const legend = STATUS_ORDER.filter(s => counts[s] > 0)
     const byStatus = (s: PhaseStatus) =>
       phaseViews(run, view.children).flatMap((phases, w) => phases.filter(p => p.status === s).map(p => ({ phase: p, w })))
@@ -674,18 +676,6 @@ export const renderPane = (
                 </Text>,
               ]
             : []),
-          ...(finalGates.length === 0
-            ? []
-            : [
-                group(
-                  'final-gates',
-                  'Checagens antes de juntar o código',
-                  `${finalGates.filter(g => !isOpenGate(g)).length}/${finalGates.length}`,
-                  true,
-                  () => gateRows(finalGates),
-                  'Rodam uma vez, com o código de todas as fases já junto; enquanto não passam, o código não é juntado na branch principal.',
-                ),
-              ]),
           ...(view.jiraNote === undefined
             ? []
             : [
@@ -704,16 +694,6 @@ export const renderPane = (
   const { now } = run === undefined ? { now: undefined } : nowAndNext(run)
   const waveName = (w: number) => `Onda ${w + 1}${run?.waves[w]?.title ? ` · ${run.waves[w]?.title}` : ''}`
   const phaseKey = (w: number, phase: PhaseView) => `summary:${w}:${phase.id}`
-  const phaseGates = (phase: PhaseView) =>
-    gateRows(
-      gateViews(
-        phase.gates,
-        phase.id,
-        phase.session === undefined ? (view.self?.gates ?? NO_CHECK) : (phase.card?.gates ?? NO_CHECK),
-        skips,
-      ),
-    )
-
   /** What the session doing a phase is on now, said so the owner can read it: the step, then how far. */
   const workRows = (c: SessionCard, scope = ''): RenderElement[] => {
     const progress = planProgress(c.plan)
@@ -751,7 +731,7 @@ export const renderPane = (
     const done = tasks.filter(t => t.done).length
     return [
       <Box flexDirection="column" marginTop={1}>
-        {row(<Text dimColor>Tarefas</Text>, `${done} de ${tasks.length}`)}
+        {row(<Text dimColor>tasks.md</Text>, `${done} de ${tasks.length}`)}
         {tasks.map(task =>
           row(
             <Text wrap="truncate-end" dimColor={task.done}>
@@ -801,7 +781,6 @@ export const renderPane = (
       ) : undefined}
       {phaseTasks(phase)}
       {worker !== undefined && <Box flexDirection="column" marginTop={1}>{workRows(worker, `card:${phase.id}`)}</Box>}
-      {phaseGates(phase)}
     </Box>
     )
   }
@@ -840,60 +819,225 @@ export const renderPane = (
               )}
               {phaseTasks(phase)}
               {phase.card !== undefined && workRows(phase.card, `line:${w}:${phase.id}`)}
-              {phaseGates(phase)}
             </Box>,
           ]
         : []),
     ]
   }
 
-  const nowCard = (): RenderElement[] => {
-    if (run === undefined || now === undefined) return []
-    const phases = waves[now] ?? []
-    const active = phases.filter(p => p.status !== 'done')
-    const closed = phases.filter(p => p.status === 'done')
-    const accent = STATUS_HEX[waveStatus(phases)]
+  /** The current wave's words and issue, then every phase: in progress open, pending one line each, closed folded. */
+  const tasksCard = (): RenderElement[] => {
+    if (run === undefined) return []
+    const all = waves.flatMap((phases, w) => phases.map(phase => ({ phase, w })))
+    if (all.length === 0) return []
+    const active = all.filter(({ phase }) => phase.status === 'running' || phase.status === 'blocked')
+    const pending = all.filter(({ phase }) => phase.status === 'pending')
+    const closed = all.filter(({ phase }) => phase.status === 'done')
+    const wavePhases = now === undefined ? [] : (waves[now] ?? [])
     return [
       card(
-        'now',
-        `Agora · ${waveName(now)}`,
+        'tasks',
+        'Tarefas',
         [
-          ...(run.waves[now]?.summary === undefined ? [] : [<Text wrap="wrap">{run.waves[now]?.summary}</Text>]),
-          ...jiraRows(run.waves[now]?.jira, waveStatus(phases)),
-          <Box flexDirection="column" rowGap={1} marginTop={1}>
-            {active.map(phaseCard)}
-          </Box>,
-          ...closed.flatMap(phase => phaseLine(phase, now)),
+          ...(now === undefined
+            ? []
+            : [
+                <Text dimColor wrap="truncate-end">
+                  Agora: {waveName(now)}
+                </Text>,
+                ...(run.waves[now]?.summary === undefined ? [] : [<Text wrap="wrap">{run.waves[now]?.summary}</Text>]),
+                ...jiraRows(run.waves[now]?.jira, waveStatus(wavePhases)),
+              ]),
+          ...(active.length === 0
+            ? []
+            : [
+                <Box flexDirection="column" rowGap={1} marginTop={1}>
+                  {active.map(({ phase }) => phaseCard(phase))}
+                </Box>,
+              ]),
+          ...(pending.length === 0
+            ? []
+            : [<Box flexDirection="column" marginTop={1}>{pending.flatMap(({ phase, w }) => phaseLine(phase, w))}</Box>]),
+          ...(closed.length === 0
+            ? []
+            : [
+                <Box marginTop={1}>
+                  {group('tasks:done', `✓ ${closed.length} concluídas`, '', false, () =>
+                    closed.flatMap(({ phase, w }) => phaseLine(phase, w)),
+                  )}
+                </Box>,
+              ]),
         ],
-        `${closed.length} de ${phases.length}`,
-        accent,
+        `${closed.length} de ${all.length} fases`,
       ),
     ]
   }
 
-  const waveGroups = (indices: readonly number[]): RenderElement[] =>
-    indices.map(w => {
-      const phases = waves[w] ?? []
-      return group(
-        `wave:${w}`,
-        waveName(w),
-        `${phases.filter(p => p.status === 'done').length}/${phases.length}`,
-        false,
-        () => [...jiraRows(run?.waves[w]?.jira, waveStatus(phases)), ...phases.flatMap(phase => phaseLine(phase, w))],
-        run?.waves[w]?.summary,
-      )
-    })
+  const phaseGateViews = (phase: PhaseView): GateView[] =>
+    gateViews(
+      phase.gates,
+      phase.id,
+      phase.session === undefined ? (view.self?.gates ?? NO_CHECK) : (phase.card?.gates ?? NO_CHECK),
+      skips,
+    )
 
-  const later = waves.map((_, w) => w).filter(w => now !== undefined && w > now)
-  const earlier = waves.map((_, w) => w).filter(w => now === undefined || w < now)
+  /** One phase of the loop: its gates in one line ("testes ✓ lint ○"), then the open ones with the owner's skip. */
+  const loopPhase = (phase: PhaseView): RenderElement[] => {
+    const gates = phaseGateViews(phase)
+    const isActive = phase.status === 'running' || phase.status === 'blocked'
+    return [
+      row(
+        <Text wrap="truncate-end" dimColor={phase.status === 'done'}>
+          <Text color={STATUS_HEX[phase.status]}>● </Text>
+          {phase.icon ? `${phase.icon} ` : ''}
+          {phase.title}
+        </Text>,
+        gates.length === 0 ? (
+          STATUS_WORD[phase.status]
+        ) : (
+          <Text>
+            {gates.map((g, i) => (
+              <Text color={GATE_HEX[g.state]}>{`${i === 0 ? '' : ' '}${g.label} ${GATE_MARK[g.state]}`}</Text>
+            ))}
+          </Text>
+        ),
+        gates.length === 0 ? STATUS_HEX[phase.status] : undefined,
+      ),
+      ...(isActive && gates.some(isOpenGate)
+        ? [<Box flexDirection="column" paddingLeft={2}>{gateRows(gates.filter(isOpenGate))}</Box>]
+        : []),
+    ]
+  }
 
-  // Reading order: how much is left, what the change is (OpenSpec guides it), what needs the
-  // owner, what runs now and next; what is finished goes last.
+  const loopPhases = (): RenderElement[] =>
+    waves.flat().length === 0
+      ? [<Text dimColor>Sem plano publicado: as fases aparecem aqui quando a coordenação publicar o plano.</Text>]
+      : waves.flat().flatMap(loopPhase)
+
+  const flow = view.flow
+  const times = view.flowTimes ?? {}
+
+  const stepWord = (step: FlowStepView): { word: string; hex: string } => {
+    if (step.state === 'done') return { word: step.outcomeLabel ?? 'concluída', hex: STATUS_HEX.done }
+    if (step.state === 'skipped') return { word: 'pulada', hex: STATUS_HEX.pending }
+    if (step.state === 'pending') return { word: 'pendente', hex: STATUS_HEX.pending }
+    if (flow?.status === 'escalated') return { word: 'no limite: você decide', hex: STATUS_HEX.blocked }
+    return flow?.waitingOn === 'owner'
+      ? { word: 'esperando você', hex: GATE_HEX.stale }
+      : { word: 'em andamento', hex: STATUS_HEX.running }
+  }
+
+  const stepElapsed = (step: FlowStepView): string | undefined => {
+    const time = times[step.id]
+    if (time === undefined || step.state === 'pending' || step.state === 'skipped') return undefined
+    const to = time.to ?? (step.state === 'current' ? view.updatedAt : undefined)
+    return to === undefined || to < time.from ? undefined : formatElapsed(to - time.from)
+  }
+
+  /** One step per line, as the app's background-tasks list draws a task: mark, who acts, title; time and state. */
+  const stepLine = (step: FlowStepView): RenderElement => {
+    const { word, hex } = stepWord(step)
+    const elapsed = stepElapsed(step)
+    const isCurrent = step.state === 'current'
+    return row(
+      <Text wrap="truncate-end" bold={isCurrent} dimColor={step.state === 'done' || step.state === 'skipped'}>
+        <Text color={hex}>{STEP_MARK[step.state]} </Text>
+        {`${KIND_ICON[step.kind]} ${step.title}`}
+        {step.attempts > 1 && step.state !== 'pending' && <Text dimColor>{` · tentativa ${step.attempts} de ${step.maxAttempts}`}</Text>}
+      </Text>,
+      <Box flexDirection="row" columnGap={1}>
+        {elapsed !== undefined && <Text dimColor>{elapsed}</Text>}
+        <Text color={hex}>{word}</Text>
+      </Box>,
+    )
+  }
+
+  const finalGateRows = (): RenderElement[] => {
+    if (run === undefined) return []
+    const finalGates = gateViews(
+      run.finalGates,
+      FINAL_SCOPE,
+      familyCheck([view.self?.gates ?? NO_CHECK, ...view.children.map(c => c.gates ?? NO_CHECK)]),
+      skips,
+    )
+    return finalGates.length === 0
+      ? []
+      : [
+          group(
+            'final-gates',
+            'Checagens antes de juntar o código',
+            `${finalGates.filter(g => !isOpenGate(g)).length}/${finalGates.length}`,
+            true,
+            () => gateRows(finalGates),
+            'Rodam uma vez, com o código de todas as fases já junto; enquanto não passam, o código não é juntado na branch principal.',
+          ),
+        ]
+  }
+
+  /** The harness the change follows: the flow's steps, the phases' gates while the loop runs, the final gates. */
+  const gatesCard = (): RenderElement[] => {
+    const anyPhaseGates = waves.flat().some(p => (p.gates?.length ?? 0) > 0)
+    if (flow === undefined && !anyPhaseGates && (run?.finalGates?.length ?? 0) === 0) return []
+    if (flow === undefined) {
+      return [card('gates', 'Gates', [...(anyPhaseGates ? loopPhases() : []), ...finalGateRows()])]
+    }
+    const folded = flow.steps.filter(s => s.state === 'done' || s.state === 'skipped')
+    const shown = flow.steps.filter(s => s.state === 'current' || s.state === 'pending')
+    const hasLoop = flow.steps.some(s => s.kind === 'loop')
+    const current = flow.current
+    const accent = current === undefined ? undefined : stepWord(current).hex
+    return [
+      card(
+        'gates',
+        'Gates',
+        [
+          ...(folded.length === 0
+            ? []
+            : [group('gates:done', `✓ ${folded.length} concluídas`, '', false, () => folded.map(stepLine))]),
+          ...shown.map(step =>
+            step.state === 'current' ? (
+              <Box flexDirection="column" borderStyle="round" borderColor={accent} paddingX={1}>
+                {stepLine(step)}
+                {step.description !== undefined && (
+                  <Text dimColor wrap="wrap">
+                    {step.description}
+                  </Text>
+                )}
+                {flow.status === 'escalated' && (
+                  <Text color="warning" wrap="wrap">
+                    Chegou ao limite de {step.maxAttempts} tentativas: escolha em "Precisa de você" se tenta de novo.
+                  </Text>
+                )}
+                {step.kind === 'loop' && <Box flexDirection="column" marginTop={1}>{loopPhases()}</Box>}
+              </Box>
+            ) : (
+              stepLine(step)
+            ),
+          ),
+          ...(flow.status === 'done'
+            ? [<Text color={STATUS_HEX.done}>Flow concluído.</Text>]
+            : flow.status === 'aborted'
+              ? [<Text color={STATUS_HEX.blocked}>Flow encerrado por você.</Text>]
+              : []),
+          ...(!hasLoop && anyPhaseGates ? [<Box flexDirection="column" marginTop={1}>{loopPhases()}</Box>] : []),
+          ...finalGateRows(),
+          <Text dimColor wrap="wrap">
+            ⚙ automático (um script decide) · 🤖 sessão faz · ✋ você decide no painel
+          </Text>,
+        ],
+        `${flow.flowTitle} · ${folded.length}/${flow.steps.length}`,
+        flow.status === 'escalated' ? STATUS_HEX.blocked : undefined,
+      ),
+    ]
+  }
+
+  // Reading order: how much is left, what the change is (OpenSpec guides it), the harness it
+  // follows, what needs the owner, then the phases and their tasks.
   cards.push(...runCard())
   if (view.openspec !== undefined) cards.push(openSpecCard(view.openspec))
+  cards.push(...gatesCard())
   if (attentionCard !== undefined) cards.push(attentionCard)
-  cards.push(...nowCard())
-  if (later.length > 0) cards.push(card('later', 'Depois', waveGroups(later), `${later.length} ondas`))
+  cards.push(...tasksCard())
 
   const own = planProgress(ownPlan)
   cards.push(
@@ -947,11 +1091,6 @@ export const renderPane = (
     )
   }
 
-  if (earlier.length > 0) {
-    const closedPhases = earlier.reduce((sum, w) => sum + (waves[w]?.length ?? 0), 0)
-    cards.push(card('done', 'Concluído', waveGroups(earlier), `${closedPhases} fases`, undefined, now === undefined))
-  }
-
   if (view.warning !== undefined) {
     cards.push(
       <Box paddingX={1}>
@@ -965,6 +1104,34 @@ export const renderPane = (
   return (
     <Box flexDirection="column" rowGap={1}>
       {cards}
+    </Box>
+  )
+}
+
+/** The thin band above the prompt: the flow's step, phases in flight, what waits on the owner; a button for the pane. */
+export const renderBand = (
+  { Box, Text, Button }: Pick<PaneElements, 'Box' | 'Text' | 'Button'>,
+  summary: BandSummary,
+  paneOpen: boolean,
+  togglePane: () => void,
+): RenderElement => {
+  const parts = [
+    summary.step === undefined ? undefined : `passo: ${summary.step}`,
+    `${summary.inFlight} ${summary.inFlight === 1 ? 'fase em voo' : 'fases em voo'}`,
+  ].filter((part): part is string => part !== undefined)
+  return (
+    <Box flexDirection="row" justifyContent="space-between" columnGap={1}>
+      <Box flexShrink={1}>
+        <Text wrap="truncate-end">
+          <Text dimColor>🧭 {parts.join(' · ')}</Text>
+          {summary.waiting > 0 && (
+            <Text color="warning">{` · ${summary.waiting} ${summary.waiting === 1 ? 'pendência sua' : 'pendências suas'}`}</Text>
+          )}
+        </Text>
+      </Box>
+      <Button key="band:pane" plain dimColor onPress={togglePane}>
+        {paneOpen ? 'Fechar painel' : 'Abrir painel'}
+      </Button>
     </Box>
   )
 }
