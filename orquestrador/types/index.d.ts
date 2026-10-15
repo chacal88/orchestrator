@@ -70,11 +70,19 @@ export type FlowStep = {
   when: 'visual' | undefined
   /** loop: what it iterates over. */
   over: 'tasks' | undefined
+  /** Besides its own answerer, the mod answers the step when it sees one of these commands succeed (e.g. the deploy). */
+  detect: FlowDetect | undefined
+  /** On its pass the mod archives the change's remaining phase sessions and removes its sidebar group. */
+  cleanup: boolean
 }
+
+/** Commands whose success answers a step, and the outcome they give it; logged with actor "detect". */
+export type FlowDetect = { commands: string[]; outcome: string }
 
 export type FlowDef = { id: string; title: string; description: string; steps: FlowStep[] }
 
-export type FlowActor = 'session' | 'automatic' | 'owner'
+/** mod: the mod closing a loop; detect: the mod seeing a step's detect command succeed. */
+export type FlowActor = 'session' | 'automatic' | 'owner' | 'mod' | 'detect'
 
 export type FlowStatus = 'running' | 'escalated' | 'done' | 'aborted'
 
@@ -97,10 +105,21 @@ export type FlowState = {
   attempts: Record<string, number>
   records: Record<string, FlowStepRecord>
   escalation?: FlowEscalation
+  /** loop: the phases the mod closed, by phase id; kept when the flow comes back to the loop. */
+  closed?: Record<string, PhaseClosure>
+  /** Why the flow came back to an earlier step (e.g. QA asked for changes), until it reaches that step again. */
+  reopened?: FlowReopen
+  /** A note a session left for the owner step that waits; it joins the owner's answer when pressed. */
+  pendingNote?: string
   seq: number
   startedAt: number
   updatedAt: number
 }
+
+/** One phase of the loop, closed by the mod once its gates passed and its tasks were ticked. */
+export type PhaseClosure = { at: number; tasks: string[]; session?: string; archived: boolean }
+
+export type FlowReopen = { step: string; outcome: string; label: string; by: FlowActor; at: number; note?: string }
 
 export type FlowEvent = {
   seq: number
@@ -119,6 +138,10 @@ export type FlowEvent = {
     | 'round'
     | 'attached'
     | 'plan-rejected'
+    | 'phase-closed'
+    | 'session-archived'
+    | 'noted'
+    | 'cleanup'
   step: string
   by: FlowActor | 'mod'
   outcome?: string

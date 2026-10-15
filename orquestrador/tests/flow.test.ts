@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'claude-code/testing'
 
-import type { FlowDef, FlowState } from '../types'
+import type { FlowActor, FlowDef, FlowState } from '../types'
 import {
   applyOutcome,
   automaticOutcome,
@@ -28,7 +28,7 @@ const err = (r: unknown): string => (r as { error?: string }).error ?? ''
 const start = (flow: FlowDef, visual = false): FlowState =>
   startFlow(flow, { change: 'demo', coordinatorCwd: '/w', visual }, 1).state
 
-type Report = [string, string, 'session' | 'automatic' | 'owner']
+type Report = [string, string, FlowActor]
 
 /** Walks a flow by a list of [step, outcome, by] reports, failing on the first refusal. */
 const walk = (state: FlowState, reports: Report[]): FlowState =>
@@ -127,7 +127,10 @@ describe('the engine', () => {
     )
     const released = ok(ownerPress(atLiberacao, 'liberacao', 'liberado', 3)).state
     expect(released.current).toBe('executar')
-    expect(ok(applyOutcome(released, { step: 'executar', outcome: 'concluidas', by: 'session' }, 4)).state.current).toBe('revisao-codigo')
+    expect(err(applyOutcome(released, { step: 'executar', outcome: 'concluidas', by: 'session' }, 4))).toMatch(
+      /is a loop step: only the mod, once every phase is closed/,
+    )
+    expect(ok(applyOutcome(released, { step: 'executar', outcome: 'concluidas', by: 'mod' }, 4)).state.current).toBe('revisao-codigo')
   })
 
   test('only outcomes the step declares are accepted', () => {
@@ -162,7 +165,7 @@ describe('the engine', () => {
     const atQa = walk(start(rapido), [
       ['planejar', 'pronto', 'session'],
       ['validar', 'passou', 'automatic'],
-      ['executar', 'concluidas', 'session'],
+      ['executar', 'concluidas', 'mod'],
       ['revisao-codigo', 'aprovado', 'session'],
       ['checagem', 'passou', 'automatic'],
       ['pr', 'aberto', 'session'],
@@ -172,13 +175,15 @@ describe('the engine', () => {
     expect(back.current).toBe('executar')
     expect(Object.keys(back.records)).toEqual(['planejar', 'validar'])
     expect(back.attempts.executar).toBe(2)
+    expect(back.reopened).toEqual({ step: 'qa', outcome: 'ajustes', label: 'QA pediu ajustes', by: 'owner', at: 30 })
+    expect(describeFlow(back)).toMatch(/Came back from "qa" \(QA pediu ajustes\)\.$/)
   })
 
   test('the last step ends the flow; nothing more is accepted', () => {
     const atArquivar = walk(start(rapido), [
       ['planejar', 'pronto', 'session'],
       ['validar', 'passou', 'automatic'],
-      ['executar', 'concluidas', 'session'],
+      ['executar', 'concluidas', 'mod'],
       ['revisao-codigo', 'aprovado', 'session'],
       ['checagem', 'passou', 'automatic'],
       ['pr', 'aberto', 'session'],

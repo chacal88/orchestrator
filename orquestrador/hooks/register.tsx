@@ -44,12 +44,16 @@ import {
   automaticOutcome,
   currentStep,
   describeFlow,
+  detectedOutcome,
+  noteOwnerStep,
   flowView,
   mergeFlows,
   ownerPress,
   parseFlow,
   startFlow,
 } from './flow'
+import type { Moved } from './flow'
+import { closePhase, finishLoop, isClosed, loopRefusal, loopUnits, phaseSessions, uncommitted, unitRefusal, withEvents } from './lifecycle'
 import { defaultFlows } from './flows/index'
 import {
   MOCKUP_STEP,
@@ -96,6 +100,7 @@ const OPEN_SESSION = 'mcp__ccd_window__open_session_in'
 const LIST_GROUPS = 'mcp__ccd_sidebar__list_groups'
 const CREATE_GROUP = 'mcp__ccd_sidebar__create_group'
 const MOVE_SESSIONS = 'mcp__ccd_sidebar__move_sessions'
+const DELETE_GROUP = 'mcp__ccd_sidebar__delete_group'
 const REFRESH_MS = 15_000
 /** Jira is asked again at most this often; the panel refreshes every 15 s. */
 const JIRA_TTL_MS = 120_000
@@ -708,13 +713,17 @@ const FLOW_SCHEMA = {
   properties: {
     action: {
       type: 'string',
-      enum: ['list', 'start', 'status', 'report', 'round', 'mockup'],
+      enum: ['list', 'start', 'status', 'report', 'round', 'mockup', 'close', 'note'],
       description:
         'list: the flows on offer. start: begin a flow for a change. status: where the change stands and who ' +
-        'answers the current step. report: the outcome of the current session or loop step. round: record one ' +
+        'answers the current step. report: the outcome of the current session step. round: record one ' +
         'grill round (questions and the owner\'s answers) while the flow is on the grill. mockup: attach the ' +
-        'mockup the owner reviews while the flow is on the mockup.',
+        'mockup the owner reviews while the flow is on the mockup. close: during the phase loop, ' +
+        'close `phase` once its gates passed, its tasks are ticked in tasks.md and its work is committed; the mod ' +
+        'archives its session and ends the loop when every phase is closed (without `phase`, it only checks that). ' +
+        'note: leave `note` for the owner step that waits (e.g. what QA asked); it joins the owner\'s answer.',
     },
+    phase: { type: 'string', description: 'close: the phase id, as in the published plan (e.g. "4.6") or a tasks.md section number.' },
     change: {
       type: 'string',
       description: 'Change id. Optional for status/report when this coordinator runs a single flow.',
@@ -724,7 +733,7 @@ const FLOW_SCHEMA = {
     changePath: { type: 'string', description: 'start: path to the change folder (holds evidence.md).' },
     step: { type: 'string', description: 'report: the id of the step being reported; must be the current step.' },
     outcome: { type: 'string', description: 'report: one of the outcomes the step declares.' },
-    note: { type: 'string', description: 'report: one line on what was done (pt-BR).' },
+    note: { type: 'string', description: 'report/note: one line on what was done, or the note for the owner step (pt-BR).' },
     questions: {
       type: 'array',
       description:
@@ -864,7 +873,15 @@ const handleFlowTool = async ($: EngineInterface, input: Record<string, unknown>
   if ('error' in picked) return flowError(picked.error)
   if (action === 'status') return { result: await describeWithPrep($, picked) }
   if (action === 'round' || action === 'mockup') return handlePrepAction($, picked, input)
-  if (action !== 'report') return flowError('action must be list, start, status, report, round or mockup.')
+  if (action === 'close') return closeLoopPhase($, picked, input.phase)
+  if (action === 'note') {
+    if (typeof input.note !== 'string' || input.note.trim() === '') return flowError('`note` is required.')
+    const noted = noteOwnerStep(picked, input.note.trim(), await $.clock.now())
+    if ('error' in noted) return flowError(`refused: ${noted.error}`)
+    await saveFlow($, noted.state, noted.events)
+    return { result: `Note kept for the owner's answer. ${describeFlow(noted.state)}` }
+  }
+  if (action !== 'report') return flowError('action must be list, start, status, report, round, mockup, close or note.')
   if (typeof input.step !== 'string' || typeof input.outcome !== 'string') {
     return flowError('`step` and `outcome` are required to report.')
   }
@@ -882,6 +899,128 @@ const handleFlowTool = async ($: EngineInterface, input: Record<string, unknown>
   return { result: `Recorded ${input.step} → ${input.outcome}. ${await describeWithPrep($, moved.state)}` }
 }
 
+/** The change's tasks.md, read from the coordinator's checkout. */
+const changeTasks = async ($: EngineInterface, state: FlowState): Promise<string | undefined> => {
+  if (state.changePath === undefined) return undefined
+  const home = (await $.env.get('HOME')) ?? ''
+  return readText($, `${changeDir(state.changePath.replace(/^~(?=\/)/, home), state.coordinatorCwd)}/tasks.md`)
+}
+
+/** The uncommitted paths of a checkout; undefined when git cannot tell (no repo, no folder). */
+const dirtyPaths = async ($: EngineInterface, cwd: string): Promise<string[] | undefined> => {
+  const ran = await $.process.run(['git', '-C', cwd, 'status', '--porcelain'], { timeoutMs: 10_000 }).catch(() => undefined)
+  return ran?.exitCode === 0 ? uncommitted(ran.stdout) : undefined
+}
+
+const dirtyReason = (label: string, cwd: string, dirty: string[] | undefined): string | undefined =>
+  dirty === undefined
+    ? `git could not read the checkout of session "${label}" (${cwd}), so the mod cannot tell its work is committed.`
+    : dirty.length === 0
+      ? undefined
+      : `session "${label}" has uncommitted changes in ${cwd} (${dirty.slice(0, 5).join(', ')}${dirty.length > 5 ? '…' : ''}); ` +
+        'commit them in that session first.'
+
+const archiveSession = async ($: EngineInterface, sessionId: string, reason: string): Promise<string | undefined> => {
+  const ran = await callTool($, { tool: ARCHIVE_SESSION, session_id: sessionId, reason }).catch(
+    error => ({ isError: true, text: describeError('archive', error) }) as CallResult,
+  )
+  return ran.deny ?? (ran.isError === true ? (ran.text ?? 'archive failed').slice(0, 160) : undefined)
+}
+
+/**
+ * The executar loop: a phase closes only when its gates passed, its tasks are ticked and its
+ * session's work is committed; the mod then archives that session. Once every phase is closed the
+ * mod ends the loop itself: no session reports it.
+ */
+const closeLoopPhase = async ($: EngineInterface, state: FlowState, phase: unknown): Promise<FlowReply> => {
+  const refusal = loopRefusal(state)
+  if (refusal !== undefined) {
+    await logFlowRefusal($, state, state.current, 'session', refusal)
+    return flowError(`refused: ${refusal}`)
+  }
+  const run = await readJson<OrchestrationRun>($, `${await baseDir($)}/runs/${runKey(state.change)}.json`)
+  const units = loopUnits(run, await changeTasks($, state))
+  let moved: Moved = { state, events: [] }
+  let closedNow = ''
+  if (typeof phase === 'string' && phase.trim() !== '') {
+    const unit = units.find(u => u.id === phase.trim())
+    if (unit === undefined) {
+      return flowError(`no phase "${phase.trim()}"; the phases are ${units.map(u => u.id).join(', ') || 'none'}.`)
+    }
+    if (!isClosed(state, unit)) {
+      const family = await loadFamily($)
+      const card = run === undefined ? undefined : phaseViews(run, family?.children ?? []).flat().find(p => p.id === unit.id)?.card
+      const own = unit.session === undefined
+      const check = own ? await ownCheck($) : (card?.gates ?? { records: {}, editedAt: undefined })
+      const where = own ? 'this session' : card === undefined ? `session "${unit.session}" (not found)` : `session "${card.title}"`
+      const skips = await loadSkips($, state.change)
+      const label = card?.name ?? card?.title
+      const why =
+        unitRefusal(unit, gateViews(unit.gates, unit.id, check, skips).filter(isOpenGate), where) ??
+        (card === undefined || card.isArchived ? undefined : dirtyReason(label ?? card.sessionId, card.cwd, await dirtyPaths($, card.cwd)))
+      if (why !== undefined) {
+        await logFlowRefusal($, state, state.current, 'session', why)
+        return flowError(`refused: ${why}`)
+      }
+      const failure =
+        card === undefined || card.isArchived ? undefined : await archiveSession($, card.sessionId, `Fase ${unit.id} fechada`)
+      moved = closePhase(
+        state,
+        unit,
+        { session: label, archived: card !== undefined && failure === undefined, ...(failure === undefined ? {} : { note: failure }) },
+        await $.clock.now(),
+      )
+      closedNow =
+        `Phase ${unit.id} closed` +
+        (card === undefined ? '' : failure === undefined ? `, session "${label}" archived` : `; its session was not archived: ${failure}`) +
+        '. '
+    }
+  }
+  const finished = finishLoop(moved.state, units, await $.clock.now())
+  if ('error' in finished) {
+    await saveFlow($, moved.state, moved.events)
+    return flowError(`${closedNow}${finished.error}`)
+  }
+  if ('open' in finished) {
+    await saveFlow($, moved.state, moved.events)
+    await refreshQuietly($)
+    return { result: `${closedNow}Still open: ${finished.open.map(u => `${u.id} (${u.title})`).join(', ')}.` }
+  }
+  await saveFlow($, finished.state, [...moved.events, ...finished.events])
+  await refreshQuietly($)
+  return { result: `${closedNow}Every phase is closed. ${describeFlow(finished.state)}` }
+}
+
+/**
+ * The end of a change: archive the phase sessions left in its sidebar group (only those whose
+ * work is committed) and remove the group. Each step is logged; a failure never blocks the flow.
+ */
+const cleanupChange = async ($: EngineInterface, state: FlowState): Promise<Omit<FlowEvent, 'seq'>[]> => {
+  const at = await $.clock.now()
+  const ev = (kind: FlowEvent['kind'], note: string): Omit<FlowEvent, 'seq'> => ({ at, kind, step: state.current, by: 'mod', note })
+  const name = groupName(state.change)
+  try {
+    if (!(await canCall($, LIST_GROUPS))) return [ev('cleanup', 'sidebar unavailable: sessions and group left as they are')]
+    const groupId = findGroupId((await callTool($, { tool: LIST_GROUPS })).text, name)
+    if (groupId === undefined) return [ev('cleanup', `no sidebar group ${name}`)]
+    const [self] = parseSessionRows((await callTool($, { tool: GET_SESSION, session_id: 'self' })).text)
+    const rows = parseSessionRows((await callTool($, { tool: LIST_SESSIONS, group: groupId, limit: 50 })).text)
+    const events: Omit<FlowEvent, 'seq'>[] = []
+    for (const row of phaseSessions(rows, self?.sessionId, state.coordinatorCwd)) {
+      const label = row.name ?? row.title
+      const dirty = dirtyReason(label, row.cwd, await dirtyPaths($, row.cwd))
+      const failure = dirty ?? (await archiveSession($, row.sessionId, `Change ${state.change} arquivada`))
+      events.push(ev('session-archived', failure === undefined ? label : `${label} not archived — ${failure}`))
+    }
+    const removed = await callTool($, { tool: DELETE_GROUP, group_id: groupId }).catch(() => ({ isError: true }) as CallResult)
+    const ok = removed.isError !== true && removed.deny === undefined
+    events.push(ev('cleanup', ok ? `sidebar group ${name} removed` : `sidebar group ${name} not removed: ${removed.deny ?? removed.text ?? 'failed'}`))
+    return events
+  } catch (error) {
+    return [ev('cleanup', describeError('cleanup', error))]
+  }
+}
+
 const EVIDENCE_OK = new Set(['recorded', 'green'])
 
 /** Whether evidence.md of the flow's change is filled in; a flow with no change folder has none. */
@@ -893,6 +1032,8 @@ const hasEvidence = async ($: EngineInterface, state: FlowState): Promise<boolea
   return EVIDENCE_OK.has(openSpecView({ tasks: undefined, proposal: undefined, evidence }).evidence)
 }
 
+const executedTextShort = (command: string): string => `comando: ${command.replace(/\s+/g, ' ').trim().slice(0, 80)}`
+
 /** An automatic step moves only when the mod itself sees its command finish, never on a session's word. */
 const observeFlows = async ($: EngineInterface, command: string, failed: boolean): Promise<void> => {
   const root = await $.session.root()
@@ -900,6 +1041,18 @@ const observeFlows = async ($: EngineInterface, command: string, failed: boolean
     if (state.status !== 'running' || !ownsFlow(state, root)) continue
     const step = currentStep(state)
     if (step === undefined) continue
+    const detected = detectedOutcome(step, command, failed)
+    if (detected !== undefined) {
+      const seen = applyOutcome(
+        state,
+        { step: step.id, outcome: detected, by: 'detect', note: executedTextShort(command) },
+        await $.clock.now(),
+      )
+      if ('error' in seen) continue
+      await saveFlow($, seen.state, seen.events)
+      $.ui.toast(`Flow ${state.change}: vi o deploy — ${step.outcomes[detected]?.label ?? detected}.`)
+      continue
+    }
     const outcome = automaticOutcome(step, command, failed)
     if (outcome === undefined) continue
     if (outcome === 'passou' && step.requiresEvidence && !(await hasEvidence($, state))) {
@@ -909,7 +1062,8 @@ const observeFlows = async ($: EngineInterface, command: string, failed: boolean
     }
     const moved = applyOutcome(state, { step: step.id, outcome, by: 'automatic' }, await $.clock.now())
     if ('error' in moved) continue
-    await saveFlow($, moved.state, moved.events)
+    const final = step.cleanup && outcome === 'passou' ? withEvents(moved, await cleanupChange($, state)) : moved
+    await saveFlow($, final.state, final.events)
   }
 }
 
