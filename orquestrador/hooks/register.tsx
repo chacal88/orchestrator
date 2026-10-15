@@ -1579,8 +1579,11 @@ export const register: Register = on => {
         void openSession($, card, selfId)
       },
       skip: (gate: GateView) => () => {
-        const change = view.run?.change
-        if (change === undefined) return
+        const change = view.run?.change ?? view.flow?.change
+        if (change === undefined) {
+          $.ui.toast('Não consegui registrar o pulo: o painel ainda não carregou a change. Tente de novo em alguns segundos.')
+          return
+        }
         void skipGate($, change, gate)
           .then(() => refreshQuietly($))
           .then(() => $.ui.toast(`Portão ${gate.label} pulado por decisão sua.`))

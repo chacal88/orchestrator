@@ -409,28 +409,33 @@ export const renderPane = (
 
   /** One line per gate: its mark and what proved it, then its state or the owner's two-press skip. */
   const gateRows = (gates: readonly GateView[]): RenderElement[] =>
-    gates.map(g => {
+    gates.flatMap(g => {
       const armed = isOpen(`arm:${g.skipKey}`, false)
-      return row(
+      const line = row(
         <Text wrap="truncate-end" dimColor={g.state === 'passed' || g.state === 'skipped'}>
           <Text color={GATE_HEX[g.state]}>{GATE_MARK[g.state]} </Text>
           {g.label}
           {g.evidence !== undefined && <Text dimColor> · {g.evidence}</Text>}
         </Text>,
-        <Box flexDirection="row" columnGap={1}>
+        <Box flexDirection="row" columnGap={1} flexShrink={0}>
           <Text color={GATE_HEX[g.state]}>{GATE_WORD[g.state]}</Text>
-          {isOpenGate(g) &&
-            (armed ? (
-              <Button key={`skip:${g.skipKey}`} variant="primary" onPress={actions.skip(g)}>
-                Confirmar pulo
-              </Button>
-            ) : (
-              <Button key={`arm:${g.skipKey}`} plain dimColor onPress={actions.toggle(`arm:${g.skipKey}`, false)}>
-                Pular
-              </Button>
-            ))}
+          {isOpenGate(g) && (
+            <Button key={`arm:${g.skipKey}`} plain dimColor onPress={actions.toggle(`arm:${g.skipKey}`, false)}>
+              {armed ? 'Cancelar' : 'Pular'}
+            </Button>
+          )}
         </Box>,
       )
+      // the confirmation gets a line of its own: beside the state word it fell off a narrow pane
+      if (!isOpenGate(g) || !armed) return [line]
+      return [
+        line,
+        <Box flexDirection="row" paddingLeft={2} minWidth={0}>
+          <Button key={`skip:${g.skipKey}`} variant="primary" onPress={actions.skip(g)}>
+            {`Confirmar pulo de ${g.label}`}
+          </Button>
+        </Box>,
+      ]
     })
 
   /** One line per Jira key: the key as a link, its status in its category's colour, its title; then any disagreement. */

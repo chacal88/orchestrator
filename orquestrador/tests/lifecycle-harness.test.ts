@@ -236,3 +236,34 @@ test('each session publishes its activity under its own id, and a sibling in the
   w.disk.set(TASKS, '## 1. Base\n- [x] 1.1 Modelo\n- [x] 1.2 Rotas\n\n## 2. Tela\n- [x] 2.1 Lista\n')
   expect(String((await flow($, { action: 'close', phase: 'A' })).result)).toMatch(/testes not run/)
 })
+
+test('the owner skips a phase gate from the Gates card while the loop runs, and the close honours it', async ($, on) => {
+  const w = world(on)
+  plan(w)
+  await toExecutar($)
+  w.disk.set(TASKS, '## 1. Base\n- [x] 1.1 Modelo\n- [x] 1.2 Rotas\n\n## 2. Tela\n- [x] 2.1 Lista\n')
+  const PANE = {
+    component: 'Pane',
+    requestId: 'orquestrador',
+    props: { title: 'Orquestrador', isFocused: false, bodyColumns: 60, placement: 'dock', scroll: { offset: 0, bodyRows: 80 }, view: {} },
+  } as const
+  // publishing the plan refreshes the view the panel draws from, as in the app
+  await $.tool.call({
+    tool: 'mcp__orquestrador__plano',
+    change: 'demo',
+    changePath: 'openspec/changes/demo',
+    waves: [{ phases: [
+      { id: 'A', title: 'Base', status: 'running', tasks: '1.x', session: 'fase-a', gates: ['testes'] },
+      { id: 'B', title: 'Tela', status: 'running', tasks: '2.x', session: 'fase-b' },
+    ] }],
+  } as never)
+  const ui = await $.ui.mount({ plugin: 'orquestrador', surface: 'desktop', ...PANE })
+  expect(await ui.find({ key: 'arm:A:testes' })).toBeDefined()
+  await ui.press({ key: 'arm:A:testes' })
+  await ui.press({ key: 'skip:A:testes' })
+  for (let i = 0; i < 20 && !w.disk.has(`${BASE}/gates/demo.json`); i++) await Promise.resolve()
+  expect(JSON.parse(w.disk.get(`${BASE}/gates/demo.json`) ?? '{}').skips?.['A:testes']).toBeDefined()
+  await ui.unmount()
+  const closed = await flow($, { action: 'close', phase: 'A' })
+  expect(String(closed.result)).toMatch(/^Phase A closed/)
+})
