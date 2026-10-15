@@ -7,9 +7,9 @@ Repositório: ~/.claude/mods-local (git, branch main). Cada fase trabalha numa w
 |---|---|---|---|---|---|---|
 | 0 | Git na pasta do mod | — | coordenação | main | fechada (0aa6a48) | — |
 | 1 | 🛠️ Motor do flow | 4.1–4.4 | flow-motor (local_9b505d6f, arquivada) | claude/flow-motor-b1c268 | fechada (merge 1f5910f, 88 testes) | — |
-| 2 | 🛠️ Grill e mockup | 4.5 | — | — | pendente | após onda 1 |
-| 2 | 🛠️ Fases, pós-PR e arquivamento | 4.6–4.7 | — | — | pendente | após onda 1 |
-| 2 | 🛠️ Painel: Gates e Tarefas | 4.9 | — | — | pendente | após onda 1 |
+| 2 | 🛠️ Grill e mockup | 4.5 | flow-grill (local_175df836) | claude/flow-grill-ef5ee3 | em voo | aguardar "FASE 2a" |
+| 2 | 🛠️ Fases, pós-PR e arquivamento | 4.6–4.7 | flow-ciclo (local_48e7d814) | claude/flow-ciclo-91441f | em voo | aguardar "FASE 2b" |
+| 2 | 🛠️ Painel: Gates e Tarefas | 4.9 | flow-painel (local_bbdf6775) | flow-painel | em voo | aguardar "FASE 2c" |
 | 3 | 🏷️ Jira com ok do dono | 4.8 | — | — | pendente | após onda 2 |
 | 3 | 📖 Skill segue o flow | 4.10 | — | — | pendente | após onda 2 |
 | 3 | 🧪 Conferência com change real | 4.11 | — | — | pendente | após 4.8 e 4.10 |
