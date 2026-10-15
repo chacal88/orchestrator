@@ -85,7 +85,7 @@ export const parseGates = (raw: unknown, where: string): string[] | { error: str
  * "passes" whatever the tests did, and `npm test || true` always exits 0: such a run
  * proves a failure, never a pass.
  */
-const masksExitCode = (command: string): boolean =>
+export const masksExitCode = (command: string): boolean =>
   (/(^|[^|])\|(?!\|)/.test(command) && !/pipefail/.test(command)) || /\|\|/.test(command)
 
 /**

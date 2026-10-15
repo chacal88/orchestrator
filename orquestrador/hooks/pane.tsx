@@ -46,6 +46,8 @@ export type PaneActions = {
   accept: (item: Attention) => () => void
   /** The owner's skip of one gate; the pane arms it with a first press and fires on the second. */
   skip: (gate: GateView) => () => void
+  /** The owner's answer to a flow step: the only way an owner step moves. */
+  answerFlow: (change: string, step: string, outcome: string) => () => void
 }
 
 /** Hex, not theme keys: the Svg bar and the legend squares must match exactly. */
@@ -79,6 +81,7 @@ const ATTENTION_KIND: Record<Attention['kind'], string> = {
   permission: 'Permissão',
   question: 'Pergunta',
   pr: 'PR para revisar',
+  flow: 'Passo do flow',
 }
 
 const JIRA_HEX: Record<JiraCategory, string> = {
@@ -525,7 +528,7 @@ export const renderPane = (
   const cards: RenderElement[] = []
   const run = view.run
 
-  const attention = attentionItems(view).filter(a => !actions.answered.includes(a.title))
+  const attention = attentionItems(view).filter(a => a.kind === 'flow' || !actions.answered.includes(a.title))
   const attentionCard =
     attention.length === 0
       ? undefined
@@ -557,6 +560,16 @@ export const renderPane = (
                     Aceitar recomendação
                   </Button>
                 )}
+                {item.flow !== undefined &&
+                  item.flow.choices.map((choice, i) => (
+                    <Button
+                      key={`flow:${item.flow!.step}:${choice.outcome}`}
+                      variant={i === 0 ? 'primary' : 'secondary'}
+                      onPress={actions.answerFlow(item.flow!.change, item.flow!.step, choice.outcome)}
+                    >
+                      {choice.label}
+                    </Button>
+                  ))}
                 {item.prUrl !== undefined && <Link href={item.prUrl}>Abrir PR</Link>}
                 {canOpen && item.card !== undefined && openControl(item.card, 'Abrir sessão')}
               </Box>

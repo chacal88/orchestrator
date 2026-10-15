@@ -320,7 +320,30 @@ export const attentionItems = (view: PanelView): Attention[] => {
           },
         ],
   )
-  return [...decisions, ...waiting, ...prs]
+  const flow = view.flow
+  const step = flow?.current
+  const flowItems: Attention[] =
+    flow === undefined || step === undefined || flow.ownerChoices.length === 0
+      ? []
+      : [
+          {
+            id: `flow:${flow.change}:${step.id}`,
+            kind: 'flow',
+            title:
+              flow.status === 'escalated'
+                ? `${step.title}: ${step.attempts} tentativas sem sucesso`
+                : step.title,
+            detail:
+              flow.status === 'escalated'
+                ? `Flow ${flow.flowTitle} de ${flow.change}: tentar de novo ou encerrar?`
+                : step.description ?? `Flow ${flow.flowTitle} de ${flow.change}`,
+            recommendation: undefined,
+            card: undefined,
+            prUrl: undefined,
+            flow: { change: flow.change, step: step.id, choices: flow.ownerChoices },
+          },
+        ]
+  return [...flowItems, ...decisions, ...waiting, ...prs]
 }
 
 /** Where the plan stands: the first wave not closed, and the one after it. */
