@@ -12,6 +12,7 @@ import type {
   FlowView,
 } from '../types'
 import { executedText, masksExitCode } from './gates'
+import { parseJiraTarget } from './jira'
 
 /** The pseudo-step every flow ends on. */
 export const FLOW_END = 'fim'
@@ -87,6 +88,8 @@ export const parseFlow = (raw: unknown, source: string): FlowDef | { error: stri
     }
     const detect = parseDetect(s.detect, outcomes)
     if (typeof detect === 'string') return fail(`step "${stepId}": ${detect}`)
+    const jira = parseJiraTarget(s.jira)
+    if (typeof jira === 'string') return fail(`step "${stepId}": ${jira}`)
     steps.push({
       id: stepId,
       title: stepTitle,
@@ -100,6 +103,7 @@ export const parseFlow = (raw: unknown, source: string): FlowDef | { error: stri
       over: kind === 'loop' ? 'tasks' : undefined,
       detect,
       cleanup: s.cleanup === true,
+      ...(jira === undefined ? {} : { jira }),
     })
   }
   const ids = new Set(steps.map(s => s.id))

@@ -343,7 +343,33 @@ export const attentionItems = (view: PanelView): Attention[] => {
             flow: { change: flow.change, step: step.id, choices: flow.ownerChoices },
           },
         ]
-  return [...flowItems, ...decisions, ...waiting, ...prs]
+  const change = view.flow?.change ?? view.run?.change ?? ''
+  const jiraItems: Attention[] = (view.jiraMoves ?? []).map(move => {
+    const now = move.from === undefined ? '' : ` Hoje: "${move.from}".`
+    const base = { id: `jira:${move.key}`, kind: 'jira' as const, recommendation: undefined, card: undefined, prUrl: undefined }
+    if (move.state === 'ready') {
+      return {
+        ...base,
+        title: `A issue ${move.key} pode ir para ${move.toLabel}`,
+        detail: `${move.title ?? ''}${now} O Jira só muda quando você apertar o botão.`.trim(),
+        jira: { change, key: move.key, transitionId: move.transitionId ?? '', toLabel: move.toLabel },
+      }
+    }
+    if (move.state === 'no-transition') {
+      const options = move.available.length === 0 ? 'nenhuma transição disponível' : move.available.join(', ')
+      return {
+        ...base,
+        title: `A issue ${move.key} deveria ir para ${move.toLabel}, mas o Jira não oferece essa transição`,
+        detail: `${now.trim()} Disponíveis: ${options}. Ajuste o campo jira do passo no flow, ou mova na mão.`.trim(),
+      }
+    }
+    return {
+      ...base,
+      title: `A issue ${move.key} deveria ir para ${move.toLabel}, mas não consigo mexer no Jira`,
+      detail: move.note,
+    }
+  })
+  return [...flowItems, ...decisions, ...jiraItems, ...waiting, ...prs]
 }
 
 /** Where the plan stands: the first wave not closed, and the one after it. */
