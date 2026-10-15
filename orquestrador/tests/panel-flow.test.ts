@@ -214,3 +214,46 @@ describe('glance', () => {
     expect(bandSummary(view, [])).toBeUndefined()
   })
 })
+
+const LONG = 'Grill com rodadas até o dono clicar Entendimento fechado; as respostas propostas viram critérios de aceite da change'
+
+test('at a narrow width every text row may shrink, prose wraps, and status is a pill, not a border colour', async ($, on) => {
+  const w = world(on)
+  w.disk.set('/w/openspec/changes/demo/tasks.md', `## 1. Base\n- [ ] 1.1 ${LONG}\n`)
+  await $.tool.call({
+    tool: 'mcp__orquestrador__plano',
+    change: 'demo-com-um-nome-bem-comprido-para-o-cabecalho',
+    changePath: 'openspec/changes/demo',
+    waves: [
+      {
+        summary: LONG,
+        phases: [
+          { id: '1', title: `Fase com título longo: ${LONG}`, status: 'running', summary: LONG, note: LONG, tasks: '1.1', gates: ['testes', 'lint', 'check', 'openspec'] },
+          { id: '2', title: `Depois: ${LONG}`, status: 'pending', dependsOn: ['1'] },
+        ],
+      },
+    ],
+  } as never)
+  const NARROW = { ...PANE, props: { ...PANE.props, bodyColumns: 36 } }
+
+  for (const surface of ['desktop', 'terminal'] as const) {
+    const ui = await $.ui.mount({ plugin: 'orquestrador', surface, ...NARROW })
+    // a Box that shrinks also gives up its content's minimum width, or its text spills past the border
+    const boxes = await ui.findAll({ type: 'Box' })
+    const stuck = boxes.filter(b => b.props.flexShrink === 1 && b.props.minWidth !== 0)
+    expect(stuck.map(b => b.text.slice(0, 40))).toEqual([])
+    // prose wraps, one-line labels truncate
+    const summaries = await ui.findAll({ type: 'Text', text: new RegExp(`^${LONG}$`) })
+    expect(summaries.length).toBeGreaterThan(0)
+    expect(summaries.every(t => t.props.wrap === 'wrap')).toBe(true)
+    const titles = await ui.findAll({ type: 'Text', text: /Fase com título longo/ })
+    expect(titles.some(t => t.props.wrap === 'truncate-end' && t.props.bold === true)).toBe(true)
+    // the phase card's border is neutral; its status sits in a tinted pill
+    const pills = await ui.findAll({ type: 'Text', text: /^ em voo $/ })
+    expect(pills.some(t => t.props.backgroundColor === '#FAECE7' && t.props.color === '#993C1D')).toBe(true)
+    const bordered = boxes.filter(b => b.props.borderStyle === 'round' && /Fase com título longo/.test(b.text))
+    expect(bordered.some(b => b.props.borderDimColor === true && b.props.borderColor === undefined)).toBe(true)
+    expect(await ui.find({ type: 'Text', text: /após 1/ })).toBeDefined()
+    await ui.unmount()
+  }
+})
