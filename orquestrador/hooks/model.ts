@@ -24,6 +24,22 @@ export const PHASE_STATUSES: readonly PhaseStatus[] = [
 export const activityKey = (cwd: string): string =>
   cwd.replace(/[^A-Za-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(-180)
 
+/** The activity file of a session the mod knows the id of; two sessions in one folder never share it. */
+export const sessionActivityKey = (sessionId: string): string => `id-${activityKey(sessionId)}`
+
+/**
+ * What a session's card shows: the record it published under its own id, else, for a
+ * record from before ids, the freshest one from its folder. A child sharing the
+ * coordinator's folder gets no folder fallback, or it would read the coordinator's.
+ */
+export const activityFor = (
+  records: readonly ActivityRecord[],
+  row: { sessionId: string; cwd: string },
+  selfCwd: string | undefined,
+): ActivityRecord | undefined =>
+  records.filter(r => r.sessionId === row.sessionId).sort((a, b) => b.updatedAt - a.updatedAt)[0] ??
+  (row.cwd === selfCwd ? undefined : latestActivity(records.filter(r => r.sessionId === undefined), row.cwd))
+
 /**
  * The freshest record a session published from its folder or any folder beneath it:
  * an older copy of the mod keyed its file by the shell's cwd, which a `cd` moves.

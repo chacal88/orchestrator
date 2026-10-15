@@ -76,7 +76,9 @@ diagnóstico pronto ao dono.
    coordenações dividem o teto; máquina quente → 1 fase por vez. Vaga só abre quando
    uma fase fecha.
 3. **Disparar.** Uma sessão por fase da onda corrente, sempre em worktree própria
-   (`use_worktree: true`): o mod lê a atividade e os gates de cada fase pela pasta dela. Título
+   (`use_worktree: true`), para duas fases nunca escreverem nos mesmos arquivos (o mod lê a
+   atividade e os gates de cada fase pelo id da sessão, então uma fase na pasta da coordenação
+   também prova seus gates). Título
    `<ícone> <curto>: <fase> (<tarefas>)`; mova-a para o grupo (`move_sessions`).
 
    | Ícone | Natureza                          |

@@ -81,6 +81,7 @@ import { renderBand, renderPane } from './pane'
 import { firstSite, issueUrl, jiraKeys, moveFor, parseIssue, parseTransitions, wishes } from './jira'
 import { changeDir, openSpecView } from './openspec'
 import {
+  activityFor,
   activityKey,
   applyPlanUpdate,
   completePlan,
@@ -88,11 +89,11 @@ import {
   parseSessionRows,
   findGroupId,
   groupName,
-  latestActivity,
   phaseCounts,
   phaseViews,
   repoWebUrl,
   runKey,
+  sessionActivityKey,
   toCard,
 } from './model'
 
@@ -118,6 +119,7 @@ const WAITING = { plugin: 'orquestrador', key: 'waiting' } as const
 const ANSWERED = { plugin: 'orquestrador', key: 'answered' } as const
 const GATES_SEEN = { plugin: 'orquestrador', key: 'gates' } as const
 const EDITED_AT = { plugin: 'orquestrador', key: 'editedAt' } as const
+const SELF_ID = { plugin: 'orquestrador', key: 'selfId' } as const
 const PANE_OPEN = { plugin: 'orquestrador', key: 'paneOpen' } as const
 const GRILL_DRAFTS = { plugin: 'orquestrador', key: 'grillDrafts' } as const
 const START_SESSION = 'mcp__ccd_session__start_session'
@@ -234,16 +236,34 @@ const readJson = async <T,>($: EngineInterface, path: string): Promise<T | undef
   }
 }
 
+/**
+ * This session's id in the app's list, asked once and kept: `$.session.id()` names the
+ * transcript, which is not the id the family's rows carry. Undefined outside the app.
+ */
+const selfId = async ($: EngineInterface): Promise<string | undefined> => {
+  const { value: known } = await $.state.get(SELF_ID)
+  if (known !== undefined) return known
+  if (!(await canCall($, GET_SESSION))) return undefined
+  const [row] = parseSessionRows((await callTool($, { tool: GET_SESSION, session_id: 'self' })).text)
+  if (row !== undefined) await $.state.set(SELF_ID, row.sessionId)
+  return row?.sessionId
+}
+
+/** Keyed by the session's id when known, so a phase in the coordinator's folder has a file of its own. */
+const activityPath = async ($: EngineInterface, sessionId: string | undefined, cwd: string): Promise<string> =>
+  `${await baseDir($)}/sessions/${sessionId === undefined ? activityKey(cwd) : sessionActivityKey(sessionId)}.json`
+
 const publishActivity = async ($: EngineInterface, lastTool: string | undefined): Promise<void> => {
   // root, not cwd: a shell `cd` inside the session must not move where it publishes
   const cwd = await $.session.root()
+  const sessionId = await selfId($).catch(() => undefined)
   const { value: plan = [] } = await $.state.get(PLAN)
   const { value: waiting } = await $.state.get(WAITING)
   const { records, editedAt } = await ownCheck($)
   const record: ActivityRecord = {
-    cwd, plan, lastTool, waiting: waiting ?? undefined, updatedAt: await $.clock.now(), gates: records, editedAt,
+    sessionId, cwd, plan, lastTool, waiting: waiting ?? undefined, updatedAt: await $.clock.now(), gates: records, editedAt,
   }
-  await $.fs.write(`${await baseDir($)}/sessions/${activityKey(cwd)}.json`, JSON.stringify(record))
+  await $.fs.write(await activityPath($, sessionId, cwd), JSON.stringify(record))
 }
 
 const ownCheck = async ($: EngineInterface): Promise<GateCheck> => {
@@ -303,10 +323,7 @@ const loadSessions = async (
   const records = (
     await Promise.all(files.filter(f => f.name.endsWith('.json')).map(f => readJson<ActivityRecord>($, `${dir}/${f.name}`)))
   ).filter((r): r is ActivityRecord => r !== undefined)
-  // a child sharing this session's folder would read this session's own activity as its own
-  const children = [...others.values()].map(row =>
-    toCard(row, row.cwd === selfRow?.cwd ? undefined : latestActivity(records, row.cwd)),
-  )
+  const children = [...others.values()].map(row => toCard(row, activityFor(records, row, selfRow?.cwd)))
   const self =
     selfRow === undefined
       ? undefined
@@ -1374,10 +1391,23 @@ const observeRelease = async ($: EngineInterface, input: Record<string, unknown>
  * its activity file. Put back the task list, the gate passes and the last edit before
  * anything publishes over that file, so a restart never undoes a passed gate.
  */
+/**
+ * Whether the file a copy from before 0.7.1 keyed by this folder can only be this session's:
+ * no other live session of the family works in the same folder.
+ */
+const folderIsOwn = async ($: EngineInterface, sessionId: string | undefined, cwd: string): Promise<boolean> => {
+  if (sessionId === undefined) return true
+  if (!(await canCall($, LIST_SESSIONS))) return false
+  const family = parseSessionRows((await callTool($, { tool: LIST_SESSIONS, linked: true, limit: 50 })).text)
+  return !family.some(row => !row.isArchived && row.sessionId !== sessionId && row.cwd === cwd)
+}
+
 const restoreActivity = async ($: EngineInterface): Promise<void> => {
   const cwd = await $.session.root()
-  const record = await readJson<ActivityRecord>($, `${await baseDir($)}/sessions/${activityKey(cwd)}.json`)
-  if (record === undefined || record.cwd !== cwd) return
+  const sessionId = await selfId($).catch(() => undefined)
+  const own = sessionId === undefined ? undefined : await readJson<ActivityRecord>($, await activityPath($, sessionId, cwd))
+  const record = own ?? ((await folderIsOwn($, sessionId, cwd)) ? await readJson<ActivityRecord>($, await activityPath($, undefined, cwd)) : undefined)
+  if (record === undefined || record.cwd !== cwd || (record.sessionId ?? sessionId) !== sessionId) return
   const [plan, gates, edited] = await Promise.all([$.state.get(PLAN), $.state.get(GATES_SEEN), $.state.get(EDITED_AT)])
   if (plan.value === undefined && record.plan.length > 0) await $.state.set(PLAN, asJson(record.plan))
   if (gates.value === undefined && record.gates !== undefined) await $.state.set(GATES_SEEN, asJson(record.gates))
