@@ -4,12 +4,14 @@ import type { FlowDef, FlowState, FlowView, PrepState } from '../types'
 import { applyOutcome, flowView, startFlow } from '../hooks/flow'
 import { defaultFlows } from '../hooks/flows/index'
 import {
+  answersPrompt,
   approvePlan,
   attachMockup,
   describePrep,
   emptyPrep,
   grillMarkdown,
   hiddenChoices,
+  ownerAnswers,
   parseRoundItems,
   planVerdict,
   pressMockup,
@@ -112,4 +114,17 @@ test('a session can never report the release, whatever it says', () => {
   expect(err(applyOutcome(state, { step: 'liberacao', outcome: 'liberado', by: 'session' }, 1))).toMatch(
     /only the owner, pressing a button in the panel/,
   )
+})
+
+test("the owner's panel answers fill open questions of the latest round, never closed or empty ones", () => {
+  const state = at(start(), 'grill')
+  const prep = ok(recordRound(emptyPrep('demo'), state, [{ question: 'Quem?', answer: 'O dono' }, { question: 'Mobile?' }], false, 5))
+  expect(prepView(prep.prep).openItems).toEqual([{ n: 2, question: 'Mobile?' }])
+  expect(err(ownerAnswers(prep.prep, state, [{ n: 2, question: 'Mobile?', answer: '  ' }], 6))).toMatch(/escreva a resposta/)
+  expect(err(ownerAnswers(prep.prep, state, [{ n: 1, question: 'Quem?', answer: 'outro' }], 6))).toMatch(/pergunta 1 não está mais em aberto/)
+  expect(err(ownerAnswers(prep.prep, at(state, 'mockup'), [{ n: 2, question: 'Mobile?', answer: 'Não' }], 6))).toMatch(/only while/)
+  const done = ok(ownerAnswers(prep.prep, state, [{ n: 2, question: 'Mobile?', answer: ' Não ' }], 6))
+  expect(done.prep.rounds[0]!.items[1]).toEqual({ question: 'Mobile?', answer: 'Não' })
+  expect(done.event.by).toBe('owner')
+  expect(answersPrompt([{ n: 2, question: 'Mobile?', answer: 'Não' }, { n: 3, question: 'x', answer: ' ' }])).toBe('Resposta à pergunta 2: Não')
 })

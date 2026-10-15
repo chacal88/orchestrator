@@ -1,4 +1,4 @@
-import type { FlowEvent, FlowState, FlowView, GrillItem, PrepState, PrepView } from '../types'
+import type { FlowEvent, FlowState, FlowView, GrillAnswer, GrillItem, PrepState, PrepView } from '../types'
 
 /**
  * The owner steps before execution, by their ids in the flows: the grill (rounds of questions until
@@ -86,6 +86,35 @@ export const recordRound = (
   }
 }
 
+/**
+ * The owner's answers typed in the panel, merged into the latest round the way `round` with
+ * `amend: true` does; each must still be an open question of that round and none may be empty.
+ */
+export const ownerAnswers = (
+  prep: PrepState,
+  state: FlowState,
+  answers: readonly GrillAnswer[],
+  at: number,
+): Prepped | { error: string } => {
+  const filled = answers.flatMap(a => {
+    const answer = text(a.answer)
+    return answer === undefined ? [] : [{ ...a, answer }]
+  })
+  if (filled.length === 0) return { error: 'escreva a resposta antes de enviar.' }
+  const last = prep.rounds[prep.rounds.length - 1]
+  const stale = filled.find(a => last?.items.find(i => i.question === a.question && i.answer === undefined) === undefined)
+  if (stale !== undefined) return { error: `a pergunta ${stale.n} não está mais em aberto na rodada atual.` }
+  const done = recordRound(prep, state, filled.map(a => ({ question: a.question, answer: a.answer })), true, at)
+  return 'error' in done ? done : { prep: done.prep, event: { ...done.event, by: 'owner' } }
+}
+
+/** What the coordinator reads from the panel: one line per answer, as the owner's own message. */
+export const answersPrompt = (answers: readonly GrillAnswer[]): string =>
+  answers
+    .filter(a => a.answer.trim() !== '')
+    .map(a => `Resposta à pergunta ${a.n}: ${a.answer.trim()}`)
+    .join('\n')
+
 /** A URL or a file path: what the panel can show the owner as the mockup. */
 const isArtifact = (v: string): boolean =>
   /^https?:\/\/\S+$/.test(v) || /^(\/|~\/|\.\.?\/)/.test(v) || /^[^\s:]*[/.][^\s:]*$/.test(v)
@@ -168,6 +197,10 @@ export const prepView = (prep: PrepState): PrepView => {
     change: prep.change,
     rounds: prep.rounds.length,
     openQuestions: last === undefined ? [] : last.items.filter(i => i.answer === undefined).map(i => i.question),
+    openItems:
+      last === undefined
+        ? []
+        : last.items.flatMap((i, k) => (i.answer === undefined ? [{ n: k + 1, question: i.question }] : [])),
     criteria: criteria(prep),
     ...(artifact === undefined ? {} : { mockup: artifact, mockupIsUrl: /^https?:\/\//.test(artifact) }),
     ...(prep.adjustments.length === 0 ? {} : { lastAdjustment: prep.adjustments[prep.adjustments.length - 1]!.note }),

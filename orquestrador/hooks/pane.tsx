@@ -17,6 +17,7 @@ import type {
   GateCheck,
   GateState,
   GateView,
+  GrillAnswer,
   JiraCategory,
   OpenSpecView,
   PanelView,
@@ -58,6 +59,12 @@ export type PaneActions = {
   answerFlow: (change: string, step: string, outcome: string) => () => void
   /** The same answer with the owner's note typed in the panel (a mockup adjustment). */
   noteFlow: (change: string, step: string, outcome: string) => (value: string) => void
+  /** What the owner has typed in the grill's answer fields, by question text. */
+  drafts: Readonly<Record<string, string>>
+  /** Keeps one answer field's text as the owner types it. */
+  draftAnswer: (question: string) => (value: string) => void
+  /** The owner's answers to open grill questions: recorded in the round and sent as their own message. */
+  answerGrill: (change: string, answers: GrillAnswer[]) => () => void
   /** The owner's "Mover no Jira": the only way an issue changes state. */
   moveJira: (change: string, key: string, transitionId: string) => () => void
 }
