@@ -29,6 +29,10 @@
 - [x] 4.10 Skill change-orchestrator passa a seguir o flow: a coordenação pergunta ao mod qual é o próximo passo em vez de decidir sozinha
 - [x] 4.12 Campo de resposta no painel para as perguntas abertas da rodada do grill: o dono escreve ali, a resposta chega à coordenação como mensagem dele e completa a rodada (achado do teste real: botão de resposta envia no clique, sem texto)
 - [ ] 4.13 Pendências do dono publicadas no plano expiram sozinhas: uma pergunta ligada a um passo do flow some quando o passo é respondido, e o painel recusa publicar pergunta que só manda apertar um botão do flow (achado do teste real: aviso preso depois do clique em "Entendimento fechado")
+- [ ] 4.14 Gate e passo automático reconhecem o comando quando o executável está entre aspas (ex.: "…/Application Support/…/claude" plugin test): ignorar o texto entre aspas só fora da posição do comando (achado do 2º teste real)
+- [ ] 4.15 Fechar no plano uma fase já feita antes do flow, sem exigir que o gate rode de novo na coordenação (ex.: o dono marca como feita no painel, registrado no log)
+- [ ] 4.16 Coordenação aberta por outra sessão entra no grupo da change mesmo aninhada (mover a sessão pelo id em vez de "self", ou explicar ao dono quando o app recusar)
+- [ ] 4.17 Quando a coordenação não pode abrir uma sessão (aberta por outra sessão), o painel mostra em "Precisa de você" o cartão a iniciar, com o que ele faz
 - [ ] 4.11 Testes, validação do mod e conferência no app com uma change real
 
 ## 5. Depois
