@@ -208,7 +208,9 @@ for (const surface of ['desktop', 'terminal'] as const) {
     const ui = await mount($, surface)
     expect(await ui.find({ key: 'grill-answer:1' })).toBeUndefined()
     expect(await ui.find({ key: 'grill-answer:2' })).toBeDefined()
-    expect(await ui.find({ key: 'grill-send:3' })).toBeDefined()
+    expect(await ui.find({ key: 'grill-answer:3' })).toBeDefined()
+    // one control per question: the field's own submit, no extra button
+    expect(await ui.find({ key: 'grill-send:3' })).toBeUndefined()
     expect(await ui.find({ key: 'grill-send-all' })).toBeUndefined()
 
     await ui.input({ key: 'grill-answer:2', text: 'Não, só desktop', kind: 'change' } as never)
@@ -233,16 +235,14 @@ for (const surface of ['desktop', 'terminal'] as const) {
   })
 }
 
-test('one grill answer goes by Enter or by "Responder"; an empty one is refused', async ($, on) => {
+test('one grill answer goes by the field\'s own submit; an empty one is refused', async ($, on) => {
   const sink: Sink = { toasts: [], prompts: [] }
   const disk = world(on, { answer: 'approve' }, sink)
   await openRound($)
   const ui = await mount($, 'desktop')
 
-  await ui.press({ key: 'grill-send:2' })
-  expect(sink.toasts).toEqual(['Escreva a resposta antes de enviar.'])
   await ui.input({ key: 'grill-answer:2', text: '   ' } as never)
-  expect(sink.toasts.length).toBe(2)
+  expect(sink.toasts).toEqual(['Escreva a resposta antes de enviar.'])
   expect(sink.prompts).toEqual([])
   expect(prep(disk).rounds[0]!.items[1]!.answer).toBeUndefined()
 
@@ -250,8 +250,7 @@ test('one grill answer goes by Enter or by "Responder"; an empty one is refused'
   expect(sink.prompts).toEqual([{ text: 'Resposta à pergunta 2: Não', asUser: true }])
   expect(prep(disk).rounds[0]!.items[1]!.answer).toBe('Não')
 
-  await ui.input({ key: 'grill-answer:3', text: 'Depois', kind: 'change' } as never)
-  await ui.press({ key: 'grill-send:3' })
+  await ui.input({ key: 'grill-answer:3', text: 'Depois' } as never)
   expect(sink.prompts[1]).toEqual({ text: 'Resposta à pergunta 3: Depois', asUser: true })
   expect(prep(disk).rounds[0]!.items.every(i => i.answer !== undefined)).toBe(true)
   expect(String((await flow($, { action: 'status' })).result)).toMatch(/0 open question\(s\), 3 acceptance criteria/)

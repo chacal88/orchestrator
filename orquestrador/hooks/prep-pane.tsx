@@ -52,22 +52,16 @@ export const prepDetails = (
                   {q.question}
                 </Text>
               </Box>
-              <Input
-                key={`grill-answer:${q.n}`}
-                placeholder="sua resposta"
-                submitLabel="responder"
-                {...(draftOf(q.question) === '' ? {} : { value: draftOf(q.question) })}
-                onInput={actions.draftAnswer(q.question)}
-                onSubmit={value => actions.answerGrill(flow.change, [{ ...q, answer: value }])()}
-              />
-              <Box flexDirection="row" flexShrink={0}>
-                <Button
-                  key={`grill-send:${q.n}`}
-                  variant="secondary"
-                  onPress={actions.answerGrill(flow.change, [{ ...q, answer: draftOf(q.question) }])}
-                >
-                  Responder
-                </Button>
+              {/* the field's own submit (Enter or its button) sends the answer: no second button beside it */}
+              <Box flexDirection="column" flexGrow={1} width="100%" minWidth={0} marginTop={1}>
+                <Input
+                  key={`grill-answer:${q.n}`}
+                  placeholder="Escreva sua resposta e tecle Enter"
+                  submitLabel="Enviar"
+                  {...(draftOf(q.question) === '' ? {} : { value: draftOf(q.question) })}
+                  onInput={actions.draftAnswer(q.question)}
+                  onSubmit={value => actions.answerGrill(flow.change, [{ ...q, answer: value }])()}
+                />
               </Box>
             </Box>
           )),
