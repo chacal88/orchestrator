@@ -94,6 +94,20 @@ test('a phase cannot be marked done until its gate passed, and a later edit make
   expect((await plan($, 'done')).isError).toBeUndefined()
 })
 
+test('a refused close quotes the commands that looked like a gate run and why none counted', async ($, on) => {
+  world(on, [])
+  expect((await plan($, 'running')).isError).toBeUndefined()
+  await $.tool.call({ tool: 'Bash', command: 'pnpm --filter api exec vitest run >/tmp/t.log 2>&1; echo t=$?' } as never)
+  await $.tool.call({ tool: 'Bash', command: 'pnpm check:types' } as never)
+  const refused = String((await plan($, 'done')).result)
+  expect(refused).toMatch(/testes not run/)
+  expect(refused).toMatch(/Last commands seen there that did not count: `pnpm --filter api exec vitest run .*` → testes not counted: it is followed by `; echo t=\$\?`/)
+  expect(refused).toMatch(/`pnpm check:types` → matches no gate command/)
+
+  await $.tool.call({ tool: 'Bash', command: 'pnpm --filter api test' } as never)
+  expect((await plan($, 'done')).isError).toBeUndefined()
+})
+
 test('a phase session is judged by what its own mod published, and cannot be archived while a gate is open', async ($, on) => {
   const w = world(on, [child('api')])
   expect((await plan($, 'running', { session: 'api' })).isError).toBeUndefined()

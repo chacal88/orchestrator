@@ -67,6 +67,30 @@ describe('attentionItems', () => {
     expect(attentionItems(view)[2]?.title).toBe('Permissão pendente: Bash')
   })
 
+  test('a question about skipping a gate carries the skip, and leaves once the gate passes or is skipped', () => {
+    const gated = parseRun(
+      {
+        change: 'c',
+        waves: [{ phases: [{ id: '2', title: 'B', status: 'running', session: 'ads-api', gates: ['testes'] }] }],
+        ownerQuestions: [
+          { question: 'Liberar os portões da fase 2?', recommendation: 'sim', gate: { phase: '2', gate: 'testes' } },
+          { question: 'Pular o check final?', gate: { phase: 'final', gate: 'deploy' } },
+        ],
+      },
+      '/w/coord',
+      1,
+    )
+    if ('error' in gated) throw new Error(gated.error)
+    // an unknown gate is dropped from the question, which stays a plain decision
+    expect(gated.ownerQuestions[1]?.gate).toBeUndefined()
+    const open = { ...view, run: gated }
+    const [ask] = attentionItems(open)
+    expect(ask?.skip).toMatchObject({ gate: 'testes', state: 'pending', skipKey: '2:testes' })
+    expect(attentionItems({ ...open, skips: { '2:testes': { at: 5 } } }).map(a => a.title)).not.toContain('Liberar os portões da fase 2?')
+    const passed = { ...api, gates: { records: { testes: { gate: 'testes', result: 'passed' as const, evidence: 'npm test', at: 9 } }, editedAt: undefined } }
+    expect(attentionItems({ ...open, children: [passed, waitingCard] }).map(a => a.title)).not.toContain('Liberar os portões da fase 2?')
+  })
+
   test('a merged PR is not something to review', () => {
     const merged = { ...view, children: [card({ sessionId: 'm', title: 'm', prNumber: 9, prState: 'MERGED' })] }
     expect(attentionItems(merged).some(a => a.kind === 'pr')).toBe(false)

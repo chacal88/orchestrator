@@ -134,6 +134,10 @@ const EVIDENCE_HEX: Record<EvidenceState, string> = {
   failing: STATUS_HEX.blocked,
 }
 
+/** A question asking to release a gate: "Aceitar" only messages the coordinator, which cannot skip it. */
+const asksGateSkip = (text: string): boolean =>
+  /\b(pul(ar|e|o)|liberar|libere|dispensar|skip)\b.*\b(port[ãa]o|portões|gates?)\b|\b(port[ãa]o|portões|gates?)\b.*\b(pular|liberar|dispensar|skip)\b/i.test(text)
+
 const GATE_MARK: Record<GateState, string> = { passed: '✓', failed: '✗', pending: '○', stale: '⚠', skipped: '⏭' }
 const GATE_HEX: Record<GateState, string> = {
   passed: STATUS_HEX.done,
@@ -438,6 +442,25 @@ export const renderPane = (
       ]
     })
 
+  /** An owner question's skip: the same two presses as beside the gate, so a gate is never skipped by one tap. */
+  const skipButtons = (g: GateView): RenderElement[] => {
+    const armed = isOpen(`arm:${g.skipKey}`, false)
+    return armed
+      ? [
+          <Button key={`skip:${g.skipKey}:ask`} variant="primary" onPress={actions.skip(g)}>
+            {`Confirmar pulo de ${g.label}`}
+          </Button>,
+          <Button key={`arm:${g.skipKey}:ask`} plain dimColor onPress={actions.toggle(`arm:${g.skipKey}`, false)}>
+            Cancelar
+          </Button>,
+        ]
+      : [
+          <Button key={`arm:${g.skipKey}:ask`} variant="primary" onPress={actions.toggle(`arm:${g.skipKey}`, false)}>
+            {`Pular portão ${g.label}`}
+          </Button>,
+        ]
+  }
+
   /** One line per Jira key: the key as a link, its status in its category's colour, its title; then any disagreement. */
   /** What a pressed Jira key shows: the issue as far as it is known, or why it is not. */
   const jiraDetails = (key: string): RenderElement[] => {
@@ -624,10 +647,16 @@ export const renderPane = (
               )}
               {item.kind === 'flow' && prepDetails(elements, view, actions)}
               <Box flexDirection="row" columnGap={1} marginTop={1} flexWrap="wrap">
-                {item.kind === 'decision' && item.recommendation !== undefined && (
+                {item.skip !== undefined && skipButtons(item.skip)}
+                {item.kind === 'decision' && item.skip === undefined && item.recommendation !== undefined && !asksGateSkip(item.title) && (
                   <Button key={`accept:${item.id}`} variant="primary" onPress={actions.accept(item)}>
                     Aceitar recomendação
                   </Button>
+                )}
+                {item.kind === 'decision' && item.skip === undefined && asksGateSkip(item.title) && (
+                  <Text dimColor wrap="wrap">
+                    Só o seu pulo libera um portão: use Pular ao lado dele, no card da fase.
+                  </Text>
                 )}
                 {item.flow !== undefined &&
                   item.flow.choices.filter(c => !hiddenFlow.includes(c.outcome)).map((choice, i) => (

@@ -1,4 +1,4 @@
-import type { GateCheck, GateRecord, GateSkip, GateState, GateView, Phase } from '../types'
+import type { GateAttempt, GateCheck, GateRecord, GateSkip, GateState, GateView, Phase } from '../types'
 
 /** The most phase sessions alive at once: more of them slows the owner's machine down. */
 export const MAX_LIVE_SESSIONS = 3
@@ -19,6 +19,18 @@ const isScreenshot = (tool: string, input: Record<string, unknown>): boolean => 
   return false
 }
 
+/**
+ * A package manager running a script, with the flags a monorepo puts before it:
+ * `pnpm --filter api test`, `pnpm -F api lint`, `pnpm -r test`, `yarn workspace api test`.
+ * A flag's value is any word but the script verbs, so `pnpm -r test` reads `-r` alone.
+ */
+const PACKAGE_SCRIPT =
+  String.raw`\b(npm|pnpm|yarn|bun)\b(\s+workspace\s+\S+)?` +
+  String.raw`(\s+-{1,2}[\w-]+(=\S+|\s+(?!-|run\b|exec\b|test\b|lint\b)[^\s;&|]+)?)*\s+(run\s+)?`
+
+/** A turbo task, alone or among others: `pnpm turbo lint --filter=api`, `npx turbo run build test`. */
+const TURBO_TASK = String.raw`\bturbo\s+(run\s+)?([\w@][\w:#@/.-]*\s+)*?`
+
 const REVIEWER = /adr-reviewer|spec-reviewer|reviewer-architecture|reviewer-quality/
 
 export const GATES: Readonly<Record<string, GateDef>> = {
@@ -27,8 +39,10 @@ export const GATES: Readonly<Record<string, GateDef>> = {
     how: 'a test command (vitest, jest, pytest, npm test, claude plugin test…) exiting 0',
     matcher: {
       kind: 'bash',
-      pattern:
-        /\b(vitest|jest|pytest|mocha|go test|cargo test|playwright test|claude plugin test)\b|\b(npm|pnpm|yarn|bun)\s+(run\s+)?test(:\S+)?\b/,
+      pattern: new RegExp(
+        String.raw`\b(vitest|jest|pytest|mocha|go test|cargo test|playwright test|claude plugin test)\b|` +
+          String.raw`${PACKAGE_SCRIPT}test(:\S+)?\b|${TURBO_TASK}test(:\S+)?\b`,
+      ),
     },
   },
   lint: {
@@ -36,8 +50,10 @@ export const GATES: Readonly<Record<string, GateDef>> = {
     how: 'a lint/format check (eslint, prettier --check, ruff, biome, npm run lint…) exiting 0',
     matcher: {
       kind: 'bash',
-      pattern:
-        /\b(eslint|prettier\s+(--check|-c)|ruff|biome\s+(check|lint|ci)|stylelint|black\s+--check|flake8)\b|\b(npm|pnpm|yarn|bun)\s+(run\s+)?(lint|format:check)\b/,
+      pattern: new RegExp(
+        String.raw`\b(eslint|prettier\s+(--check|-c)|ruff|biome\s+(check|lint|ci)|stylelint|black\s+--check|flake8)\b|` +
+          String.raw`${PACKAGE_SCRIPT}(lint|format:check)\b|${TURBO_TASK}(lint|format:check)\b`,
+      ),
     },
   },
   check: {
@@ -80,13 +96,59 @@ export const parseGates = (raw: unknown, where: string): string[] | { error: str
   return ids.length === 0 ? undefined : ids
 }
 
+/** One step of a command line and the operator that ends it ('' for the last). */
+type Step = { text: string; then: string }
+
+/** `&&`, `||`, `;`, a newline, a pipe or a lone `&` (not the one in `2>&1` or `&>`). */
+const SEPARATOR = /&&|\|\||\|&?|;|\n|(?<![<>&])&(?![&>])/g
+
+const stepsOf = (code: string): Step[] => {
+  const steps: Step[] = []
+  let from = 0
+  for (const match of code.matchAll(SEPARATOR)) {
+    steps.push({ text: code.slice(from, match.index), then: match[0] })
+    from = (match.index ?? 0) + match[0].length
+  }
+  steps.push({ text: code.slice(from), then: '' })
+  return steps.filter((step, i) => step.text.trim() !== '' || i === steps.length - 1)
+}
+
+const short = (text: string): string => text.replace(/\s+/g, ' ').trim().slice(0, 40)
+
 /**
- * A pipe hands the shell the exit code of its last command, so `npm test | tail`
- * "passes" whatever the tests did, and `npm test || true` always exits 0: such a run
- * proves a failure, never a pass.
+ * Why an exit 0 of `code` does not prove the gate its step `index` ran, or undefined when it
+ * does. The shell hands back the exit code of the last thing it ran: `npm test | tail` and
+ * `npm test; echo done` "pass" whatever the tests did, and `npm test || true` always exits 0.
+ * Steps joined by `&&` after the gate run only when it passed; `set -e` and `pipefail` make a
+ * failure end the command.
  */
-export const masksExitCode = (command: string): boolean =>
-  (/(^|[^|])\|(?!\|)/.test(command) && !/pipefail/.test(command)) || /\|\|/.test(command)
+export const exitMask = (code: string, index: number, steps: readonly Step[] = stepsOf(code)): string | undefined => {
+  const before = steps.slice(0, index).map(s => s.text).join(' ')
+  const errexit = /\bset\s+-\w*e/.test(before) || /\bset\s+-o\s+errexit\b/.test(before)
+  const pipefail = /pipefail/.test(code)
+  let start = index
+  while (start > 0 && !/^(;|\n|&)$/.test(steps[start - 1]!.then)) start -= 1
+  const list = steps.slice(start)
+  const or = list.slice(0, list.findIndex(s => /^(;|\n|&)$/.test(s.then)) + 1 || list.length).find(s => s.then === '||')
+  if (or !== undefined) return `\`||\` after "${short(or.text)}" makes the command exit 0 whatever the gate did`
+  const own = steps[index]!
+  if (own.then === '&') return 'it ran in the background (`&`), so its exit code was never seen'
+  if (own.then.startsWith('|') && !pipefail) return `its output is piped (\`| ${short(steps[index + 1]?.text ?? '')}\`), so the exit code is the pipe's last command's, not the gate's`
+  if (errexit) return undefined
+  for (const [i, step] of steps.slice(index).entries()) {
+    if (step.then === ';' || step.then === '\n' || step.then === '&') {
+      const next = steps[index + i + 1]?.text ?? ''
+      return `it is followed by \`${step.then === '\n' ? '⏎' : step.then} ${short(next)}\`, so the exit code is that later command's; run the gate alone or join with \`&&\``
+    }
+  }
+  return undefined
+}
+
+/** Whether an exit 0 of `command` proves nothing about every step `pattern` finds in it. */
+export const masksExitCode = (command: string, pattern: RegExp): boolean => {
+  const steps = stepsOf(command)
+  return steps.every((step, i) => !pattern.test(step.text) || exitMask(command, i, steps) !== undefined)
+}
 
 /**
  * The words the shell runs, without the text it only carries: a heredoc body or a quoted
@@ -98,21 +160,50 @@ export const executedText = (command: string): string =>
     .replace(/'[^']*'/g, "''")
     .replace(/"(?:[^"\\]|\\.)*"/g, '""')
 
-/** The one shell step that ran the gate, short enough to read in the panel. */
-const evidenceOf = (code: string, pattern: RegExp): string => {
-  const step = code.split(/&&|\|\||[;|\n]/).find(part => pattern.test(part)) ?? code
-  return step.replace(/\s+/g, ' ').trim().slice(0, 60)
+/** A command that looks like a gate attempt even when no gate counted it, for the refusal to quote. */
+const LOOKS_LIKE_GATE = /\b(test|tests|lint|vitest|jest|pytest|prettier|eslint|check|validate|format)\b/
+
+/** What one finished Bash command proves, gate by gate, and why any gate it ran did not count. */
+export const classifyBash = (
+  command: string,
+  failed: boolean,
+  at: number,
+): { records: GateRecord[]; attempt: GateAttempt | undefined } => {
+  const code = executedText(command)
+  const steps = stepsOf(code)
+  const records: GateRecord[] = []
+  const why: string[] = []
+  for (const [gate, def] of Object.entries(GATES)) {
+    if (def.matcher.kind !== 'bash') continue
+    const pattern = def.matcher.pattern
+    const indices = steps.flatMap((step, i) => (pattern.test(step.text) ? [i] : []))
+    if (indices.length === 0) continue
+    const evidence = (i: number): string => steps[i]!.text.replace(/\s+/g, ' ').trim().slice(0, 60)
+    if (failed) {
+      records.push({ gate, result: 'failed', evidence: evidence(indices[0]!), at })
+      continue
+    }
+    const proven = indices.find(i => exitMask(code, i, steps) === undefined)
+    if (proven !== undefined) records.push({ gate, result: 'passed', evidence: evidence(proven), at })
+    else why.push(`${gate} not counted: ${exitMask(code, indices.at(-1)!, steps)}`)
+  }
+  const looksLike = records.length === 0 && why.length === 0 && LOOKS_LIKE_GATE.test(code)
+  const reason = why.length > 0 ? why.join('; ') : looksLike ? 'matches no gate command' : undefined
+  return {
+    records,
+    attempt: reason === undefined ? undefined : { command: command.replace(/\s+/g, ' ').trim().slice(0, 160), why: reason, at },
+  }
 }
 
 /** What one finished Bash command proves, gate by gate. */
-export const observeBash = (command: string, failed: boolean, at: number): GateRecord[] => {
-  const code = executedText(command)
-  return Object.entries(GATES).flatMap(([gate, def]): GateRecord[] => {
-    if (def.matcher.kind !== 'bash' || !def.matcher.pattern.test(code)) return []
-    if (!failed && masksExitCode(code)) return []
-    return [{ gate, result: failed ? 'failed' : 'passed', evidence: evidenceOf(code, def.matcher.pattern), at }]
-  })
-}
+export const observeBash = (command: string, failed: boolean, at: number): GateRecord[] =>
+  classifyBash(command, failed, at).records
+
+/** The attempts a refusal quotes: the newest last, at most this many. */
+export const MAX_ATTEMPTS = 5
+
+export const keepAttempt = (attempts: readonly GateAttempt[], attempt: GateAttempt): GateAttempt[] =>
+  [...attempts, attempt].slice(-MAX_ATTEMPTS)
 
 /** What one finished non-Bash tool call proves: a screenshot, a reviewer's verdict. */
 export const observeTool = (
@@ -200,13 +291,28 @@ const STATE_WORD: Record<GateState, string> = {
   skipped: 'skipped by the owner',
 }
 
+/** The session's latest commands that looked like a gate run and why none counted, newest last. */
+const attemptsLine = (tried: readonly GateAttempt[] | undefined): string =>
+  tried === undefined || tried.length === 0
+    ? ' No command there looked like a gate run.'
+    : ` Last commands seen there that did not count: ${tried.map(t => `\`${t.command}\` → ${t.why}`).join('; ')}.`
+
 /** Why a phase cannot close yet, in the words the model reads; undefined when it can. */
-export const phaseRefusal = (phase: Pick<Phase, 'id' | 'title'>, open: readonly GateView[], where: string): string | undefined =>
+export const phaseRefusal = (
+  phase: Pick<Phase, 'id' | 'title'>,
+  open: readonly GateView[],
+  where: string,
+  tried?: readonly GateAttempt[],
+): string | undefined =>
   open.length === 0
     ? undefined
     : `phase ${phase.id} (${phase.title}) cannot close: ` +
       open.map(v => `${v.gate} ${STATE_WORD[v.state]} — needs ${GATES[v.gate]?.how ?? v.gate}`).join('; ') +
-      ` (checked in ${where}). Run the gate in that session, or ask the owner: only they can skip a gate, from the panel.`
+      ` (checked in ${where}).` +
+      (open.some(v => v.state === 'pending') ? attemptsLine(tried) : '') +
+      ` Run the gate in that session as a command of its own (no \`| tail\`, no \`; echo $?\` after it), or ask the owner: ` +
+      `only they can skip a gate, from the panel — publish an ownerQuestion with \`gate: {phase: "${phase.id}", gate}\` ` +
+      'so the panel offers the skip itself.'
 
 /**
  * Phase sessions still alive: started by this session and not archived. A session in the

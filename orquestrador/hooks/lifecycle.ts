@@ -1,4 +1,4 @@
-import type { FlowEvent, FlowState, GateView, OrchestrationRun, PhaseClosure, SessionRow, TaskItem } from '../types'
+import type { FlowEvent, FlowState, GateAttempt, GateView, OrchestrationRun, PhaseClosure, SessionRow, TaskItem } from '../types'
 import { LOOP_DONE, applyOutcome, currentStep } from './flow'
 import type { Moved } from './flow'
 import { phaseRefusal } from './gates'
@@ -44,13 +44,18 @@ export const loopUnits = (run: OrchestrationRun | undefined, tasks: string | und
 }
 
 /** Why a phase cannot close yet: tasks left unticked in tasks.md, then its open gates. */
-export const unitRefusal = (unit: LoopUnit, openGates: readonly GateView[], where: string): string | undefined => {
+export const unitRefusal = (
+  unit: LoopUnit,
+  openGates: readonly GateView[],
+  where: string,
+  tried?: readonly GateAttempt[],
+): string | undefined => {
   const open = unit.tasks.filter(t => !t.done).map(t => t.id)
   const tasks =
     open.length === 0
       ? undefined
       : `phase ${unit.id} (${unit.title}) cannot close: tasks ${open.join(', ')} are not ticked in tasks.md.`
-  const gates = phaseRefusal(unit, openGates, where)
+  const gates = phaseRefusal(unit, openGates, where, tried)
   return tasks === undefined && gates === undefined ? undefined : [tasks, gates].filter(Boolean).join(' ')
 }
 

@@ -23,6 +23,8 @@ export type ActivityRecord = {
   gates?: Record<string, GateRecord>
   /** When this session last edited a file: a pass older than that is stale. */
   editedAt?: number
+  /** Its latest commands that looked like a gate run but did not count, with why. */
+  tried?: GateAttempt[]
 }
 
 /** One finished run of a gate's command or tool, as the session's own mod saw it. */
@@ -34,8 +36,11 @@ export type GateRecord = {
   at: number
 }
 
-/** What a session proved: its latest record per gate and its last edit. */
-export type GateCheck = { records: Record<string, GateRecord>; editedAt: number | undefined }
+/** A command that looked like a gate run but proved nothing, and why: quoted when a phase is refused. */
+export type GateAttempt = { command: string; why: string; at: number }
+
+/** What a session proved: its latest record per gate and its last edit; `tried`, what it ran that did not count. */
+export type GateCheck = { records: Record<string, GateRecord>; editedAt: number | undefined; tried?: GateAttempt[] }
 
 /** Only the owner skips a gate, from the panel. */
 export type GateSkip = { at: number }
@@ -333,6 +338,8 @@ export type OwnerQuestion = {
   recommendation: string | undefined
   session: string | undefined
   pr: number | undefined
+  /** A question about skipping a gate: the panel offers that skip, which only the owner's press makes. */
+  gate?: { phase: string; gate: string }
 }
 
 export type OrchestrationRun = {
@@ -363,6 +370,8 @@ export type Attention = {
   flow?: { change: string; step: string; choices: FlowChoice[] }
   /** kind 'jira': the move only the owner's press makes. */
   jira?: { change: string; key: string; transitionId: string; toLabel: string }
+  /** kind 'decision' about a gate: the skip the owner's two presses make; "Aceitar" cannot skip. */
+  skip?: GateView
 }
 
 export type PanelView = {
@@ -399,6 +408,8 @@ declare module 'claude-code' {
       answered: string[]
       gates: Record<string, GateRecord>
       editedAt: number | null
+      /** This session's latest commands that looked like a gate run but did not count. */
+      tried: GateAttempt[]
       /** This session's id in the app's session list, once asked; its activity file is keyed by it. */
       selfId: string
       /** Whether the pane is up, so the band's button says "Abrir" or "Fechar". */
