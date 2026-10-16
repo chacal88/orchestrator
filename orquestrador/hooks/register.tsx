@@ -8,6 +8,7 @@ import type {
   FlowEvent,
   FlowState,
   FlowView,
+  GateAttempt,
   GateCheck,
   GrillAnswer,
   PrepState,
@@ -36,8 +37,9 @@ import {
   gateViews,
   isOpenGate,
   liveSessions,
+  classifyBash,
+  keepAttempt,
   mergeRecords,
-  observeBash,
   observeTool,
   phaseRefusal,
 } from './gates'
@@ -120,6 +122,7 @@ const WAITING = { plugin: 'orquestrador', key: 'waiting' } as const
 const ANSWERED = { plugin: 'orquestrador', key: 'answered' } as const
 const GATES_SEEN = { plugin: 'orquestrador', key: 'gates' } as const
 const EDITED_AT = { plugin: 'orquestrador', key: 'editedAt' } as const
+const TRIED = { plugin: 'orquestrador', key: 'tried' } as const
 const SELF_ID = { plugin: 'orquestrador', key: 'selfId' } as const
 const ACTIVITY_TTL_MS = 7 * 24 * 60 * 60 * 1000
 const PANE_OPEN = { plugin: 'orquestrador', key: 'paneOpen' } as const
@@ -212,6 +215,17 @@ const PLAN_SCHEMA = {
           },
           session: { type: 'string', description: 'The session it concerns, when not this one.' },
           pr: { type: 'number', description: 'The PR number it concerns, if any.' },
+          gate: {
+            type: 'object',
+            description:
+              'When the question is whether to skip a gate: the phase id (or "final" for finalGates) and the gate. ' +
+              'The panel then offers that skip on the question itself; "Aceitar" never skips a gate.',
+            properties: {
+              phase: { type: 'string' },
+              gate: { type: 'string', enum: GATE_IDS },
+            },
+            required: ['phase', 'gate'],
+          },
         },
         required: ['question'],
       },
@@ -261,9 +275,9 @@ const publishActivity = async ($: EngineInterface, lastTool: string | undefined)
   const sessionId = await selfId($).catch(() => undefined)
   const { value: plan = [] } = await $.state.get(PLAN)
   const { value: waiting } = await $.state.get(WAITING)
-  const { records, editedAt } = await ownCheck($)
+  const { records, editedAt, tried } = await ownCheck($)
   const record: ActivityRecord = {
-    sessionId, cwd, plan, lastTool, waiting: waiting ?? undefined, updatedAt: await $.clock.now(), gates: records, editedAt,
+    sessionId, cwd, plan, lastTool, waiting: waiting ?? undefined, updatedAt: await $.clock.now(), gates: records, editedAt, tried,
   }
   await $.fs.write(await activityPath($, sessionId, cwd), JSON.stringify(record))
 }
@@ -271,7 +285,8 @@ const publishActivity = async ($: EngineInterface, lastTool: string | undefined)
 const ownCheck = async ($: EngineInterface): Promise<GateCheck> => {
   const { value: records = {} } = await $.state.get(GATES_SEEN)
   const { value: editedAt } = await $.state.get(EDITED_AT)
-  return { records, editedAt: editedAt ?? undefined }
+  const { value: tried = [] } = await $.state.get(TRIED)
+  return { records, editedAt: editedAt ?? undefined, tried }
 }
 
 /** Sets or clears why this session stands still; other sessions' panels read it from the activity file. */
@@ -678,7 +693,7 @@ const phaseRefusals = (
       const own = phase.session === undefined
       const check = own ? self : (phase.card?.gates ?? { records: {}, editedAt: undefined })
       const where = own ? 'this session' : phase.card === undefined ? `session "${phase.session}" (not found)` : `session "${phase.card.title}"`
-      const refusal = phaseRefusal(phase, gateViews(phase.gates, phase.id, check, skips).filter(isOpenGate), where)
+      const refusal = phaseRefusal(phase, gateViews(phase.gates, phase.id, check, skips).filter(isOpenGate), where, check.tried)
       return refusal === undefined ? [] : [refusal]
     })
 
@@ -837,11 +852,12 @@ const observeGates = async (
   const failed = ran.isError === true
   let edited = false
   let observed: GateRecord[] = []
+  let attempt: GateAttempt | undefined
   if (tool === 'Bash') {
     const out = (failed ? undefined : ran.result) as BashOutput | undefined
     if (out?.backgroundTaskId !== undefined || out?.interrupted === true || input.run_in_background === true) return
     edited = (out?.bashEditDiff?.files ?? []).some(f => editsCode(f.filePath, root))
-    observed = observeBash(String(input.command ?? ''), failed, now)
+    ;({ records: observed, attempt } = classifyBash(String(input.command ?? ''), failed, now))
   } else if (EDIT_TOOLS.has(tool)) {
     edited = !failed && editsCode(input.file_path ?? input.notebook_path, root)
   } else {
@@ -851,6 +867,10 @@ const observeGates = async (
   if (observed.length > 0) {
     const { value: records = {} } = await $.state.get(GATES_SEEN)
     await $.state.set(GATES_SEEN, mergeRecords(records, observed))
+  }
+  if (attempt !== undefined) {
+    const { value: tried = [] } = await $.state.get(TRIED)
+    await $.state.set(TRIED, keepAttempt(tried, attempt))
   }
 }
 
@@ -1111,7 +1131,7 @@ const closeLoopPhase = async ($: EngineInterface, state: FlowState, phase: unkno
       const skips = await loadSkips($, state.change)
       const label = card?.name ?? card?.title
       const why =
-        unitRefusal(unit, gateViews(unit.gates, unit.id, check, skips).filter(isOpenGate), where) ??
+        unitRefusal(unit, gateViews(unit.gates, unit.id, check, skips).filter(isOpenGate), where, check.tried) ??
         (card === undefined || card.isArchived ? undefined : dirtyReason(label ?? card.sessionId, card.cwd, await dirtyPaths($, card.cwd)))
       if (why !== undefined) {
         await logFlowRefusal($, state, state.current, 'session', why)

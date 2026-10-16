@@ -112,7 +112,11 @@ diagnóstico pronto ao dono.
 4. **Portões.** Declare no plano os `gates` de cada fase (`testes`, `lint`, `openspec`,
    `visual`, `regras`) e os `finalGates` da change (normalmente `check`). O mod observa
    as sessões rodarem e impõe os portões (publicar `done`, arquivar, `gh pr merge`); só o
-   dono pula um portão, pelo painel.
+   dono pula um portão, pelo painel. No prompt da fase, peça cada portão como comando
+   próprio, que o código de saída decida: nada de `| tail`, `; echo $?` ou `|| true`
+   depois dele (junte com `&&`). Para pedir ao dono que libere um portão, use
+   `ownerQuestions` com `gate: {phase, gate}` (`phase: "final"` para os `finalGates`): o
+   painel oferece o pulo na própria pergunta, e "Aceitar" nunca pula portão.
 5. **Fechar fase:** confira a afirmação (diff, teste barato) e chame `flow close
    {phase}`. O mod confere portões, tarefas marcadas e trabalho commitado, e arquiva a
    sessão; se recusar, peça à sessão o que falta (`send_message`). Quando todas fecham,
@@ -133,7 +137,7 @@ diagnóstico pronto ao dono.
 4. **Painel.** Publique com `plano` logo após montar as ondas e a cada transição:
    `change`, `changePath`, ondas (`summary`) e fases (`id`, `title`, `icon`, `tasks` =
    números do `tasks.md`, `status`, `session`, `dependsOn`, `gates`, `note`, `summary`),
-   `finalGates`, `ownerQuestions` `{question, recommendation, session?, pr?}` e `jira`
+   `finalGates`, `ownerQuestions` `{question, recommendation, session?, pr?, gate?}` e `jira`
    (change, onda, fase) quando houver. Nunca ponha em `ownerQuestions` um aviso para
    apertar botão do flow (o passo do dono já aparece sozinho e some ao ser respondido);
    `ownerQuestions` é só decisão fora do flow, e sai do plano assim que respondida.

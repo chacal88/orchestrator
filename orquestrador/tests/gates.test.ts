@@ -1,10 +1,13 @@
 import { describe, expect, test } from 'claude-code/testing'
 
 import {
+  classifyBash,
   familyCheck,
   gateState,
   gateViews,
+  keepAttempt,
   liveSessions,
+  masksExitCode,
   mergeRecords,
   observeBash,
   observeTool,
@@ -12,6 +15,7 @@ import {
   phaseRefusal,
 } from '../hooks/gates'
 import { parseRun } from '../hooks/model'
+import type { GateAttempt } from '../types'
 
 describe('observeBash', () => {
   test('a test command exiting 0 passes testes; exiting non-zero fails it', () => {
@@ -43,6 +47,74 @@ describe('observeBash', () => {
     expect(observeBash('$S/bin/claude plugin test ~/mods/orquestrador', false, 1)[0]?.evidence).toBe(
       '$S/bin/claude plugin test ~/mods/orquestrador',
     )
+  })
+})
+
+describe('monorepo forms and the exit code the shell hands back', () => {
+  const gates = (command: string) => observeBash(command, false, 1).map(r => `${r.gate}:${r.result}`)
+
+  test('flags between the package manager and the script, and turbo tasks, count', () => {
+    for (const command of [
+      'pnpm --filter @psim-kernel/device-bench test',
+      'pnpm -F api test',
+      'pnpm -r test',
+      'pnpm --filter a --filter b run test:unit',
+      'yarn workspace api test',
+      'pnpm turbo test --filter=@psim-kernel/device-ui',
+      'npx turbo run build test',
+    ]) {
+      expect(gates(command)).toEqual(['testes:passed'])
+    }
+    for (const command of [
+      'pnpm turbo lint --filter=@psim-kernel/device-bench --filter=@psim-kernel/device-ui',
+      'pnpm --filter api lint',
+      'pnpm -F api format:check',
+      'turbo run lint',
+    ]) {
+      expect(gates(command)).toEqual(['lint:passed'])
+    }
+  })
+
+  test('a script that is no gate stays none, flags or not', () => {
+    expect(gates('pnpm --filter api build')).toEqual([])
+    expect(gates('pnpm turbo build --filter=api')).toEqual([])
+    expect(gates('pnpm -r --silent run dev')).toEqual([])
+    expect(gates('echo "pnpm -r test" > notes.txt')).toEqual([])
+  })
+
+  test('a later `; cmd` decides the exit code, so `npm test; echo $?` proves nothing', () => {
+    const command = 'pnpm --filter ui exec vitest run >/tmp/h1.log 2>&1; echo ui=$?'
+    expect(gates(command)).toEqual([])
+    expect(classifyBash(command, false, 1).attempt?.why).toMatch(/testes not counted: it is followed by `; echo ui=\$\?`/)
+    // the gate run last, or joined by && to what follows, still proves it
+    expect(gates('source ~/.nvm/nvm.sh && nvm use 22 >/dev/null; pnpm -r test')).toEqual(['testes:passed'])
+    expect(gates('npm test && echo ok')).toEqual(['testes:passed'])
+    expect(gates('npm test >log 2>&1 && tail -3 log')).toEqual(['testes:passed'])
+    expect(gates('set -e; npm test; echo done')).toEqual(['testes:passed'])
+    expect(gates('npm test &')).toEqual([])
+    // a failure is still a failure, whatever follows it
+    expect(observeBash('npm test; echo done', true, 1)[0]?.result).toBe('failed')
+  })
+
+  test('the round that went unseen: each reason is kept for the refusal', () => {
+    const round =
+      'pnpm --filter @psim-kernel/device-ui exec vitest run >/s/h1.log 2>&1; echo ui=$?; ' +
+      'pnpm exec prettier --check packages/device-ui/src >/s/h3.log 2>&1; echo prettier=$?; grep -h Tests /s/h1.log | head'
+    const seen = classifyBash(round, false, 7)
+    expect(seen.records).toEqual([])
+    expect(seen.attempt?.why).toMatch(/testes not counted: .*; lint not counted: /)
+    expect(classifyBash('pnpm turbo build', false, 1).attempt).toBeUndefined()
+    expect(classifyBash('pnpm check:types', false, 1).attempt?.why).toBe('matches no gate command')
+    expect(classifyBash('git status', false, 1).attempt).toBeUndefined()
+    const many = [1, 2, 3, 4, 5, 6].reduce((list, at) => keepAttempt(list, { command: `c${at}`, why: 'w', at }), [] as GateAttempt[])
+    expect(many.map(a => a.at)).toEqual([2, 3, 4, 5, 6])
+  })
+
+  test('the flow steps read the same rule', () => {
+    const pattern = /openspec\s+validate/
+    expect(masksExitCode('openspec validate x; echo $?', pattern)).toBe(true)
+    expect(masksExitCode('cd a; openspec validate x', pattern)).toBe(false)
+    expect(masksExitCode('openspec validate x | tail', pattern)).toBe(true)
   })
 })
 
@@ -106,6 +178,12 @@ describe('plan gates', () => {
     const text = phaseRefusal({ id: '1', title: 'API' }, views.filter(v => v.state !== 'skipped'), 'session "api"')
     expect(text).toMatch(/phase 1 \(API\) cannot close: testes not run — needs a test command/)
     expect(text).toMatch(/only they can skip a gate/)
+    expect(text).toMatch(/No command there looked like a gate run/)
+    const tried = [{ command: 'pnpm turbo test; echo $?', why: 'testes not counted: it is followed by `; echo $?`', at: 3 }]
+    expect(phaseRefusal({ id: '1', title: 'API' }, views.filter(v => v.state !== 'skipped'), 'session "api"', tried)).toMatch(
+      /Last commands seen there that did not count: `pnpm turbo test; echo \$\?` → testes not counted/,
+    )
+    expect(text).toMatch(/ownerQuestion with `gate: \{phase: "1", gate\}`/)
   })
 })
 

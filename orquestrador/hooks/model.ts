@@ -1,6 +1,7 @@
 import type {
   ActivityRecord,
   Attention,
+  GateView,
   OrchestrationRun,
   OwnerQuestion,
   PanelView,
@@ -10,7 +11,7 @@ import type {
   SessionCard,
   SessionRow,
 } from '../types'
-import { parseGates } from './gates'
+import { FINAL_SCOPE, GATES, familyCheck, gateViews, isOpenGate, parseGates } from './gates'
 import { normalizeKey } from './jira'
 
 export const PHASE_STATUSES: readonly PhaseStatus[] = [
@@ -154,7 +155,7 @@ export const toCard = (
   lastTool: activity?.lastTool,
   waiting: activity?.waiting,
   hasActivity: activity !== undefined,
-  gates: { records: activity?.gates ?? {}, editedAt: activity?.editedAt },
+  gates: { records: activity?.gates ?? {}, editedAt: activity?.editedAt, tried: activity?.tried },
 })
 
 const matches = (card: SessionCard, ref: string): boolean => {
@@ -268,8 +269,33 @@ const parseOwnerQuestion = (raw: unknown): OwnerQuestion[] => {
       recommendation: typeof q.recommendation === 'string' ? q.recommendation : undefined,
       session: typeof q.session === 'string' ? q.session : undefined,
       pr: typeof q.pr === 'number' && q.pr > 0 ? q.pr : undefined,
+      ...ownerGate(q.gate),
     },
   ]
+}
+
+const ownerGate = (raw: unknown): { gate?: { phase: string; gate: string } } => {
+  if (typeof raw !== 'object' || raw === null) return {}
+  const { phase, gate } = raw as Record<string, unknown>
+  if (typeof phase !== 'string' || phase.trim() === '' || typeof gate !== 'string' || GATES[gate] === undefined) return {}
+  return { gate: { phase: phase.trim(), gate } }
+}
+
+/**
+ * The gate an owner question asks to skip, as the panel shows it: the final gates are proven
+ * by the whole family, a phase's by its own session (the coordinator's when it has none).
+ */
+const questionGate = (view: PanelView, ref: { phase: string; gate: string }): GateView | undefined => {
+  const self = view.self?.gates ?? { records: {}, editedAt: undefined }
+  if (ref.phase === 'final') {
+    const check = familyCheck([self, ...view.children.map(c => c.gates)])
+    return gateViews([ref.gate], FINAL_SCOPE, check, view.skips ?? {})[0]
+  }
+  if (view.run === undefined) return undefined
+  const phase = phaseViews(view.run, view.children).flat().find(p => p.id === ref.phase)
+  if (phase === undefined) return undefined
+  const check = phase.session === undefined ? self : (phase.card?.gates ?? { records: {}, editedAt: undefined })
+  return gateViews([ref.gate], phase.id, check, view.skips ?? {})[0]
 }
 
 /** The web address of a GitHub remote, in either of git's spellings. */
@@ -290,18 +316,24 @@ export const findCard = (cards: readonly SessionCard[], ref: string | undefined)
  */
 export const attentionItems = (view: PanelView): Attention[] => {
   const cards = view.self === undefined ? view.children : [view.self, ...view.children]
-  const decisions: Attention[] = (view.run?.ownerQuestions ?? []).map((q, i) => {
+  const decisions: Attention[] = (view.run?.ownerQuestions ?? []).flatMap((q, i): Attention[] => {
     const card = findCard(cards, q.session)
     const pr = q.pr ?? card?.prNumber
-    return {
-      id: `decision:${i}`,
+    const skip = q.gate === undefined ? undefined : questionGate(view, q.gate)
+    // a gate that passed or was skipped answers the question: it leaves the list by itself
+    if (skip !== undefined && !isOpenGate(skip)) return []
+    return [
+      {
+        id: `decision:${i}`,
       kind: 'decision',
       title: q.question,
       detail: card?.title,
       recommendation: q.recommendation,
       card,
       prUrl: q.pr === undefined ? undefined : prUrl(view.repoUrl, pr),
-    }
+        ...(skip === undefined ? {} : { skip }),
+      },
+    ]
   })
   const waiting: Attention[] = view.children.flatMap(card =>
     card.waiting === undefined

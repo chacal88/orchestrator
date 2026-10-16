@@ -365,13 +365,14 @@ const commandPattern = (command: string): RegExp =>
 
 /**
  * What one finished Bash command proves for an automatic step: passou on exit 0, falhou otherwise.
- * A run whose exit code a pipe or `|| true` hides proves a failure, never a pass.
+ * A run whose exit code a pipe, `|| true` or a later `; cmd` hides proves a failure, never a pass.
  */
 export const automaticOutcome = (step: FlowStep, command: string, failed: boolean): 'passou' | 'falhou' | undefined => {
   if (step.kind !== 'automatic' || step.command === undefined) return undefined
   const code = executedText(command)
-  if (!commandPattern(step.command).test(code)) return undefined
-  if (!failed && masksExitCode(code)) return undefined
+  const pattern = commandPattern(step.command)
+  if (!pattern.test(code)) return undefined
+  if (!failed && masksExitCode(code, pattern)) return undefined
   return failed ? 'falhou' : 'passou'
 }
 
@@ -379,8 +380,11 @@ export const automaticOutcome = (step: FlowStep, command: string, failed: boolea
 export const detectedOutcome = (step: FlowStep, command: string, failed: boolean): string | undefined => {
   if (step.detect === undefined || failed) return undefined
   const code = executedText(command)
-  if (masksExitCode(code)) return undefined
-  return step.detect.commands.some(c => commandPattern(c).test(code)) ? step.detect.outcome : undefined
+  const seen = step.detect.commands.some(c => {
+    const pattern = commandPattern(c)
+    return pattern.test(code) && !masksExitCode(code, pattern)
+  })
+  return seen ? step.detect.outcome : undefined
 }
 
 /** A session's note for the owner step that waits now; it joins the owner's answer. */

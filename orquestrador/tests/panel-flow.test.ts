@@ -132,6 +132,33 @@ test('finished steps fold into one line, and the running loop lists each phase w
   await ui.unmount()
 })
 
+test('a question to release a gate offers the skip itself; "Aceitar" never stands in for it', async ($, on) => {
+  const w = world(on)
+  await $.tool.call({
+    tool: 'mcp__orquestrador__plano',
+    change: 'demo',
+    waves: [{ phases: [{ id: '1', title: 'API', status: 'running', gates: ['testes', 'lint'] }] }],
+    ownerQuestions: [
+      { question: 'Liberar o lint da fase 1?', recommendation: 'sim', gate: { phase: '1', gate: 'lint' } },
+      { question: 'Pular os portões da fase 1?', recommendation: 'sim' },
+      { question: 'Ligar a flag?', recommendation: 'sim' },
+    ],
+  } as never)
+  const ui = await $.ui.mount({ plugin: 'orquestrador', surface: 'desktop', ...PANE })
+  expect(await ui.find({ key: 'accept:decision:0' })).toBeUndefined()
+  expect(await ui.find({ key: 'accept:decision:1' })).toBeUndefined()
+  expect(await ui.find({ type: 'Text', text: /Só o seu pulo libera um portão/ })).toBeDefined()
+  expect(await ui.find({ key: 'accept:decision:2' })).toBeDefined()
+
+  // two presses, as beside the gate itself
+  const skips = '/h/.claude/orquestrador/gates/demo.json'
+  await ui.press({ key: 'arm:1:lint:ask' })
+  await ui.press({ key: 'skip:1:lint:ask' })
+  for (let i = 0; i < 20 && !w.disk.has(skips); i++) await Promise.resolve()
+  expect(Object.keys(JSON.parse(w.disk.get(skips) ?? '{}').skips ?? {})).toEqual(['1:lint'])
+  await ui.unmount()
+})
+
 test('without a flow, the Gates card still lists the phases and their gates', async ($, on) => {
   world(on)
   await plan($)
