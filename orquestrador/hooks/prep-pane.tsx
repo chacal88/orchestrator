@@ -2,6 +2,7 @@ import type { RenderElement } from 'claude-code'
 
 import type { PanelView } from '../types'
 import { GRILL_STEP, MOCKUP_ADJUST, MOCKUP_STEP, RELEASE_STEP, hiddenChoices } from './grill'
+import { uiText } from './i18n'
 import type { PaneActions, PaneElements } from './pane'
 
 /** The owner buttons of the current flow step the panel leaves out (see hiddenChoices). */
@@ -19,6 +20,7 @@ export const prepDetails = (
 ): RenderElement[] => {
   const flow = view.flow
   const prep = view.prep
+  const t = uiText(view.languages?.ui).grill
   if (flow === undefined || flow.status !== 'running' || flow.current === undefined) return []
   const step = flow.current.id
   const lines: RenderElement[] = []
@@ -28,17 +30,17 @@ export const prepDetails = (
     lines.push(
       <Text dimColor wrap="wrap">
         {rounds === 0
-          ? 'Nenhuma rodada de perguntas registrada ainda.'
-          : `${rounds} ${rounds === 1 ? 'rodada' : 'rodadas'} · ${criteria} ${criteria === 1 ? 'critério de aceite' : 'critérios de aceite'}`}
+          ? t.noRounds
+          : t.rounds(rounds, criteria)}
       </Text>,
     )
     const open = prep?.openItems ?? []
     if (open.length > 0) {
-      lines.push(<Text bold>Perguntas em aberto</Text>)
+      lines.push(<Text bold>{t.open}</Text>)
       if (Input === undefined) {
         lines.push(
           ...open.map(q => <Text wrap="wrap">{`${q.n}. ${q.question}`}</Text>),
-          <Text dimColor wrap="wrap">Responda no chat.</Text>,
+          <Text dimColor wrap="wrap">{t.answerInChat}</Text>,
         )
       } else {
         // only the owner's typing fills these fields: the drafts are written by onInput alone
@@ -56,8 +58,8 @@ export const prepDetails = (
               <Box flexDirection="column" flexGrow={1} width="100%" minWidth={0} marginTop={1}>
                 <Input
                   key={`grill-answer:${q.n}`}
-                  placeholder="Escreva sua resposta e tecle Enter"
-                  submitLabel="Enviar"
+                  placeholder={t.placeholder}
+                  submitLabel={t.send}
                   {...(draftOf(q.question) === '' ? {} : { value: draftOf(q.question) })}
                   onInput={actions.draftAnswer(q.question)}
                   onSubmit={value => actions.answerGrill(flow.change, [{ ...q, answer: value }])()}
@@ -75,7 +77,7 @@ export const prepDetails = (
                 variant="primary"
                 onPress={actions.answerGrill(flow.change, filled.map(q => ({ ...q, answer: draftOf(q.question) })))}
               >
-                {`Enviar todas (${filled.length})`}
+                {t.sendAll(filled.length)}
               </Button>
             </Box>,
           )
@@ -84,37 +86,37 @@ export const prepDetails = (
     }
   } else if (step === MOCKUP_STEP) {
     if (prep?.mockup === undefined) {
-      lines.push(<Text dimColor wrap="wrap">Aguardando a coordenação anexar o mockup.</Text>)
+      lines.push(<Text dimColor wrap="wrap">{t.awaitingMockup}</Text>)
     } else if (prep.mockupIsUrl === true) {
       lines.push(
         <Box flexDirection="row" columnGap={1}>
-          <Text dimColor>Mockup:</Text>
-          <Link href={prep.mockup}>Abrir mockup</Link>
+          <Text dimColor>{t.mockup}</Text>
+          <Link href={prep.mockup}>{t.openMockup}</Link>
         </Box>,
       )
     } else {
-      lines.push(<Text wrap="wrap">{`Mockup: ${prep.mockup}`}</Text>)
+      lines.push(<Text wrap="wrap">{t.mockupAt(prep.mockup)}</Text>)
     }
     if (prep?.lastAdjustment !== undefined && prep.lastAdjustment !== '') {
-      lines.push(<Text dimColor wrap="wrap">{`Último ajuste pedido: ${prep.lastAdjustment}`}</Text>)
+      lines.push(<Text dimColor wrap="wrap">{t.lastAdjustment(prep.lastAdjustment)}</Text>)
     }
     if (Input !== undefined) {
       lines.push(
         <Input
           key={`flow-note:${MOCKUP_STEP}:${MOCKUP_ADJUST}`}
-          label="Pedir ajuste:"
-          placeholder="o que mudar no mockup"
-          submitLabel="pedir ajuste"
+          label={t.adjustLabel}
+          placeholder={t.adjustPlaceholder}
+          submitLabel={t.adjustSubmit}
           onSubmit={actions.noteFlow(flow.change, MOCKUP_STEP, MOCKUP_ADJUST)}
         />,
       )
     }
   } else if (step === RELEASE_STEP) {
     lines.push(
-      <Text wrap="wrap">Aprove o plano de execução no diálogo do plan mode do app; a liberação vem só de lá.</Text>,
+      <Text wrap="wrap">{t.releaseHint}</Text>,
     )
     if (prep?.lastPlanFeedback !== undefined) {
-      lines.push(<Text dimColor wrap="wrap">{`Você recusou o último plano: ${prep.lastPlanFeedback}`}</Text>)
+      lines.push(<Text dimColor wrap="wrap">{t.refused(prep.lastPlanFeedback)}</Text>)
     }
   }
   return lines
