@@ -111,3 +111,34 @@ Ran 207 tests across 19 files.
 $ npx -p typescript@5.6.3 tsc -p <scratchpad>/tc/tsconfig.json   # tipos do engine 2.1.308 (plugin-authoring), opções do cabeçalho
 exit 0
 ```
+
+## Fase 3b — Agente no status e lista de workflows (3.2, 3.3)
+
+- 3.2: `flow status` de um flow em andamento acrescenta, no passo atual, agente (origem e caminho), modelo, esforço e `details`. `.orquestrador/agents/<nome>.md` vence `$.plugin.root/agents/<nome>.md`; sem nenhum dos dois, diz "nenhum arquivo encontrado", sem erro. No laço, o cabeçalho é "Cada fase deste passo usa:". Passo sem agente nem details não ganha bloco.
+- 3.3: `flow list` mantém a primeira linha de cada workflow (`id — título: passos → fim`) e traz Descrição, Origem (padrão / do projeto / derivado de X) e Passos com quem responde (sessão, dono, mod), agente e merge/deploy manual ou automático; erros de arquivos seguem como `ignored: …`.
+- Testes novos: `tests/flow-agent-harness.test.ts` (6: agente do plugin, do projeto vencendo, inexistente, passo sem agente, laço, lista).
+
+Amostra de `flow status` (rapido, passo planejar, agente do plugin):
+
+```
+Flow rapido for demo: step "planejar" (Planejar OpenSpec), attempt 1 of 3. Do the step, then report one of its outcomes with action "report": pronto → validar.
+Neste passo:
+  Agente: "planejador" (do plugin). Instruções do agente: <plugin>/agents/planejador.md
+  Modelo: claude-opus-5-5
+  Esforço: high
+  Entrada: O pedido do dono para uma change pequena.
+  Saída: proposal.md e tasks.md da change.
+  Bloqueia: Sem plano escrito, não há validação.
+```
+
+Amostra de `flow list` (um workflow derivado):
+
+```
+trunk — Trunk: planejar → validar → … → pr → merge → qa → producao → arquivar → fim
+  Descrição: Para changes pequenas: plano curto (proposta e tarefas), fases, revisão de qualidade, checagem, PR, QA e produção.
+  Origem: derivado de rapido
+  Passos: planejar (sessão, agente planejador) → validar (mod) → executar (mod, agente executor) → … → merge (dono, merge manual, agente merge) → qa (dono) → …
+```
+
+- Portão testes: `claude plugin test orquestrador` → 213 pass, 0 fail, saída 0.
+- Portão tipos: `npx -p typescript@5.6.3 tsc -p <scratchpad>/tc/tsconfig.json` (mesmo tsconfig do § Tipos acima) → saída 0, sem mensagens.

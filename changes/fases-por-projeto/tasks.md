@@ -16,8 +16,8 @@
 ## 3. Agentes e coordenação
 
 - [x] 3.1 Agentes do plugin em `orquestrador/agents/`: planejador, revisor-plano, executor, revisor-codigo, abre-pr, publicador, merge, deploy — cx: moderate
-- [ ] 3.2 Agente do projeto em `.orquestrador/agents/<nome>.md` vence o do plugin; `flow status` diz agente (com caminho), modelo, esforço e details do passo atual — teste — cx: moderate
-- [ ] 3.3 `flow list` com título, descrição, origem e sequência de passos — teste — cx: simple
+- [x] 3.2 Agente do projeto em `.orquestrador/agents/<nome>.md` vence o do plugin; `flow status` diz agente (com caminho), modelo, esforço e details do passo atual — teste — cx: moderate
+- [x] 3.3 `flow list` com título, descrição, origem e sequência de passos — teste — cx: simple
 - [x] 3.4 Skill: mostrar sempre as opções de workflow antes do `flow start`; despachar passo de sessão com o agente, modelo e esforço do passo; merge/deploy automáticos (conferir aprovação e CI, nunca `--admin`) — cx: simple
 
 ## 4. Painel ⚙️ Workflows
