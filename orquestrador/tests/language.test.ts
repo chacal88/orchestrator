@@ -196,3 +196,20 @@ test('a project flow derived from a default keeps its translations, and its own 
   expect(view.ownerChoices[0]?.label).toBe('Understanding settled')
   expect(view.steps.find(s => s.id === 'pr')?.title).toBe('Abrir o PR')
 })
+
+test('library steps and step details come in both languages', () => {
+  const { flows, problems } = resolveProjectFlows(DEFAULT_FLOWS, [
+    { source: 'mine', raw: { id: 'trunk', base: 'rapido', add: [{ after: 'pr', step: 'revisao-pr' }, { after: 'revisao-pr', step: { use: 'merge', merge: { branch: 'trunk' } } }] } },
+  ])
+  expect(problems).toEqual([])
+  const trunk = flows[0]!
+  const review = trunk.steps.find(s => s.id === 'revisao-pr')!
+  expect(review.titles).toEqual({ 'pt-BR': 'Revisão do PR', en: 'PR review' })
+  expect(review.details?.inputs).toBe('O PR aberto da change, com o CI rodando.')
+  expect(review.detailsByLang?.en?.inputs).toBe("The change's open PR, with the CI running.")
+  const state = startFlow(trunk, { change: 'demo', coordinatorCwd: '/w', visual: false }, 1).state
+  const view = flowView(state, { ui: 'en', content: 'pt-BR' })
+  expect(view.steps.find(s => s.id === 'merge')?.title).toBe('Merge into trunk')
+  // a default step's details survive the derivation in both languages
+  expect(trunk.steps.find(s => s.id === 'planejar')?.detailsByLang?.en?.blocks).toBe('Without a written plan, there is no validation.')
+})

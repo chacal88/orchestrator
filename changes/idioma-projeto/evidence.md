@@ -15,5 +15,11 @@
 - Não verificado: o painel no app desktop real (só no harness de testes).
 - Depois de juntar com as fases por projeto, um flow derivado (`base` + `override`) mantém as traduções
   do flow base, e o `override` de um título vale por cima delas (teste em `language.test.ts`).
-- Ainda só em pt-BR: o painel ⚙️ Workflows e os passos da biblioteca (`flows/library.ts`). Com `ui: en`,
-  os passos da biblioteca aparecem com o texto em português.
+- O painel ⚙️ Workflows segue `ui` (cerca de 195 textos em `hooks/i18n-workflows.ts`). Os títulos de flows e
+  passos seguem `ui`; descrições e `details` seguem `content`. Os passos da biblioteca e as `details` dos flows
+  padrão vêm nos dois idiomas, e um rascunho salvo mantém as traduções dos passos
+  (testes em `workflows-language.test.ts` e `language.test.ts`).
+- Gate testes depois disso: 273 pass, 0 fail. `tsc`: só os erros de `size`/`weight` em `workflows-pane.tsx`,
+  que já existiam na main, porque os tipos locais são anteriores ao engine.
+- Ainda só em um idioma: o título do próprio rascunho no editor (é gravado como texto simples) e os erros que
+  o resolvedor de flows e a biblioteca devolvem, em inglês.

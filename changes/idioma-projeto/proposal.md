@@ -16,7 +16,8 @@ que prefere o painel em inglês e os textos da change em português, não tinha 
 - `"language": "en"` vale para os dois eixos. Sem arquivo, ou com um valor que o mod não conhece, fica
   `pt-BR` nos dois, como antes, e o painel avisa do valor inválido.
 - Idiomas: `pt-BR` e `en`.
-- Os flows padrão trazem título, descrição e rótulos nos dois idiomas. Um flow do projeto pode escrever
+- O painel ⚙️ Workflows também segue `ui` (títulos) e `content` (descrições e detalhes dos passos).
+- Os flows padrão e os passos da biblioteca trazem título, descrição, rótulos e detalhes nos dois idiomas. Um flow do projeto pode escrever
   `title`, `description` e `label` como texto simples ou como `{ "pt-BR": "…", "en": "…" }`. Falta de um
   idioma cai no outro.
 - Um flow que já está rodando guarda a cópia de quando começou: uma cópia de antes desta versão mostra

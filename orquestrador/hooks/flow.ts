@@ -57,6 +57,7 @@ const text = (v: unknown): string | undefined => (typeof v === 'string' && v.tri
 
 /** A field's per-language texts, kept only when the file gave them by language. */
 const byLang = (v: Localized | undefined): Translations | undefined => (v === undefined || typeof v === 'string' ? undefined : v)
+const perLang = (v: Localized): Translations => byLang(v) ?? {}
 
 /** A flow file, checked whole: every next step exists, every kind is known, every automatic step names its command. */
 export const parseFlow = (raw: unknown, source: string): FlowDef | { error: string } => {
@@ -197,7 +198,7 @@ const DETAIL_KEYS = ['inputs', 'produces', 'blocks'] as const
 const EFFORTS: readonly string[] = ['low', 'medium', 'high', 'xhigh', 'max']
 const MERGE_METHODS: readonly string[] = ['squash', 'merge', 'rebase']
 
-type StepExtras = Pick<FlowStep, 'details' | 'agent' | 'model' | 'effort' | 'merge' | 'deploy'>
+type StepExtras = Pick<FlowStep, 'details' | 'detailsByLang' | 'agent' | 'model' | 'effort' | 'merge' | 'deploy'>
 
 /**
  * The fields that describe a step and who runs it: `details`, `agent`, `model`, `effort`, and the
@@ -211,13 +212,16 @@ const parseExtras = (s: Record<string, unknown>, kind: FlowStepKind): StepExtras
     const unknown = Object.keys(s.details).filter(k => !(DETAIL_KEYS as readonly string[]).includes(k))
     if (unknown.length > 0) return `\`details\` takes only inputs, produces and blocks, not ${unknown.join(', ')}.`
     const details: FlowStepDetails = {}
+    const byLang: Partial<Record<Lang, FlowStepDetails>> = {}
     for (const key of DETAIL_KEYS) {
       if (s.details[key] === undefined) continue
-      const value = text(s.details[key])
-      if (value === undefined) return `\`details.${key}\` must be text.`
-      details[key] = value
+      const value = parseLocalized(s.details[key])
+      if (value === undefined) return `\`details.${key}\` must be text, or one text per language.`
+      details[key] = baseText(value)
+      for (const [lang, t] of Object.entries(perLang(value))) (byLang[lang as Lang] ??= {})[key] = t
     }
     out.details = details
+    if (Object.keys(byLang).length > 0) out.detailsByLang = byLang
   }
   for (const key of ['agent', 'model'] as const) {
     if (s[key] === undefined) continue
@@ -298,8 +302,23 @@ const names = (v: unknown): string[] | undefined =>
   v === undefined ? [] : Array.isArray(v) && v.every(x => text(x) !== undefined) ? v.map(x => text(x) as string) : undefined
 
 /** A parsed step as a file writes it: its title, description and labels by language where it has them. */
-const asWritten = ({ titles, descriptions, ...step }: FlowStep): Record<string, unknown> => ({
+export const asWritten = ({ titles, descriptions, detailsByLang, ...step }: FlowStep): Record<string, unknown> => ({
   ...step,
+  ...(step.details === undefined || detailsByLang === undefined
+    ? {}
+    : {
+        details: Object.fromEntries(
+          DETAIL_KEYS.flatMap((key): [string, Localized][] => {
+            const texts: Translations = {}
+            for (const lang of Object.keys(detailsByLang) as Lang[]) {
+              const t = detailsByLang[lang]?.[key]
+              if (t !== undefined) texts[lang] = t
+            }
+            const base = step.details?.[key]
+            return Object.keys(texts).length > 0 ? [[key, texts]] : base === undefined ? [] : [[key, base]]
+          }),
+        ),
+      }),
   title: titles ?? step.title,
   ...((descriptions ?? step.description) === undefined ? {} : { description: descriptions ?? step.description }),
   outcomes: Object.fromEntries(

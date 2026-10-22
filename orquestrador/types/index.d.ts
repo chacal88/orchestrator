@@ -100,6 +100,8 @@ export type FlowStep = {
   jira?: JiraTarget | false
   /** What the step reads, what it hands on and what it holds back (pt-BR), for the owner and the session. */
   details?: FlowStepDetails
+  /** The details per language, where the flow file gave more than one; `details` holds the pt-BR (or only) text. */
+  detailsByLang?: Partial<Record<Lang, FlowStepDetails>>
   /** session or loop (or a merge/deploy step, which a session carries out): the specialist agent that runs it. */
   agent?: string
   /** The model suggested for the session that runs the step. */
