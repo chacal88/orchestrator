@@ -1,4 +1,15 @@
 import { expect, mock, test } from 'claude-code/testing'
+import type { TestBody } from 'claude-code/testing'
+
+/** The clone is activated, as the owner does from the panel: the mod works only where it is. */
+const ACTIVE: [string, string] = ['/w/.claude/settings.local.json', JSON.stringify({ env: { ORQUESTRADOR: 'barrar' } })]
+
+/** Marks the clone as activated for a test that has no disk of its own. */
+const activate = (on: Parameters<TestBody>[1]) => {
+  on("session.root", () => ({ value: "/w" }))
+  on("fs.exists", ($, e, next) => (e.path === ACTIVE[0] ? { value: true } : next(e)))
+  on("fs.read", ($, e, next) => (e.path === ACTIVE[0] ? { value: ACTIVE[1] } : next(e)))
+}
 
 const PANE = {
   component: 'Pane',
@@ -8,6 +19,7 @@ const PANE = {
 
 test('the pane shows the plan this session tracks, on every surface', async ($, on) => {
   mock.store(on)
+  activate(on)
   on('tool.call', ($, e, next) => ((e.tool as string).endsWith('update_plan') ? { result: 'ok' } : next(e)))
 
   await $.tool.call({
@@ -29,6 +41,7 @@ test('the pane shows the plan this session tracks, on every surface', async ($, 
 
 test('pressing a card title collapses and reopens it', async ($, on) => {
   mock.store(on)
+  activate(on)
   on('tool.call', ($, e, next) => ((e.tool as string).endsWith('update_plan') ? { result: 'ok' } : next(e)))
   await $.tool.call({
     tool: 'mcp__ccd_turn__update_plan',
@@ -62,7 +75,7 @@ type Seed = { sites?: unknown[]; sessions?: unknown[]; opened?: string[][] }
 /** Stands in for the engine beneath the mod: an in-memory disk, the Jira connector and the app's session tools. */
 const seed = ($: Env[0], on: Env[1], { sites = [{ id: 'c1', url: 'https://a.atlassian.net' }], sessions = [], opened = [] }: Seed = {}) => {
   mock.store(on)
-  const disk = new Map(Object.entries(FILES))
+  const disk = new Map([ACTIVE, ...Object.entries(FILES)])
   on('env.get', () => ({ value: '/h' }))
   on('clock.now', () => ({ value: 1_000 }))
   on('session.root', () => ({ value: '/w' }))

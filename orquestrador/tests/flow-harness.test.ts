@@ -3,6 +3,9 @@ import type { Engine, TestBody } from 'claude-code/testing'
 
 import type { FlowState } from '../types'
 
+/** The clone is activated, as the owner does from the panel: the mod works only where it is. */
+const ACTIVE: [string, string] = ['/w/.claude/settings.local.json', JSON.stringify({ env: { ORQUESTRADOR: 'barrar' } })]
+
 type On = Parameters<TestBody>[1]
 type Reply = { result?: unknown; isError?: boolean; deny?: string }
 
@@ -24,7 +27,7 @@ type Sent = { text: string; asUser: boolean }
  */
 const world = (on: On, toasts: string[] = [], prompts: Sent[] = []): Map<string, string> => {
   mock.store(on)
-  const disk = new Map<string, string>()
+  const disk = new Map<string, string>([ACTIVE])
   on('env.get', () => ({ value: '/h' }))
   let now = 1_000
   on('clock.now', () => ({ value: (now += 10) }))

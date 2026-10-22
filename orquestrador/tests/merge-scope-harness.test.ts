@@ -6,6 +6,9 @@ import { resolveFlow, startFlow } from '../hooks/flow'
 import { DEFAULT_FLOWS, defaultFlows } from '../hooks/flows/index'
 import { sessionActivityKey } from '../hooks/model'
 
+/** The clone is activated, as the owner does from the panel: the mod works only where it is. */
+const ACTIVE: [string, string] = ['/w/.claude/settings.local.json', JSON.stringify({ env: { ORQUESTRADOR: 'barrar' } })]
+
 type On = Parameters<TestBody>[1]
 type Reply = { result?: unknown; isError?: boolean; deny?: string }
 
@@ -27,7 +30,7 @@ type World = {
 /** A coordinator at /w, an in-memory disk, gh and git answering from the world. */
 const world = (on: On): World => {
   mock.store(on)
-  const w: World = { disk: new Map(), rows: [ME], self: ME, heads: {}, branch: 'main', edits: {} }
+  const w: World = { disk: new Map([ACTIVE]), rows: [ME], self: ME, heads: {}, branch: 'main', edits: {} }
   on('env.get', () => ({ value: '/h' }))
   let now = 1_000
   on('clock.now', () => ({ value: (now += 10) }))

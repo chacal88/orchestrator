@@ -63,11 +63,40 @@ Depois de instalar, reinicie o app ou rode `/reload-plugins`.
 
 ## Uso
 
+0. Instalado, o plugin fica quieto até você ativá-lo no clone (veja [Ativar neste clone](#ativar-neste-clone)).
 1. Peça à sessão para orquestrar uma change, ou use a skill `change-orchestrator`.
 2. Escolha um dos workflows que a coordenação mostra e abra o painel com `/orquestrador`.
 3. Acompanhe pelo painel e responda os seus passos pelos botões.
 
 Para ver ou editar os workflows do projeto, abra `/orquestrador-workflows`.
+
+## Ativar neste clone
+
+As configurações do projeto ficam em `.orquestrador/config.json` e vão para o git. O que **liga** o orquestrador é local, deste clone, e nunca vai para o repositório: quem clona o projeto não é afetado.
+
+- **Quieto sem ativação.** Num clone que não foi ativado, o plugin não abre o painel 🧭 sozinho, não desenha a faixa acima do prompt, não põe regras do flow na conversa e não recusa merge nem portões. `/orquestrador` e `/orquestrador-workflows` continuam disponíveis, e o cartão "Este projeto" do painel ⚙️ mostra o estado "inativo neste clone". Uma change com flow em andamento no clone continua funcionando mesmo sem ativação, para nada parar no meio.
+- **Ativar.** No painel ⚙️ Workflows, "Este projeto" → "Ativar neste clone": escolha o nível e confirme.
+  - **Barrar** (padrão): segue o flow e recusa merge e deploy fora dele, `--admin` e portões abertos.
+  - **Lembrar**: o flow e as regras entram na conversa, mas nada é bloqueado; cada recusa do "barrar" vira só um aviso (merge com `--admin`, merge sem revisão e pulo de portões passam; ficam no log do flow e no painel). Os registros de portão do mod continuam protegidos.
+  O `.claude/settings.local.json` é só do painel. O que vale é o nível que o **painel** gravou: o plugin guarda esse nível no estado dele (que nenhuma ferramenta do modelo grava), por repositório. Uma marca "lembrar" que o painel não gravou (escrita à mão ou pelo modelo) vale como "barrar" e o painel avisa para confirmar; "barrar" vale sempre; uma marca apagada fora do painel também vale "barrar". Se a marca ou os flows não puderem ser lidos, o plugin falha fechado ("barrar"); só a ausência confirmada de marca e de flow deixa o clone quieto. Além disso, com o plugin ativo, Edit, Write ou shell que mencionem o arquivo são recusados (comparação sem diferenciar maiúsculas); essa recusa por texto é só uma primeira barreira, fácil de contornar. Num clone inativo o arquivo é livre.
+  **"Barrar" é um freio do plugin, não uma barreira.** A trava de verdade é a proteção de branch do GitHub (revisão obrigatória, sem `--admin`). Um hook que o modelo ponha em outro arquivo de settings (por exemplo `.claude/settings.json` ou os do usuário) fica fora do alcance do plugin.
+  Com o clone ativo, o cartão oferece "Trocar para lembrar/barrar" e "Desativar neste clone".
+- **O que é gravado**, e só isso, em `.claude/settings.local.json` do repositório principal (as worktrees usam o dele; o Claude Code recarrega o arquivo sem reiniciar):
+
+  ```json
+  {
+    "env": { "ORQUESTRADOR": "barrar" },
+    "hooks": {
+      "SessionStart": [
+        { "hooks": [ { "type": "command", "command": "printf '%s\\n' \"Orquestrador ativo neste clone (nível: ${ORQUESTRADOR:-barrar}). …\" # orquestrador:ativar" } ] }
+      ]
+    }
+  }
+  ```
+
+  `env.ORQUESTRADOR` é a marca (`barrar` ou `lembrar`); o hook `SessionStart` imprime um lembrete do flow e das regras, que entra como contexto de cada sessão. O hook se reconhece pelo `# orquestrador:ativar` no fim do comando.
+- **Desativar** tira só a marca e esse hook, preserva todo o resto do arquivo e remove as chaves `env` e `hooks` que ficarem vazias. Um `settings.local.json` que não seja um JSON válido não é gravado: o painel diz por quê e o arquivo fica como está.
+- **Fora do git.** O Claude Code põe `.claude/settings.local.json` no exclude global do git ao criá-lo; se o plugin criar o arquivo e ele não estiver ignorado, acrescenta a linha ao `.git/info/exclude` do clone, nunca ao `.gitignore`. Hooks do git e `CLAUDE.local.md` não são usados.
 
 ## Workflows do projeto
 

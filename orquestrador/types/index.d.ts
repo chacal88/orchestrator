@@ -537,6 +537,12 @@ export type ConfigDraft = {
 /** An action on a workflow from "Nos workflows", waiting for the owner's confirmation. */
 export type ConfigAsk = { what: 'add' | 'use'; id: string }
 
+/** How much the mod does in a clone where the owner activated it: bar what leaves the flow, or only remind. */
+export type ActivationLevel = 'barrar' | 'lembrar'
+
+/** The activation card in the workflows panel: the confirmation open, with the level chosen in it. */
+export type ActivationAsk = { level: ActivationLevel }
+
 /** The "Novo workflow" and "Acrescentar passo" fields, as the owner fills them. */
 export type WorkflowForms = {
   newId: string
@@ -569,6 +575,8 @@ declare module 'claude-code' {
       paneOpen: boolean
       /** What the owner has typed so far in the grill's answer fields, by question text. */
       grillDrafts: Record<string, string>
+      reminded: { count: number; last: string } | null
+      running: { root: string; at: number; running: boolean }
       /** Workflows panel: the workflow open in the panel, by id. */
       wfSelected: string | null
       /** Workflows panel: the step whose details are open (an added step goes after it). */
@@ -584,6 +592,8 @@ declare module 'claude-code' {
       wfCfgDraft: ConfigDraft | null
       /** Workflows panel: the "Nos workflows" action awaiting confirmation. */
       wfCfgAsk: ConfigAsk | null
+      /** Workflows panel: the "Ativar neste clone" confirmation, with its level. */
+      wfActivate: ActivationAsk | null
     }
   }
 }

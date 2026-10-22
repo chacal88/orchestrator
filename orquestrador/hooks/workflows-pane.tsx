@@ -11,6 +11,8 @@ import type {
 } from 'claude-code'
 
 import type {
+  ActivationAsk,
+  ActivationLevel,
   ConfigAsk,
   ConfigDraft,
   FlowDef,
@@ -25,6 +27,7 @@ import type {
   WorkflowDraft,
   WorkflowForms,
 } from '../types'
+import { LEVELS, readActivation, writeActivation } from './activation'
 import { findAgent, listAgents, loadConfig, loadFlows } from './flow-files'
 import type { AgentInfo } from './flow-files'
 import { DEFAULT_FLOWS, defaultFlows } from './flows/index'
@@ -74,6 +77,7 @@ const FORMS = { plugin: 'orquestrador', key: 'wfForms' } as const
 const NOTICE = { plugin: 'orquestrador', key: 'wfNotice' } as const
 const CFG = { plugin: 'orquestrador', key: 'wfCfgDraft' } as const
 const ASK = { plugin: 'orquestrador', key: 'wfCfgAsk' } as const
+const ACT = { plugin: 'orquestrador', key: 'wfActivate' } as const
 /** The `routineFor` value that opens "+ rotina" in the project's deploy settings. */
 const CFG_ROUTINE = ':cfg'
 
@@ -105,6 +109,7 @@ const WHO_PILL: Record<FlowStepKind, { bg: string; fg: string }> = {
 }
 const TAG_BLUE = { bg: '#EEF3FC', fg: '#1E4C9E' }
 const TAG_GRAY = { bg: '#F2F1EC', fg: '#3D3C39' }
+const TAG_GREEN = { bg: '#E6F4EA', fg: '#1E6B3A' }
 const TAG_AMBER = { bg: '#FDF3E1', fg: '#7A4A00' }
 const AMBER_BAR = '#FFF8EB'
 const AMBER_RULE = '#F0DDB8'
@@ -132,6 +137,8 @@ export type ConfigView = {
   draft: ConfigDraft | null
   ask: ConfigAsk | null
   states: WorkflowState[]
+  /** This clone's activation, read from its settings.local.json: the level (none: inactive), a broken file, the confirmation open. */
+  activation: { level: ActivationLevel | undefined; invalid: boolean; tampered: boolean; ask: ActivationAsk | null }
 }
 
 export type WorkflowsView = {
@@ -181,6 +188,15 @@ export type WorkflowsActions = {
   ask: (what: ConfigAsk['what'], id: string) => () => void
   confirm: () => void
   cancel: () => void
+  /** "Ativar neste clone": opens the confirmation. */
+  actOpen: () => void
+  /** The level chosen in the confirmation. */
+  actLevel: (level: ActivationLevel) => void
+  actConfirm: () => void
+  actCancel: () => void
+  /** "Trocar para …" on an active clone. */
+  actSwitch: (level: ActivationLevel) => () => void
+  actOff: () => void
 }
 
 /** A step as the pane reads it: a flow's, or a draft's raw one. */
@@ -1064,10 +1080,12 @@ export const renderWorkflows = (els: WorkflowsElements, view: WorkflowsView, act
       </Box>
     )
   }
-  /** "Este projeto": the settings in three lines, with "Configurar". */
+  /** "Este projeto": the clone's activation, the settings in three lines, and the buttons of the state it is in. */
   const projectCard = (c: ConfigView) => {
     const merge = effectiveMerge(c.project.merge ?? {})
     const deploy = effectiveDeploy(c.project.deploy ?? {})
+    const A = P.activation
+    const { level, invalid, tampered, ask } = c.activation
     const name = (l: Lang) => P.langName[l] ?? l
     const line$ = (key: string, value: string, who?: string) => (
       <Box key={key} flexDirection={view.narrow ? 'column' : 'row'} columnGap={1} minWidth={0}>
@@ -1080,19 +1098,71 @@ export const renderWorkflows = (els: WorkflowsElements, view: WorkflowsView, act
         </Box>
       </Box>
     )
-    return (
-      <Box key="cfg-card" flexDirection="column" rowGap={1} borderStyle="round" borderColor={RULE} paddingX={1} marginTop={1} minWidth={0}>
-        <Box flexDirection="row" justifyContent="space-between" alignItems="center" columnGap={1} minWidth={0}>
-          <Text weight="semibold">{P.title}</Text>
-          <Button key="cfg-open" onPress={actions.configure}>
-            {P.configure}
-          </Button>
+    const other: ActivationLevel = level === 'lembrar' ? 'barrar' : 'lembrar'
+    const levelOptions = LEVELS.map(l => ({ value: l, label: A.options[l] ?? l }))
+    /** The confirmation of "Ativar neste clone": the level, and what will be written. */
+    const confirm = (a: ActivationAsk) => (
+      <Box key="act-confirm" flexDirection="column" rowGap={1} borderStyle="round" borderColor={LINK} paddingX={1} marginTop={1} minWidth={0}>
+        <Text weight="semibold">{A.confirmTitle}</Text>
+        <Box flexDirection="column" minWidth={0}>
+          {Select === undefined ? <Text size="footnote" weight="semibold">{A.howMuch}</Text> : []}
+          {Select === undefined
+            ? LEVELS.map(l => (
+                <Button key={`act-level:${l}`} variant={a.level === l ? 'primary' : undefined} onPress={() => actions.actLevel(l)}>
+                  {A.options[l] ?? l}
+                </Button>
+              ))
+            : <Select key="act-level" label={A.howMuch} options={levelOptions} value={a.level} onSelect={v => actions.actLevel(v as ActivationLevel)} />}
+          <Text size="caption" color={MUTED} wrap="wrap">{A.levelHelp}</Text>
+          <Text size="caption" color={MUTED} wrap="wrap">{A.brake}</Text>
         </Box>
-        {line$('language', P.languageSummary(name(languages.ui), name(languages.content)))}
-        {line$('merge', P.mergeSummary(merge.branch, merge.method), merge.auto ? P.mergeWho.auto : P.mergeWho.owner)}
-        {line$('deploy', P.deploySummary(deploy.ci, deploy.commands), deploy.auto ? P.deployWho.auto : P.deployWho.owner)}
-        <Text size="caption" color={MUTED} wrap="wrap">{P.applies}</Text>
-        {c.problems.length === 0 ? [] : box(c.problems.map(p => line(p, ERROR)), ERROR)}
+        <Box flexDirection="column" backgroundColor="#F7F6F2" paddingX={1} minWidth={0}>
+          <Text size="footnote" weight="semibold">{A.written}</Text>
+          <Text size="footnote" wrap="wrap">{A.writtenWhere}</Text>
+          <Text size="footnote" wrap="wrap">{`· ${A.writtenMark}`}</Text>
+          <Text size="footnote" wrap="wrap">{`· ${A.writtenHook}`}</Text>
+          <Text size="caption" color={MUTED} wrap="wrap">{A.writtenNothing}</Text>
+        </Box>
+        {buttons(
+          <Button key="act-confirm-go" variant="primary" onPress={actions.actConfirm}>{A.confirm}</Button>,
+          <Button key="act-confirm-cancel" onPress={actions.actCancel}>{A.cancel}</Button>,
+        )}
+      </Box>
+    )
+    return (
+      <Box key="cfg-card" flexDirection="column" minWidth={0}>
+        <Box flexDirection="column" rowGap={1} borderStyle="round" borderColor={RULE} paddingX={1} marginTop={1} minWidth={0}>
+          <Box flexDirection="row" alignItems="center" columnGap={1} flexWrap="wrap" minWidth={0}>
+            <Text weight="semibold">{P.title}</Text>
+            {level === undefined ? pill(A.off, TAG_GRAY) : pill(A.on(A.level[level] ?? level), TAG_BLUE)}
+          </Box>
+          {level === undefined ? <Text key="act-quiet" size="footnote" color={MUTED} wrap="wrap">{A.quiet}</Text> : []}
+          {tampered ? <Text key="act-tampered" size="footnote" color={ERROR} wrap="wrap">{A.tampered}</Text> : []}
+          {invalid ? <Text key="act-invalid" size="footnote" color={ERROR} wrap="wrap">{A.invalid}</Text> : []}
+          {line$('language', P.languageSummary(name(languages.ui), name(languages.content)))}
+          {line$('merge', P.mergeSummary(merge.branch, merge.method), merge.auto ? P.mergeWho.auto : P.mergeWho.owner)}
+          {line$('deploy', P.deploySummary(deploy.ci, deploy.commands), deploy.auto ? P.deployWho.auto : P.deployWho.owner)}
+          <Text size="caption" color={MUTED} wrap="wrap">{P.applies}</Text>
+          {c.problems.length === 0 ? [] : box(c.problems.map(p => line(p, ERROR)), ERROR)}
+          {buttons(
+            ...(level === undefined && ask === null && !invalid
+              ? [<Button key="act-open" variant="primary" onPress={actions.actOpen}>{A.activate}</Button>]
+              : []),
+            <Button key="cfg-open" onPress={actions.configure}>
+              {P.configure}
+            </Button>,
+            ...(level === undefined
+              ? []
+              : [
+                  ...(tampered ? [<Button key="act-confirm-level" variant="primary" onPress={actions.actSwitch(level)}>{A.confirmLevel(A.level[level] ?? level)}</Button>] : []),
+                  <Button key="act-switch" onPress={actions.actSwitch(other)}>{A.switchTo(A.level[other] ?? other)}</Button>,
+                  <Button key="act-off" plain onPress={actions.actOff}>{A.deactivate}</Button>,
+                ]),
+          )}
+          {level === undefined ? [] : <Text key="act-off-help" size="caption" color={MUTED} wrap="wrap">{A.deactivateHelp}</Text>}
+          {level === undefined ? [] : <Text key="act-brake" size="caption" color={MUTED} wrap="wrap">{A.brake}</Text>}
+        </Box>
+        {ask === null || level !== undefined ? [] : confirm(ask)}
       </Box>
     )
   }
@@ -1205,7 +1275,7 @@ export async function drawWorkflows(
   const languages = loaded.config.languages
   const project = loaded.config.project
   const t = workflowsText(languages.ui)
-  const [selected, focus, insert, draft, forms, notice, cfgDraft, cfgAsk] = await Promise.all([
+  const [selected, focus, insert, draft, forms, notice, cfgDraft, cfgAsk, actAsk] = await Promise.all([
     $.state.get(SELECTED),
     $.state.get(FOCUS),
     $.state.get(INSERT),
@@ -1214,7 +1284,9 @@ export async function drawWorkflows(
     $.state.get(NOTICE),
     $.state.get(CFG),
     $.state.get(ASK),
+    $.state.get(ACT),
   ])
+  const activation = await readActivation($)
   const defaults = defaultsById()
   const entries = Object.values(loaded.flows).map(flow => ({
     flow,
@@ -1254,6 +1326,7 @@ export async function drawWorkflows(
       draft: cfgDraft.value ?? null,
       ask: cfgAsk.value ?? null,
       states: entries.map(e => workflowState(e.flow, project)),
+      activation: { level: activation.level, invalid: activation.invalid, tampered: activation.tampered, ask: actAsk.value ?? null },
     },
   }
 
@@ -1429,6 +1502,26 @@ export async function drawWorkflows(
     discard: () => {
       void Promise.all([$.state.set(DRAFT, null), $.state.set(FOCUS, null), $.state.set(INSERT, null)]).catch(fail('discard'))
     },
+    actOpen: () => {
+      void $.state.set(ACT, { level: 'barrar' }).catch(fail('open'))
+    },
+    actLevel: level => {
+      void $.state.set(ACT, { level }).catch(fail('draft'))
+    },
+    actConfirm: () => {
+      const level = view.config?.activation.ask?.level
+      if (level === undefined) return
+      void setActivation($, t, level, 'on').catch(fail('save'))
+    },
+    actCancel: () => {
+      void $.state.set(ACT, null).catch(fail('discard'))
+    },
+    actSwitch: level => () => {
+      void setActivation($, t, level, 'switched').catch(fail('save'))
+    },
+    actOff: () => {
+      void setActivation($, t, null, 'off').catch(fail('save'))
+    },
   })
 }
 
@@ -1497,6 +1590,22 @@ async function saveConfig($: EngineInterface, t: WorkflowsText): Promise<void> {
   }
   await $.fs.write(`${await $.session.root()}/${CONFIG_PATH}`, next.text)
   await Promise.all([$.state.set(CFG, null), $.state.set(ASK, null), $.state.set(NOTICE, t.project.edit.saved)])
+}
+
+/** Writes the clone's activation (or takes it back) and says what happened: the file is the owner's, so a broken one is left as it is. */
+async function setActivation($: EngineInterface, t: WorkflowsText, level: ActivationLevel | null, done: 'on' | 'switched' | 'off'): Promise<void> {
+  const A = t.project.activation
+  const written = await writeActivation($, level)
+  const say = async (text: string) => {
+    await Promise.all([$.state.set(ACT, null), $.state.set(NOTICE, text)])
+    $.ui.toast(text)
+  }
+  if (!written.ok) {
+    await say(A.notWritten(A[written.error]))
+    return
+  }
+  const named = level === null ? '' : (A.level[level] ?? level)
+  await say(done === 'off' ? A.done.off : done === 'on' ? A.done.on(named) : A.done.switched(named))
 }
 
 const idOf = (raw: unknown): unknown => (raw as { id?: unknown } | null)?.id

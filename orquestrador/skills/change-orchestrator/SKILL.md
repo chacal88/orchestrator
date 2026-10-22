@@ -14,6 +14,12 @@ Ferramentas do mod (carregue via ToolSearch): `mcp__orquestrador__flow` e
 
 ## 1. Começar o flow
 
+0. **Clone inativo.** O mod só trabalha num clone que o dono ativou (ou onde já há um flow em
+   andamento). Se o painel ⚙️ mostra "inativo neste clone" (ou o mod parece quieto: sem
+   faixa, sem regras do flow no início da sessão), **peça ao dono para ativar no painel ⚙️**
+   ("Este projeto" → "Ativar neste clone", nível "barrar" ou "lembrar") **antes de
+   orquestrar**, e espere. Nunca grave o `.claude/settings.local.json` você mesma.
+
 1. **Antes do `flow start`, mostre sempre ao dono os workflows de `flow list`**: de cada um,
    título, descrição e passos, numa pergunta só, com a sua recomendação. Nunca escolha
    sozinha, nem quando só há um. Os do projeto (`.orquestrador/flows/`) valem mais que os

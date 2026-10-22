@@ -1,6 +1,9 @@
 import { expect, mock, test } from 'claude-code/testing'
 import type { Engine, TestBody } from 'claude-code/testing'
 
+/** The clone is activated, as the owner does from the panel: the mod works only where it is. */
+const ACTIVE: [string, string] = ['/w/.claude/settings.local.json', JSON.stringify({ env: { ORQUESTRADOR: 'barrar' } })]
+
 type On = Parameters<TestBody>[1]
 
 const PANE = {
@@ -25,7 +28,7 @@ type World = { disk: Map<string, string>; mtimes: Map<string, number>; family: R
 /** A coordinator at /w with its family, a disk in memory, and an engine that answers every tool. */
 const world = (on: On, family: Record<string, unknown>[]): World => {
   mock.store(on)
-  const w: World = { disk: new Map(), mtimes: new Map(), family, calls: [], now: 1_000 }
+  const w: World = { disk: new Map([ACTIVE]), mtimes: new Map(), family, calls: [], now: 1_000 }
   on('env.get', () => ({ value: '/h' }))
   on('clock.now', () => ({ value: (w.now += 10) }))
   on('session.root', () => ({ value: '/w' }))

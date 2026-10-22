@@ -2,6 +2,7 @@ import { update } from 'claude-code'
 import type { EngineInterface, Register, ToolCallResult } from 'claude-code'
 
 import type {
+  ActivationLevel,
   ActivityRecord,
   Attention,
   FlowDef,
@@ -97,6 +98,7 @@ import { bandSummary, parseEvents, stepTimes } from './glance'
 import { DEFAULT_LANGUAGES, contentRule, uiText } from './i18n'
 import type { UiText } from './i18n'
 import { renderBand, renderPane } from './pane'
+import { readActivation, registryDir } from './activation'
 import { WORKFLOWS_PANE, drawWorkflows, toggleWorkflowsPane } from './workflows-pane'
 import { findAgent, loadConfig as loadProjectConfig, loadFlows } from './flow-files'
 import { firstSite, issueUrl, jiraKeys, moveFor, parseIssue, parseTransitions, wishes } from './jira'
@@ -146,6 +148,8 @@ const TRIED = { plugin: 'orquestrador', key: 'tried' } as const
 const SELF_ID = { plugin: 'orquestrador', key: 'selfId' } as const
 const ACTIVITY_TTL_MS = 7 * 24 * 60 * 60 * 1000
 const PANE_OPEN = { plugin: 'orquestrador', key: 'paneOpen' } as const
+const REMINDED = { plugin: 'orquestrador', key: 'reminded' } as const
+const RUNNING = { plugin: 'orquestrador', key: 'running' } as const
 const GRILL_DRAFTS = { plugin: 'orquestrador', key: 'grillDrafts' } as const
 const START_SESSION = 'mcp__ccd_session__start_session'
 const TRANSITION_SUFFIX = '__transitionJiraIssue'
@@ -260,8 +264,7 @@ type CallResult = { text?: string; deny?: string; isError?: boolean }
 const callTool = ($: EngineInterface, input: Record<string, unknown>): Promise<CallResult> =>
   $.tool.call(input as never) as Promise<CallResult>
 
-const baseDir = async ($: EngineInterface): Promise<string> =>
-  `${(await $.env.get('HOME')) ?? '~'}/.claude/orquestrador`
+const baseDir = async ($: EngineInterface): Promise<string> => registryDir($)
 
 const readJson = async <T,>($: EngineInterface, path: string): Promise<T | undefined> => {
   try {
@@ -647,6 +650,7 @@ const refresh = async ($: EngineInterface): Promise<void> => {
 
 const refreshQuietly = async ($: EngineInterface): Promise<void> => {
   try {
+    await activeMode($) // keeps "is a flow running here" warm for the renders, which cannot write it
     await refresh($)
   } catch (error) {
     $.ui.log(`orquestrador: ${describeError('refresh', error)}`)
@@ -801,7 +805,7 @@ const FLOW_FAILED = { result: 'Flow: the orchestrator failed to read or store th
 const READ_ONLY_COMMANDS = new Set(['ls', 'cat', 'head', 'tail', 'grep', 'rg', 'find', 'wc', 'stat', 'jq', 'diff', 'file', 'du'])
 
 /** The folder named with or without its trailing slash: `rm -rf ~/.claude/orquestrador` must not slip through. */
-const MENTIONS_PROTECTED_DIR = /\.claude\/orquestrador(?=$|[\/\s"'])/
+const MENTIONS_PROTECTED_DIR = /\.claude\/orquestrador(?=$|[\/\s"'])/i
 
 const isReadOnlyCommand = (command: string): boolean => {
   const quiet = command.replace(/\d?>&\d|\d?>\s*\/dev\/null/g, '')
@@ -828,6 +832,22 @@ const touchesGateFiles = (tool: string, input: Record<string, unknown>): boolean
     MENTIONS_PROTECTED_DIR.test(input.command) &&
     !isReadOnlyCommand(input.command)
   )
+}
+
+/**
+ * The activation file is the owner's, written by the panel alone: a mark or a hook the model planted there
+ * (Edit, Write or a shell) would switch the guards off or run its own command. A first line of defense by the text
+ * of the call, easy to get around; what actually holds is that the level counts only as the panel recorded it
+ * (`readActivation`). It applies only where the mod is active: an inactive clone's file is free, as before.
+ */
+const SETTINGS_FILE = /(^|\/)\.claude\/settings\.local\.json$/i // APFS ignores case
+const MENTIONS_SETTINGS = /settings\.local\.json/i
+const touchesSettings = (tool: string, input: Record<string, unknown>): boolean => {
+  if (EDIT_TOOLS.has(tool)) {
+    const path = input.file_path ?? input.notebook_path
+    return typeof path === 'string' && SETTINGS_FILE.test(path)
+  }
+  return tool === 'Bash' && typeof input.command === 'string' && MENTIONS_SETTINGS.test(input.command) && !isReadOnlyCommand(input.command)
 }
 
 /** Every change this checkout coordinates: its published plan and its flow, either may be missing. */
@@ -1109,6 +1129,7 @@ const allFlowStates = async ($: EngineInterface): Promise<FlowState[]> => {
 /** The state file and its append-only log, both written by the mod alone. */
 const saveFlow = async ($: EngineInterface, state: FlowState, events: readonly FlowEvent[]): Promise<void> => {
   await $.fs.write(await flowFile($, state.change, 'json'), JSON.stringify(state))
+  await $.state.set(RUNNING, { root: '', at: 0, running: false }).catch(() => undefined)
   const log = await flowFile($, state.change, 'ndjson')
   const prior = (await readText($, log)) ?? ''
   await $.fs.write(log, prior + events.map(e => `${JSON.stringify(e)}\n`).join(''))
@@ -1121,9 +1142,58 @@ const logFlowRefusal = async ($: EngineInterface, state: FlowState, step: string
   await $.fs.write(log, `${prior}${JSON.stringify(event)}\n`)
 }
 
+/** In "lembrar" a refusal only warns: it still leaves a line in the flow's log and one the panel shows. */
+const noteReminded = async ($: EngineInterface, note: string): Promise<void> => {
+  const { value: prior } = await $.state.get(REMINDED)
+  const count = (prior?.count ?? 0) + 1
+  await $.state.set(REMINDED, { count, last: note.slice(0, 240) })
+  const root = await $.session.root()
+  const mine = (await allFlowStates($)).filter(s => ownsFlow(s, root) && s.status !== 'done' && s.status !== 'aborted')
+  for (const state of mine) await logFlowRefusal($, state, state.current, 'session', `lembrar: ${note}`)
+}
+
 /** A flow belongs to the coordinator's checkout and to every worktree under it. */
 const ownsFlow = (state: FlowState, root: string): boolean =>
   root === state.coordinatorCwd || root.startsWith(`${state.coordinatorCwd}/`)
+
+/** Longer than the refresh tick (`REFRESH_MS`), which keeps the answer warm; a flow started or moved here drops it at once. */
+const RUNNING_TTL_MS = 20_000
+
+/**
+ * What the mod does in this checkout. The owner's mark in the clone's `.claude/settings.local.json` says
+ * "barrar" or "lembrar", and counts as far as the panel's own record backs it (see `readActivation`); with no
+ * mark, a flow still running here keeps everything working (as "barrar") so nothing stops halfway; only a
+ * confirmed absence of both leaves the mod quiet. It fails closed: a mark or flow that cannot be read, or a flow
+ * already known to run, is "barrar". The flow answer is kept a few seconds (`RUNNING_TTL_MS`; saveFlow drops it)
+ * so a render or a tool call does not scan every flow on disk. `remember: false` for a render, which may read
+ * state but never write it: it uses the answer kept, or scans without keeping.
+ */
+const activeMode = async ($: EngineInterface, remember = true): Promise<ActivationLevel | undefined> => {
+  let marked: Awaited<ReturnType<typeof readActivation>>
+  try {
+    marked = await readActivation($)
+  } catch {
+    return 'barrar'
+  }
+  if (marked.level !== undefined) return marked.level
+  let root: string | undefined
+  try {
+    const here = await $.session.root()
+    root = here
+    const now = await $.clock.now()
+    const { value: known } = await $.state.get(RUNNING)
+    if (known !== undefined && known !== null && known.root === here && now >= known.at && now - known.at < RUNNING_TTL_MS) {
+      return known.running ? 'barrar' : undefined
+    }
+    const running = (await allFlowStates($)).some(s => s.status !== 'done' && s.status !== 'aborted' && ownsFlow(s, here))
+    if (remember) await $.state.set(RUNNING, { root: here, at: now, running })
+    return running ? 'barrar' : undefined
+  } catch {
+    // the scan failed: a flow already known to run here (even past the short memory) keeps "barrar"; otherwise nothing is known
+    const { value: known } = await $.state.get(RUNNING).catch(() => ({ value: undefined }))
+    return known !== undefined && known !== null && known.running && (root === undefined || known.root === root) ? 'barrar' : undefined
+  }
+}
 
 /** The flow this session works on: the named change, else the one flow its checkout runs. */
 const pickFlow = async ($: EngineInterface, change: unknown): Promise<FlowState | { error: string }> => {
@@ -1638,7 +1708,7 @@ export const register: Register = on => {
     $.clock.every(REFRESH_MS, () => void refreshQuietly($))
     void refreshQuietly($).then(async () => {
       const { value } = await $.state.get(VIEW)
-      if (value?.run !== undefined) await showPane($)
+      if (value?.run !== undefined && (await activeMode($)) !== undefined) await showPane($)
     })
     return next(e)
   })
@@ -1672,7 +1742,7 @@ export const register: Register = on => {
   }).catch(($, e, next) => (next.called ? undefined : next(e)))
 
   on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
-    if (e.props.hasSurvey) return next(e)
+    if (e.props.hasSurvey || (await activeMode($, false)) === undefined) return next(e)
     const { value: view } = await $.state.get(VIEW)
     const { value: answered = [] } = await $.state.get(ANSWERED)
     const summary = view === undefined ? undefined : bandSummary(view, answered)
@@ -1690,11 +1760,26 @@ export const register: Register = on => {
     if (tool === PLAN_TOOL) return publishPlan($, e as unknown as Record<string, unknown>)
     if (tool === FLOW_TOOL) return handleFlowTool($, e as unknown as Record<string, unknown>)
     const input = e as unknown as Record<string, unknown>
+    const mode = await activeMode($)
+    // an inactive clone is left alone; "lembrar" says what "barrar" would have refused, leaves a trace, and lets the call go
+    if (mode === undefined) return next(e)
+    if (touchesSettings(tool, input)) {
+      return { deny: 'Orchestrator: .claude/settings.local.json is the owner\'s; only the panel (Workflows, "Este projeto") activates, switches or deactivates the orchestrator.' }
+    }
+    const stop = async (deny: string): Promise<{ deny: string } | undefined> => {
+      if (mode === 'barrar') return { deny }
+      $.ui.log(`orquestrador (lembrar): ${deny}`)
+      $.ui.toast(deny)
+      await noteReminded($, deny).catch(() => undefined)
+      return undefined
+    }
+    // the gates' records are the mod's alone in every mode: a forged pass is no warning to let through
     if (touchesGateFiles(tool, input)) {
-      return { deny: 'Orchestrator: ~/.claude/orquestrador is written by the mod only (gate records and owner skips).' }
+      return { deny: 'Orchestrator: the mod\'s gate records folder is written by the mod only (gate records and owner skips).' }
     }
     if (tool.endsWith(TRANSITION_SUFFIX) && approvedMove !== `${String(input.issueIdOrKey)}|${String((input.transition as { id?: unknown } | undefined)?.id)}`) {
-      return { deny: 'Orchestrator: a Jira issue moves only when the owner presses "Mover no Jira" in the panel.' }
+      const held = await stop('Orchestrator: a Jira issue moves only when the owner presses "Mover no Jira" in the panel.')
+      if (held !== undefined) return held
     }
     const refusal =
       tool === START_SESSION
@@ -1704,7 +1789,10 @@ export const register: Register = on => {
           : tool === 'Bash' && typeof input.command === 'string' && GH_MERGE.test(input.command)
             ? await refuseMerge($, input.command)
             : undefined
-    if (refusal !== undefined) return { deny: `Orchestrator gate: ${refusal}` }
+    if (refusal !== undefined) {
+      const held = await stop(`Orchestrator gate: ${refusal}`)
+      if (held !== undefined) return held
+    }
     if (tool === 'AskUserQuestion') {
       const first = (input.questions as { question?: unknown }[] | undefined)?.[0]?.question
       await setWaiting($, { kind: 'question', text: typeof first === 'string' ? first : (await textNow($)).question })
@@ -1752,23 +1840,31 @@ export const register: Register = on => {
 
   on('tool.check', async ($, e, next) => {
     const verdict = await next(e)
-    if (verdict.decision === 'ask') await setWaiting($, { kind: 'permission', text: toolLabel(e.tool) })
+    if (verdict.decision === 'ask' && (await activeMode($)) !== undefined) await setWaiting($, { kind: 'permission', text: toolLabel(e.tool) })
     return verdict
   }).catch(($, e, next) => next(e))
 
   on('prompt.submit', async ($, e, next) => {
     const { value: waiting } = await $.state.get(WAITING)
-    if (waiting !== null && waiting !== undefined) await setWaiting($, null)
+    if (waiting !== null && waiting !== undefined && (await activeMode($)) !== undefined) await setWaiting($, null)
     return next(e)
   }).catch(($, e, next) => next(e))
 
   on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e) => {
     const { value: loaded } = await $.state.get(VIEW)
     const { value: ownPlan = [] } = await $.state.get(PLAN)
-    const view: PanelView = loaded ?? {
+    const base: PanelView = loaded ?? {
       self: undefined, children: [], run: undefined, updatedAt: 0, warning: undefined, repoUrl: undefined,
       openspec: undefined, jira: {}, jiraNote: undefined, skips: {},
     }
+    const { value: reminded } = await $.state.get(REMINDED)
+    const tampered = (await readActivation($).catch(() => undefined))?.tampered === true
+    const warnings = [
+      base.warning,
+      reminded === undefined || reminded === null ? undefined : uiText(base.languages?.ui).warning.reminded(reminded.count, reminded.last),
+      tampered ? uiText(base.languages?.ui).warning.tampered : undefined,
+    ].filter(x => x !== undefined)
+    const view: PanelView = warnings.length === 0 || (warnings.length === 1 && warnings[0] === base.warning) ? base : { ...base, warning: warnings.join(' · ') }
     const { value: collapsed = {} } = await $.state.get(COLLAPSED)
     const { value: answered = [] } = await $.state.get(ANSWERED)
     const { value: drafts = {} } = await $.state.get(GRILL_DRAFTS)
