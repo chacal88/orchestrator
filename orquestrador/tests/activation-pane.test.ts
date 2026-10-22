@@ -96,11 +96,11 @@ test('2.1 "Ativar neste clone" opens the confirmation with the level and "O que 
     // a field where the surface has one; two buttons on the mobile
     if (surface === 'mobile') {
       expect((await ui.find({ key: 'act-level:barrar' }))?.text).toBe('Barrar: segue o flow e recusa merge e deploy fora dele')
-      expect((await ui.find({ key: 'act-level:lembrar' }))?.text).toBe('Lembrar: só põe o flow e as regras na conversa')
+      expect((await ui.find({ key: 'act-level:lembrar' }))?.text).toBe('Lembrar: só põe o flow e as regras na conversa; merge com --admin, merge sem revisão e pulo de portões deixam de ser barrados')
     } else {
       expect(await ui.find({ key: 'act-level' })).toBeDefined()
     }
-    expect(await ui.find(text(/"Barrar" é o que garante o workflow\. "Lembrar" orienta o Claude sem bloquear nada\./))).toBeDefined()
+    expect(await ui.find(text(/"Barrar" é o que garante o workflow\. "Lembrar" orienta o Claude e só avisa: merge com --admin, merge sem revisão e pulo de portões passam \(ficam no log do flow e no painel\)\./))).toBeDefined()
     expect(await ui.find(text(/^O que é gravado$/))).toBeDefined()
     expect(await ui.find(text(/Só em \.claude\/settings\.local\.json, que fica fora do git e vale para este clone e as worktrees dele:/))).toBeDefined()
     expect(await ui.find(text(/Nada vai para o repositório\. Quem clona o projeto não é afetado\./))).toBeDefined()

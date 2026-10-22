@@ -21,34 +21,60 @@ type World = {
   /** What `git check-ignore` exits with. */
   ignored: boolean
   root: string
+  /** The clock, in ms: a test moves it to let time pass. */
+  now: number
+  /** Directories `fs.list` was asked for. */
+  lists: string[]
+  /** A directory whose listing fails. */
+  failList: string | undefined
+  /** Files whose read / write fails. */
+  failRead: Set<string>
+  failWrite: Set<string>
+  /** Writes made to files, by path. */
+  writes: string[]
+  /** What `git check-ignore` exits with when it is not `ignored`. */
+  notIgnoredCode: number
+  /** The sessions `list_sessions` answers. */
+  family: unknown[]
+  opened: number
 }
+
+const listing = (w: World, dir: string) => ({
+  value: [...w.disk.keys()]
+    .filter(k => k.startsWith(`${dir}/`) && !k.slice(dir.length + 1).includes('/'))
+    .map(k => ({ name: k.slice(dir.length + 1), kind: 'file', size: 1, mtimeMs: 0, isLink: false })) as never,
+})
 
 /** A coordinator at /w with an in-memory disk; git answers from the world. */
 const world = (on: On): World => {
   mock.store(on)
-  const w: World = { disk: new Map(), toasts: [], common: undefined, ignored: true, root: '/w' }
+  const w: World = { disk: new Map(), toasts: [], common: undefined, ignored: true, root: '/w', now: 1_000, lists: [], failList: undefined, failRead: new Set(), failWrite: new Set(), writes: [], notIgnoredCode: 1, family: [ME], opened: 0 }
   on('env.get', () => ({ value: '/h' }))
-  let now = 1_000
-  on('clock.now', () => ({ value: (now += 10) }))
+  on('clock.now', () => ({ value: (w.now += 10) }))
   on('session.root', () => ({ value: w.root }))
   on('session.repo', () => ({ value: null }))
   on('fs.exists', ($, e) => ({ value: w.disk.has(e.path) || [...w.disk.keys()].some(k => k.startsWith(`${e.path}/`)) }))
-  on('fs.read', ($, e) => ({ value: w.disk.get(e.path) ?? '' }))
+  on('fs.read', ($, e) => {
+    if (w.failRead.has(e.path)) throw new Error('EIO')
+    return { value: w.disk.get(e.path) ?? '' }
+  })
   on('fs.write', ($, e) => {
+    if (w.failWrite.has(e.path)) throw new Error('EROFS')
+    w.writes.push(e.path)
     w.disk.set(e.path, e.text)
     return { value: undefined }
   })
-  on('fs.list', ($, e) => ({
-    value: [...w.disk.keys()]
-      .filter(k => k.startsWith(`${e.path}/`) && !k.slice(e.path.length + 1).includes('/'))
-      .map(k => ({ name: k.slice(e.path.length + 1), kind: 'file', size: 1, mtimeMs: 0, isLink: false })) as never,
-  }))
+  on('fs.list', ($, e) => {
+    w.lists.push(e.path)
+    if (w.failList === e.path) throw new Error('EIO')
+    return listing(w, e.path)
+  })
   on('process.run', ($, e) => {
     const argv = e.argv
     if (argv.includes('--git-common-dir')) {
       return { value: (w.common === undefined ? { exitCode: 128, stdout: '', stderr: 'not a repo' } : { exitCode: 0, stdout: `${w.common}\n`, stderr: '' }) as never }
     }
-    if (argv.includes('check-ignore')) return { value: { exitCode: w.ignored ? 0 : 1, stdout: '', stderr: '' } as never }
+    if (argv.includes('check-ignore')) return { value: { exitCode: w.ignored ? 0 : w.notIgnoredCode, stdout: '', stderr: '' } as never }
     if (argv[0] === 'gh') return { value: { exitCode: 0, stdout: 'claude/other\n', stderr: '' } as never }
     return { value: { exitCode: 0, stdout: 'main\n', stderr: '' } as never }
   })
@@ -56,10 +82,16 @@ const world = (on: On): World => {
   on('tool.call', ($, e) => {
     const input = e as unknown as Record<string, unknown>
     if (input.tool === 'mcp__ccd_session_mgmt__get_session') return { result: JSON.stringify(ME), text: JSON.stringify(ME) } as never
-    if (input.tool === 'mcp__ccd_session_mgmt__list_sessions') return { result: JSON.stringify([ME]), text: JSON.stringify([ME]) } as never
+    if (input.tool === 'mcp__ccd_session_mgmt__list_sessions') return { result: JSON.stringify(w.family), text: JSON.stringify(w.family) } as never
     return { result: { stdout: 'ok', stderr: '', interrupted: false }, text: 'ok' } as never
   })
-  on('ui.open', () => ({ value: { isPlaced: true } }) as never)
+  on('command.register', () => ({ value: undefined }) as never)
+  on('tool.register', () => ({ value: undefined }) as never)
+  on('session.start', () => ({ cwd: '/w' }) as never)
+  on('ui.open', () => {
+    w.opened += 1
+    return { value: { isPlaced: true } } as never
+  })
   on('ui.panes', () => ({ value: [] }) as never)
   on('ui.toast', ($, e) => {
     w.toasts.push(e.text)
@@ -74,8 +106,15 @@ const engineOf = (w: World): never =>
     session: { root: async () => w.root },
     fs: {
       exists: async (p: string) => w.disk.has(p),
-      read: async (p: string) => w.disk.get(p) ?? '',
-      write: async (p: string, text: string) => void w.disk.set(p, text),
+      read: async (p: string) => {
+        if (w.failRead.has(p)) throw new Error('EIO')
+        return w.disk.get(p) ?? ''
+      },
+      write: async (p: string, text: string) => {
+        if (w.failWrite.has(p)) throw new Error('EROFS')
+        w.writes.push(p)
+        w.disk.set(p, text)
+      },
     },
     process: {
       run: async (argv: string[]) =>
@@ -83,7 +122,7 @@ const engineOf = (w: World): never =>
           ? w.common === undefined
             ? { exitCode: 128, stdout: '', stderr: '' }
             : { exitCode: 0, stdout: `${w.common}\n`, stderr: '' }
-          : { exitCode: w.ignored ? 0 : 1, stdout: '', stderr: '' },
+          : { exitCode: w.ignored ? 0 : w.notIgnoredCode, stdout: '', stderr: '' },
     },
   }) as never
 
@@ -96,6 +135,7 @@ const withFlow = (w: World, status: 'running' | 'done' = 'running') => {
   const def = defaultFlows().find(f => f.id === 'rapido')!
   const { state } = startFlow(def, { change: 'demo', coordinatorCwd: '/w', changePath: 'openspec/changes/demo', visual: false }, 1)
   w.disk.set(`${BASE}/flows/demo.json`, JSON.stringify({ ...state, status }))
+  w.now += 60_000 // time passes: the mod's short memory of "is a flow running" has run out
 }
 const mark = (w: World, level: string) => w.disk.set(MARK, JSON.stringify({ env: { ORQUESTRADOR: level } }))
 const bash = ($: Engine, command: string) => $.tool.call({ tool: 'Bash', command } as never) as Promise<Reply>
@@ -216,18 +256,230 @@ test('a flow still running keeps the mod working in a clone with no mark; a fini
   expect((await bash($, 'gh pr merge 5 --squash --admin')).deny).toBeUndefined()
 })
 
-test('the band shows in an activated clone', async ($, on) => {
+const kid = (name: string) => ({
+  sessionId: `local_${name}`, cwd: `/w/.claude/worktrees/${name}`, title: name, name, startedBy: ME.sessionId, isArchived: false, isRunning: true,
+})
+const START = { tool: 'mcp__ccd_session__start_session', initiation: 'user_asked', title: 'x', prompt: 'p' }
+const tool = ($: Engine, input: Record<string, unknown>) => $.tool.call(input as never) as Promise<Reply>
+const SETTINGS_DENY = /settings\.local\.json is the owner's/
+const flowLog = (w: World) => w.disk.get(`${BASE}/flows/demo.ndjson`) ?? ''
+const settle = () => new Promise(resolve => (globalThis as unknown as { setTimeout: (f: () => void, ms: number) => void }).setTimeout(() => resolve(undefined), 30))
+
+test('the band shows in a clone with only the mark: a published run, no flow', async ($, on) => {
   const w = world(on)
+  withRun(w)
   mark(w, 'barrar')
   on('ui.render', { component: 'AbovePrompt' }, ($, e) => $.ui.resolve(e).Text({ children: 'engine' }))
-  await $.tool.call({
-    tool: 'mcp__orquestrador__plano',
-    change: 'demo',
-    changePath: 'openspec/changes/demo',
-    waves: [{ phases: [{ id: '1', title: 'API', status: 'running', tasks: '1.1' }] }],
-  } as never)
-  await $.tool.call({ tool: 'mcp__orquestrador__flow', action: 'start', change: 'demo', flow: 'completo' } as never)
+  await $.session.start({ cwd: '/w', surface: 'terminal', isInteractive: true } as never)
+  await settle()
+  expect(w.disk.has(`${BASE}/flows/demo.json`)).toBe(false)
   const ui = await $.ui.mount({ plugin: 'orquestrador', surface: 'desktop', ...BAND })
   expect(await ui.find({ key: 'band:pane' })).toBeDefined()
   await ui.unmount()
+})
+
+test('without the mark a session start opens no panel; with it, it does', async ($, on) => {
+  const w = world(on)
+  withRun(w)
+  await $.session.start({ cwd: '/w', surface: 'terminal', isInteractive: true } as never)
+  await settle()
+  expect(w.opened).toBe(0)
+  mark(w, 'barrar')
+  await $.session.start({ cwd: '/w', surface: 'terminal', isInteractive: true } as never)
+  await settle()
+  expect(w.opened).toBeGreaterThan(0)
+})
+
+test('an inactive clone does not track permission waits or prompts; an active one does', async ($, on) => {
+  const w = world(on)
+  withRun(w)
+  on('tool.check', ($, e) => ({ decision: e.tool === 'Bash' ? 'ask' : 'allow' }) as never)
+  on('prompt.submit', ($, e) => ({ text: e.text }) as never)
+  // a store of the test's own, to read what the mod keeps
+  const kept = new Map<string, unknown>()
+  let version = 0
+  on('state.get', (_$, e) => ({ value: { value: kept.get((e as { key: string }).key), version } }) as never)
+  on('state.set', (_$, e) => {
+    const { key, value } = e as unknown as { key: string; value: unknown }
+    kept.set(key, value)
+    version += 1
+    return { value: { isSet: true, version } } as never
+  })
+  const waiting = async () => ({ value: kept.get('waiting') })
+  await $.tool.check({ tool: 'Bash', input: { command: 'ls' } } as never)
+  expect((await waiting()).value ?? null).toBeNull()
+
+  mark(w, 'barrar')
+  await $.tool.check({ tool: 'Bash', input: { command: 'ls' } } as never)
+  expect((await waiting()).value).toMatchObject({ kind: 'permission' })
+
+  // the mark goes: a prompt no longer clears what an inactive mod never tracked
+  w.disk.delete(MARK)
+  await $.prompt.submit({ text: 'oi', wait: false } as never)
+  expect((await waiting()).value).toMatchObject({ kind: 'permission' })
+  mark(w, 'barrar')
+  await $.prompt.submit({ text: 'oi', wait: false } as never)
+  expect((await waiting()).value ?? null).toBeNull()
+})
+
+test('the hook text keeps its accents, written as they are and read back whole', () => {
+  expect(HOOK_COMMAND).toContain('nível')
+  expect(HOOK_COMMAND).toContain('portões')
+  expect(HOOK_COMMAND).toContain('só o dono')
+  const text = JSON.stringify(activate({}, 'barrar'), null, 2)
+  expect(text).toContain('portões')
+  expect(text).not.toMatch(/\\u00/)
+  const hooks = (JSON.parse(text) as { hooks: { SessionStart: { hooks: { command: string }[] }[] } }).hooks
+  expect(hooks.SessionStart[0]?.hooks[0]?.command).toBe(HOOK_COMMAND)
+})
+
+test('the model cannot write the activation file in any mode, with or without the mark', async ($, on) => {
+  const w = world(on)
+  withRun(w)
+  const attempts: Record<string, unknown>[] = [
+    { tool: 'Write', file_path: '/w/.claude/settings.local.json', content: '{"env":{"ORQUESTRADOR":"lembrar"}}' },
+    { tool: 'Edit', file_path: '/w/.claude/settings.local.json', old_string: 'barrar', new_string: 'lembrar' },
+    { tool: 'MultiEdit', file_path: '/main/.claude/settings.local.json', edits: [] },
+    { tool: 'Bash', command: `sed -i 's/barrar/lembrar/' .claude/settings.local.json` },
+    { tool: 'Bash', command: `echo '{"env":{"ORQUESTRADOR":"lembrar"}}' > /w/.claude/settings.local.json` },
+    { tool: 'Bash', command: `cd /w && cat .claude/settings.local.json | tee .claude/settings.local.json` },
+  ]
+  for (const mode of [undefined, 'barrar', 'lembrar'] as const) {
+    if (mode === undefined) w.disk.delete(MARK)
+    else mark(w, mode)
+    for (const attempt of attempts) expect((await tool($, attempt)).deny).toMatch(SETTINGS_DENY)
+  }
+  // reading it is fine, and the panel (not a tool call) still writes it
+  expect((await bash($, 'cat .claude/settings.local.json')).deny).toBeUndefined()
+  expect(await writeActivation(engineOf(w), 'barrar')).toEqual({ ok: true })
+})
+
+test('from a worktree the main checkout\'s activation file is protected too, by the absolute and the relative path', async ($, on) => {
+  const w = world(on)
+  w.root = '/main/.claude/worktrees/x'
+  w.common = '/main/.git'
+  expect((await tool($, { tool: 'Write', file_path: '/main/.claude/settings.local.json', content: '{}' })).deny).toMatch(SETTINGS_DENY)
+  expect((await tool($, { tool: 'Edit', file_path: '.claude/settings.local.json', old_string: 'a', new_string: 'b' })).deny).toMatch(SETTINGS_DENY)
+  expect((await bash($, `echo '{}' > /main/.claude/settings.local.json`)).deny).toMatch(SETTINGS_DENY)
+})
+
+test('the gate records stay refused in "lembrar" as well', async ($, on) => {
+  const w = world(on)
+  mark(w, 'lembrar')
+  expect((await tool($, { tool: 'Write', file_path: `${BASE}/gates/demo.json`, content: '{"skips":{}}' })).deny).toMatch(/written by the mod only/)
+  expect((await bash($, `rm -rf ${BASE}`)).deny).toMatch(/written by the mod only/)
+})
+
+test('"lembrar" lets a merge through but leaves a line in the flow log and one in the panel', async ($, on) => {
+  const w = world(on)
+  withRun(w)
+  withFlow(w)
+  mark(w, 'lembrar')
+  expect((await bash($, 'gh pr merge 5 --squash --admin')).deny).toBeUndefined()
+  expect(w.toasts.join(' ')).toMatch(/--admin/)
+  const refused = flowLog(w)
+    .split('\n')
+    .filter(l => l !== '')
+    .map(l => JSON.parse(l) as { kind: string; note?: string })
+    .filter(e => e.kind === 'refused')
+  expect(refused).toHaveLength(1)
+  expect(refused[0]?.note).toMatch(/^lembrar: Orchestrator gate: .*--admin/)
+
+  const ui = await $.ui.mount({
+    plugin: 'orquestrador', surface: 'desktop', component: 'Pane', requestId: 'orquestrador',
+    props: { title: 'Orquestrador', isFocused: false, bodyColumns: 80, placement: 'dock', scroll: { offset: 0, bodyRows: 60 }, view: {} },
+  } as never)
+  expect(await ui.find({ text: /Em "lembrar", 1 recusa\(s\) viraram só aviso\..*--admin/ } as never)).toBeDefined()
+  await ui.unmount()
+})
+
+test('"lembrar" lets a fourth phase session start, warning and leaving a line in the log', async ($, on) => {
+  const w = world(on)
+  withRun(w)
+  withFlow(w)
+  w.family = [ME, kid('a'), kid('b'), kid('c')]
+  mark(w, 'barrar')
+  expect((await tool($, START)).deny).toMatch(/the ceiling is 3/)
+  mark(w, 'lembrar')
+  expect((await tool($, START)).deny).toBeUndefined()
+  expect(w.toasts.join(' ')).toMatch(/the ceiling is 3/)
+  expect(flowLog(w)).toMatch(/lembrar: Orchestrator gate: .*the ceiling is 3/)
+})
+
+test('a clone with no mark does not scan the flows on every call, and a failed scan neither denies nor breaks', async ($, on) => {
+  const w = world(on)
+  withRun(w)
+  withFlow(w)
+  const scans = () => w.lists.filter(d => d === `${BASE}/flows`).length
+  for (let i = 0; i < 5; i += 1) expect((await bash($, 'gh pr merge 5 --squash --admin')).deny).toMatch(/--admin/)
+  expect(scans()).toBe(1)
+
+  // the mark needs no scan at all
+  mark(w, 'lembrar')
+  const before = scans()
+  await tool($, { tool: 'Read', file_path: '/w/README.md' })
+  expect(scans()).toBe(before)
+
+  // a flow directory that cannot be listed: "lembrar" still lets everything go, a clone with no mark stays quiet
+  w.failList = `${BASE}/flows`
+  expect((await bash($, 'gh pr merge 5 --squash --admin')).deny).toBeUndefined()
+  w.disk.delete(MARK)
+  w.now += 60_000
+  expect((await bash($, 'gh pr merge 5 --squash --admin')).deny).toBeUndefined()
+})
+
+test('a read that fails is not an absent file: nothing is written over it', async ($, on) => {
+  const w = world(on)
+  w.disk.set(MARK, JSON.stringify(OTHER))
+  w.failRead.add(MARK)
+  expect(await writeActivation(engineOf(w), 'barrar')).toEqual({ ok: false, error: 'unreadable' })
+  expect(await writeActivation(engineOf(w), null)).toEqual({ ok: false, error: 'unreadable' })
+  expect(w.writes).toEqual([])
+  expect(w.disk.get(MARK)).toBe(JSON.stringify(OTHER))
+  expect((await readActivation(engineOf(w))).level).toBeUndefined()
+})
+
+test('a SessionStart that is not a list is left alone, with the reason', async ($, on) => {
+  const w = world(on)
+  const odd = JSON.stringify({ hooks: { SessionStart: { hooks: [] } } })
+  w.disk.set(MARK, odd)
+  expect(await writeActivation(engineOf(w), 'barrar')).toEqual({ ok: false, error: 'badHooks' })
+  expect(await writeActivation(engineOf(w), null)).toEqual({ ok: false, error: 'badHooks' })
+  expect(w.disk.get(MARK)).toBe(odd)
+})
+
+test('only "not ignored" (exit 1) adds to the exclude; a failing git leaves it alone', async ($, on) => {
+  const w = world(on)
+  w.root = '/main'
+  w.common = '/main/.git'
+  w.ignored = false
+  w.notIgnoredCode = 128
+  await writeActivation(engineOf(w), 'barrar')
+  expect(w.disk.has('/main/.git/info/exclude')).toBe(false)
+  expect(w.disk.has('/main/.claude/settings.local.json')).toBe(true)
+})
+
+test('the exclude comes first: if it cannot be written, the settings are not created', async ($, on) => {
+  const w = world(on)
+  w.root = '/main'
+  w.common = '/main/.git'
+  w.ignored = false
+  w.failWrite.add('/main/.git/info/exclude')
+  expect(await writeActivation(engineOf(w), 'barrar')).toEqual({ ok: false, error: 'notIgnored' })
+  expect(w.disk.has('/main/.claude/settings.local.json')).toBe(false)
+  expect(w.writes).toEqual([])
+})
+
+test('nothing is rewritten when nothing changes, and a missing .claude/ is no obstacle', async ($, on) => {
+  const w = world(on)
+  expect(await writeActivation(engineOf(w), 'barrar')).toEqual({ ok: true })
+  expect(w.writes).toEqual([MARK])
+  expect(await writeActivation(engineOf(w), 'barrar')).toEqual({ ok: true })
+  expect(w.writes).toEqual([MARK])
+  expect(await writeActivation(engineOf(w), 'lembrar')).toEqual({ ok: true })
+  expect(w.writes).toEqual([MARK, MARK])
+  // deactivating what is not there writes nothing
+  w.disk.clear()
+  expect(await writeActivation(engineOf(w), null)).toEqual({ ok: true })
+  expect(w.writes).toEqual([MARK, MARK])
 })

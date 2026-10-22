@@ -575,6 +575,8 @@ declare module 'claude-code' {
       paneOpen: boolean
       /** What the owner has typed so far in the grill's answer fields, by question text. */
       grillDrafts: Record<string, string>
+      reminded: { count: number; last: string }
+      running: { root: string; at: number; running: boolean }
       /** Workflows panel: the workflow open in the panel, by id. */
       wfSelected: string | null
       /** Workflows panel: the step whose details are open (an added step goes after it). */

@@ -77,7 +77,8 @@ As configurações do projeto ficam em `.orquestrador/config.json` e vão para o
 - **Quieto sem ativação.** Num clone que não foi ativado, o plugin não abre o painel 🧭 sozinho, não desenha a faixa acima do prompt, não põe regras do flow na conversa e não recusa merge nem portões. `/orquestrador` e `/orquestrador-workflows` continuam disponíveis, e o cartão "Este projeto" do painel ⚙️ mostra o estado "inativo neste clone". Uma change com flow em andamento no clone continua funcionando mesmo sem ativação, para nada parar no meio.
 - **Ativar.** No painel ⚙️ Workflows, "Este projeto" → "Ativar neste clone": escolha o nível e confirme.
   - **Barrar** (padrão): segue o flow e recusa merge e deploy fora dele, `--admin` e portões abertos.
-  - **Lembrar**: o flow e as regras entram na conversa, mas nada é bloqueado; cada recusa do "barrar" vira só um aviso.
+  - **Lembrar**: o flow e as regras entram na conversa, mas nada é bloqueado; cada recusa do "barrar" vira só um aviso (merge com `--admin`, merge sem revisão e pulo de portões passam; ficam no log do flow e no painel). Os registros de portão do mod continuam protegidos.
+  O `.claude/settings.local.json` é só do painel: o modelo não o edita (Edit, Write ou shell), em nenhum nível e mesmo sem a marca.
   Com o clone ativo, o cartão oferece "Trocar para lembrar/barrar" e "Desativar neste clone".
 - **O que é gravado**, e só isso, em `.claude/settings.local.json` do repositório principal (as worktrees usam o dele; o Claude Code recarrega o arquivo sem reiniciar):
 
@@ -86,7 +87,7 @@ As configurações do projeto ficam em `.orquestrador/config.json` e vão para o
     "env": { "ORQUESTRADOR": "barrar" },
     "hooks": {
       "SessionStart": [
-        { "hooks": [ { "type": "command", "command": "printf '%s\\n' \"Orquestrador ativo neste clone (nivel: ${ORQUESTRADOR:-barrar}). …\" # orquestrador:ativar" } ] }
+        { "hooks": [ { "type": "command", "command": "printf '%s\\n' \"Orquestrador ativo neste clone (nível: ${ORQUESTRADOR:-barrar}). …\" # orquestrador:ativar" } ] }
       ]
     }
   }

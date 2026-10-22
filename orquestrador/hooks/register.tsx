@@ -148,6 +148,8 @@ const TRIED = { plugin: 'orquestrador', key: 'tried' } as const
 const SELF_ID = { plugin: 'orquestrador', key: 'selfId' } as const
 const ACTIVITY_TTL_MS = 7 * 24 * 60 * 60 * 1000
 const PANE_OPEN = { plugin: 'orquestrador', key: 'paneOpen' } as const
+const REMINDED = { plugin: 'orquestrador', key: 'reminded' } as const
+const RUNNING = { plugin: 'orquestrador', key: 'running' } as const
 const GRILL_DRAFTS = { plugin: 'orquestrador', key: 'grillDrafts' } as const
 const START_SESSION = 'mcp__ccd_session__start_session'
 const TRANSITION_SUFFIX = '__transitionJiraIssue'
@@ -649,6 +651,7 @@ const refresh = async ($: EngineInterface): Promise<void> => {
 
 const refreshQuietly = async ($: EngineInterface): Promise<void> => {
   try {
+    await activeMode($) // keeps "is a flow running here" warm for the renders, which cannot write it
     await refresh($)
   } catch (error) {
     $.ui.log(`orquestrador: ${describeError('refresh', error)}`)
@@ -830,6 +833,20 @@ const touchesGateFiles = (tool: string, input: Record<string, unknown>): boolean
     MENTIONS_PROTECTED_DIR.test(input.command) &&
     !isReadOnlyCommand(input.command)
   )
+}
+
+/**
+ * The activation file is the owner's, written by the panel alone: a mark or a hook the model planted there
+ * (Edit, Write or a shell) would switch the guards off or run its own command. Protected in every mode, even with no mark.
+ */
+const SETTINGS_FILE = /(^|\/)\.claude\/settings\.local\.json$/
+const MENTIONS_SETTINGS = /settings\.local\.json/
+const touchesSettings = (tool: string, input: Record<string, unknown>): boolean => {
+  if (EDIT_TOOLS.has(tool)) {
+    const path = input.file_path ?? input.notebook_path
+    return typeof path === 'string' && SETTINGS_FILE.test(path)
+  }
+  return tool === 'Bash' && typeof input.command === 'string' && MENTIONS_SETTINGS.test(input.command) && !isReadOnlyCommand(input.command)
 }
 
 /** Every change this checkout coordinates: its published plan and its flow, either may be missing. */
@@ -1035,6 +1052,7 @@ const isGuarded = (tool: string, input: Record<string, unknown>): boolean =>
   tool === START_SESSION ||
   tool === ARCHIVE_SESSION ||
   tool.endsWith(TRANSITION_SUFFIX) ||
+  touchesSettings(tool, input) ||
   (tool === 'Bash' && typeof input.command === 'string' && GH_MERGE.test(input.command))
 
 const FLOW_SCHEMA = {
@@ -1111,6 +1129,7 @@ const allFlowStates = async ($: EngineInterface): Promise<FlowState[]> => {
 /** The state file and its append-only log, both written by the mod alone. */
 const saveFlow = async ($: EngineInterface, state: FlowState, events: readonly FlowEvent[]): Promise<void> => {
   await $.fs.write(await flowFile($, state.change, 'json'), JSON.stringify(state))
+  await $.state.set(RUNNING, { root: '', at: 0, running: false }).catch(() => undefined)
   const log = await flowFile($, state.change, 'ndjson')
   const prior = (await readText($, log)) ?? ''
   await $.fs.write(log, prior + events.map(e => `${JSON.stringify(e)}\n`).join(''))
@@ -1123,6 +1142,16 @@ const logFlowRefusal = async ($: EngineInterface, state: FlowState, step: string
   await $.fs.write(log, `${prior}${JSON.stringify(event)}\n`)
 }
 
+/** In "lembrar" a refusal only warns: it still leaves a line in the flow's log and one the panel shows. */
+const noteReminded = async ($: EngineInterface, note: string): Promise<void> => {
+  const { value: prior } = await $.state.get(REMINDED)
+  const count = (prior?.count ?? 0) + 1
+  await $.state.set(REMINDED, { count, last: note.slice(0, 240) })
+  const root = await $.session.root()
+  const mine = (await allFlowStates($)).filter(s => ownsFlow(s, root) && s.status !== 'done' && s.status !== 'aborted')
+  for (const state of mine) await logFlowRefusal($, state, state.current, 'session', `lembrar: ${note}`)
+}
+
 /** A flow belongs to the coordinator's checkout and to every worktree under it. */
 const ownsFlow = (state: FlowState, root: string): boolean =>
   root === state.coordinatorCwd || root.startsWith(`${state.coordinatorCwd}/`)
@@ -1132,12 +1161,27 @@ const ownsFlow = (state: FlowState, root: string): boolean =>
  * "barrar" or "lembrar"; with no mark, a flow still running here keeps everything working (as "barrar")
  * so nothing stops halfway; with neither, the mod stays quiet.
  */
-const activeMode = async ($: EngineInterface): Promise<ActivationLevel | undefined> => {
+/** Longer than the refresh tick (`REFRESH_MS`), which keeps the answer warm; a flow started or moved here drops it at once. */
+const RUNNING_TTL_MS = 20_000
+/** `remember: false` for a render, which may read state but never write it: it uses the answer kept, or scans without keeping. */
+const activeMode = async ($: EngineInterface, remember = true): Promise<ActivationLevel | undefined> => {
   const { level } = await readActivation($).catch(() => ({ level: undefined }))
   if (level !== undefined) return level
-  const root = await $.session.root()
-  const running = (await allFlowStates($)).some(s => s.status !== 'done' && s.status !== 'aborted' && ownsFlow(s, root))
-  return running ? 'barrar' : undefined
+  // with no mark only a running flow counts: the answer is kept for a few seconds (saveFlow drops it), so a
+  // render or a tool call does not scan every flow on disk; a failed read means "no flow", never a denial
+  try {
+    const root = await $.session.root()
+    const now = await $.clock.now()
+    const { value: known } = await $.state.get(RUNNING)
+    if (known !== undefined && known !== null && known.root === root && now >= known.at && now - known.at < RUNNING_TTL_MS) {
+      return known.running ? 'barrar' : undefined
+    }
+    const running = (await allFlowStates($)).some(s => s.status !== 'done' && s.status !== 'aborted' && ownsFlow(s, root))
+    if (remember) await $.state.set(RUNNING, { root, at: now, running })
+    return running ? 'barrar' : undefined
+  } catch {
+    return undefined
+  }
 }
 
 /** The flow this session works on: the named change, else the one flow its checkout runs. */
@@ -1687,7 +1731,7 @@ export const register: Register = on => {
   }).catch(($, e, next) => (next.called ? undefined : next(e)))
 
   on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
-    if (e.props.hasSurvey || (await activeMode($)) === undefined) return next(e)
+    if (e.props.hasSurvey || (await activeMode($, false)) === undefined) return next(e)
     const { value: view } = await $.state.get(VIEW)
     const { value: answered = [] } = await $.state.get(ANSWERED)
     const summary = view === undefined ? undefined : bandSummary(view, answered)
@@ -1705,21 +1749,25 @@ export const register: Register = on => {
     if (tool === PLAN_TOOL) return publishPlan($, e as unknown as Record<string, unknown>)
     if (tool === FLOW_TOOL) return handleFlowTool($, e as unknown as Record<string, unknown>)
     const input = e as unknown as Record<string, unknown>
+    if (touchesSettings(tool, input)) {
+      return { deny: 'Orchestrator: .claude/settings.local.json is the owner\'s; only the panel (Workflows, "Este projeto") activates, switches or deactivates the orchestrator.' }
+    }
     const mode = await activeMode($)
-    // an inactive clone is left alone; "lembrar" says what "barrar" would have refused, and lets the call go
+    // an inactive clone is left alone; "lembrar" says what "barrar" would have refused, leaves a trace, and lets the call go
     if (mode === undefined) return next(e)
-    const stop = (deny: string): { deny: string } | undefined => {
+    const stop = async (deny: string): Promise<{ deny: string } | undefined> => {
       if (mode === 'barrar') return { deny }
       $.ui.log(`orquestrador (lembrar): ${deny}`)
       $.ui.toast(deny)
+      await noteReminded($, deny).catch(() => undefined)
       return undefined
     }
+    // the gates' records are the mod's alone in every mode: a forged pass is no warning to let through
     if (touchesGateFiles(tool, input)) {
-      const held = stop('Orchestrator: ~/.claude/orquestrador is written by the mod only (gate records and owner skips).')
-      if (held !== undefined) return held
+      return { deny: 'Orchestrator: the mod\'s gate records folder is written by the mod only (gate records and owner skips).' }
     }
     if (tool.endsWith(TRANSITION_SUFFIX) && approvedMove !== `${String(input.issueIdOrKey)}|${String((input.transition as { id?: unknown } | undefined)?.id)}`) {
-      const held = stop('Orchestrator: a Jira issue moves only when the owner presses "Mover no Jira" in the panel.')
+      const held = await stop('Orchestrator: a Jira issue moves only when the owner presses "Mover no Jira" in the panel.')
       if (held !== undefined) return held
     }
     const refusal =
@@ -1731,7 +1779,7 @@ export const register: Register = on => {
             ? await refuseMerge($, input.command)
             : undefined
     if (refusal !== undefined) {
-      const held = stop(`Orchestrator gate: ${refusal}`)
+      const held = await stop(`Orchestrator gate: ${refusal}`)
       if (held !== undefined) return held
     }
     if (tool === 'AskUserQuestion') {
@@ -1794,10 +1842,18 @@ export const register: Register = on => {
   on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e) => {
     const { value: loaded } = await $.state.get(VIEW)
     const { value: ownPlan = [] } = await $.state.get(PLAN)
-    const view: PanelView = loaded ?? {
+    const base: PanelView = loaded ?? {
       self: undefined, children: [], run: undefined, updatedAt: 0, warning: undefined, repoUrl: undefined,
       openspec: undefined, jira: {}, jiraNote: undefined, skips: {},
     }
+    const { value: reminded } = await $.state.get(REMINDED)
+    const view: PanelView =
+      reminded === undefined || reminded === null
+        ? base
+        : {
+            ...base,
+            warning: [base.warning, uiText(base.languages?.ui).warning.reminded(reminded.count, reminded.last)].filter(x => x !== undefined).join(' · '),
+          }
     const { value: collapsed = {} } = await $.state.get(COLLAPSED)
     const { value: answered = [] } = await $.state.get(ANSWERED)
     const { value: drafts = {} } = await $.state.get(GRILL_DRAFTS)

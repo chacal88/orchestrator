@@ -61,3 +61,13 @@ trocar de nível sem segundo hook e desativar devolve o arquivo original; JSON i
 - `orquestrador/skills/change-orchestrator/SKILL.md`: § 1, item 0: num clone inativo a coordenação pede ao dono para ativar no painel ⚙️ antes de orquestrar, e não grava o arquivo ela mesma.
 - `orquestrador/.claude-plugin/plugin.json`: versão 0.9.0 → 0.10.0.
 - Portões da fase rodados depois da última edição (tipos, validação, testes): saída 0 em cada um; 324 testes passando.
+
+## Fase 4 — Correções da revisão (4.1–4.5)
+
+**4.1** `register.tsx` (`touchesSettings`, no `tool.call` antes de `activeMode`, e em `isGuarded`): Edit/Write/MultiEdit/NotebookEdit no `.claude/settings.local.json` (caminho absoluto ou relativo, inclusive o do checkout principal) e Bash que o cite sem ser só leitura são recusados em qualquer modo e sem marca. A escrita nos registros de portão agora é recusa dura também em "lembrar". Testes: Write, Edit, MultiEdit, `sed -i`, `echo >`, `tee`, a partir de worktree; `cat` segue livre; o painel (`writeActivation`) segue gravando.
+**4.2** `noteReminded`: cada recusa que vira aviso em "lembrar" vai para o log do flow (`logFlowRefusal`, nota `lembrar: …`) e para o estado `reminded`, que o painel 🧭 mostra no aviso do rodapé ("Em "lembrar", N recusa(s) viraram só aviso. Última: …"). Texto do nível "lembrar" (opção e ajuda, pt-BR e en) diz que `--admin`, merge sem revisão e pulo de portões deixam de ser barrados; README ajustado. Testes: merge (log + painel), `start_session` (4ª sessão), registros de portão.
+**4.3** `activeMode` guarda por 20 s se há flow em andamento neste checkout (estado `running`; `saveFlow` o derruba; `refreshQuietly` o mantém quente); o render da faixa só lê o estado (render não grava) e rescaneia sem guardar quando vencido. Com marca não varre nada. Erro da leitura vira "sem flow": nada negado, faixa de pé. Testes: 5 chamadas, 1 varredura; marca sem varredura; listagem falhando não nega em "lembrar" nem derruba sem marca.
+**4.4** `activation.ts`: erro de leitura recusa gravar (`unreadable`); `hooks.SessionStart` que não é lista recusa (`badHooks`); `check-ignore` só acrescenta ao exclude com saída 1; o exclude é garantido antes de gravar e falha vira recusa (`notIgnored`) sem criar o arquivo; sem mudança, sem regravar; `fs.write` cria `.claude/`. O painel (⚙️) diz o motivo de cada recusa (pt-BR e en). Testes de cada caso.
+**4.5** Testes: faixa só com a marca e uma run publicada, sem flow; `session.start` sem marca não abre painel (com marca abre); `tool.check` e `prompt.submit` inativos não rastreiam; texto do hook com acentos (agora "nível", "só o dono", "portões", gravado sem escapes).
+
+Portões depois da última edição: tipos, validação e testes com saída 0 cada; 338 testes passando.

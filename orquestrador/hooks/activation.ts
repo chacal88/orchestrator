@@ -10,8 +10,8 @@ export const HOOK_MARK = 'orquestrador:ativar'
 
 /** What the SessionStart hook prints: stdout of a `command` hook becomes context for the session. */
 export const HOOK_COMMAND =
-  'printf \'%s\\n\' "Orquestrador ativo neste clone (nivel: ${ORQUESTRADOR:-barrar}). Siga o flow da change em andamento; ' +
-  'passos do dono so o dono responde no painel (/orquestrador); sem merge --admin e sem pular portoes." ' +
+  'printf \'%s\\n\' "Orquestrador ativo neste clone (nível: ${ORQUESTRADOR:-barrar}). Siga o flow da change em andamento; ' +
+  'passos do dono, só o dono responde no painel (/orquestrador); sem merge --admin e sem pular portões." ' +
   `# ${HOOK_MARK}`
 
 type Json = Record<string, unknown>
@@ -100,43 +100,68 @@ export async function projectRoot($: EngineInterface): Promise<{ root: string; g
 
 export type Activation = { level: ActivationLevel | undefined; invalid: boolean }
 
+/** The file's text; `undefined` only when it is absent. A read that fails throws: it is not "absent". */
 async function readSettings($: EngineInterface, path: string): Promise<string | undefined> {
-  try {
-    return (await $.fs.exists(path)) ? await $.fs.read(path) : undefined
-  } catch {
-    return undefined
-  }
+  return (await $.fs.exists(path)) ? await $.fs.read(path) : undefined
 }
 
-/** The mark, read from the file itself so it counts at once, with no restart. A broken file marks nothing. */
+/** The mark, read from the file itself so it counts at once, with no restart. A broken or unreadable file marks nothing. */
 export async function readActivation($: EngineInterface): Promise<Activation> {
   const { root } = await projectRoot($)
-  const parsed = parseSettings(await readSettings($, `${root}/${SETTINGS_PATH}`))
+  let text: string | undefined
+  try {
+    text = await readSettings($, `${root}/${SETTINGS_PATH}`)
+  } catch {
+    return { level: undefined, invalid: true }
+  }
+  const parsed = parseSettings(text)
   return 'error' in parsed ? { level: undefined, invalid: true } : { level: levelOf(parsed.data), invalid: false }
 }
 
-/** Keeps the file out of git when the mod created it: the clone's exclude, never the .gitignore. */
+/**
+ * Keeps the file out of git: the clone's exclude, never the .gitignore. Only `git check-ignore` exiting 1
+ * (not ignored) adds the line; any other code (128: git failed) leaves the exclude alone. Throws when it cannot write.
+ */
 async function ensureIgnored($: EngineInterface, root: string, gitDir: string | undefined): Promise<void> {
   if (gitDir === undefined) return
   const ran = await $.process.run(['git', '-C', root, 'check-ignore', '-q', SETTINGS_PATH], { cwd: root, timeoutMs: 10_000 }).catch(() => undefined)
-  if (ran === undefined || ran.exitCode === 0) return
+  if (ran === undefined || ran.exitCode !== 1) return
   const exclude = `${gitDir}/info/exclude`
   const prior = (await readSettings($, exclude)) ?? ''
   if (prior.split('\n').some(l => l.trim() === SETTINGS_PATH || l.trim() === `**/${SETTINGS_PATH}`)) return
   await $.fs.write(exclude, `${prior}${prior === '' || prior.endsWith('\n') ? '' : '\n'}${SETTINGS_PATH}\n`)
 }
 
-export type Written = { ok: true } | { ok: false; error: 'notJson' | 'notObject' }
+export type Written = { ok: true } | { ok: false; error: 'notJson' | 'notObject' | 'unreadable' | 'badHooks' | 'notIgnored' }
 
-/** Turns the activation on at `level`, or off with `null`; a file that is not a JSON object is left untouched. */
+/**
+ * Turns the activation on at `level`, or off with `null`. A file that is not a JSON object, that cannot be read,
+ * or whose `hooks.SessionStart` is not a list is left untouched; so is a write with nothing to change.
+ */
 export async function writeActivation($: EngineInterface, level: ActivationLevel | null): Promise<Written> {
   const { root, gitDir } = await projectRoot($)
   const path = `${root}/${SETTINGS_PATH}`
-  const text = await readSettings($, path)
+  let text: string | undefined
+  try {
+    text = await readSettings($, path)
+  } catch {
+    return { ok: false, error: 'unreadable' }
+  }
   const parsed = parseSettings(text)
   if ('error' in parsed) return { ok: false, error: parsed.error }
   if (level === null && text === undefined) return { ok: true }
-  await $.fs.write(path, settingsText(level === null ? deactivate(parsed.data) : activate(parsed.data, level)))
-  if (text === undefined) await ensureIgnored($, root, gitDir)
+  const groups = isRecord(parsed.data.hooks) ? parsed.data.hooks.SessionStart : undefined
+  if (groups !== undefined && !Array.isArray(groups)) return { ok: false, error: 'badHooks' }
+  const next = settingsText(level === null ? deactivate(parsed.data) : activate(parsed.data, level))
+  if (next === text) return { ok: true }
+  if (text === undefined) {
+    // the exclude comes first: a file git would show must never exist, so a failure here writes nothing
+    try {
+      await ensureIgnored($, root, gitDir)
+    } catch {
+      return { ok: false, error: 'notIgnored' }
+    }
+  }
+  await $.fs.write(path, next) // creates `.claude/` when it is missing
   return { ok: true }
 }

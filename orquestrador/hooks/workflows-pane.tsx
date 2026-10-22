@@ -1597,7 +1597,7 @@ async function setActivation($: EngineInterface, t: WorkflowsText, level: Activa
     $.ui.toast(text)
   }
   if (!written.ok) {
-    await say(A.notWritten(written.error === 'notJson' ? A.notJson : A.notObject))
+    await say(A.notWritten(A[written.error]))
     return
   }
   const named = level === null ? '' : (A.level[level] ?? level)
