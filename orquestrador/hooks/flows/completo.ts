@@ -77,7 +77,7 @@ export const completo: unknown = {
       "title": "Executar fases",
       "description": "As fases do tasks.md, uma a uma: o mod fecha cada fase quando os portões passaram, as tarefas estão marcadas e o trabalho foi commitado.",
       "kind": "loop",
-      "agent": "publicador",
+      "agent": "executor",
       "details": {"inputs": "O tasks.md liberado.", "produces": "Cada fase com os portões passados, as tarefas marcadas e o trabalho commitado.", "blocks": "A revisão de código só começa com todas as fases fechadas."},
       "over": "tasks",
       "outcomes": { "concluidas": { "label": "Fases concluídas", "next": "revisao-codigo" } }

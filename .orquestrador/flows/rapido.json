@@ -26,6 +26,7 @@
       "title": "Executar fases",
       "description": "As fases do tasks.md da change: cada uma fecha com os gates passando, as tarefas marcadas e o trabalho commitado.",
       "kind": "loop",
+      "agent": "executor",
       "over": "tasks",
       "outcomes": { "concluidas": { "label": "Fases concluídas", "next": "revisao-codigo" } }
     },
@@ -56,6 +57,7 @@
       "title": "Publicar no GitHub",
       "description": "Uma sessão cria o repositório público e envia o código.",
       "kind": "session",
+      "agent": "publicador",
       "jira": false,
       "outcomes": { "publicado": { "label": "Repositório publicado", "next": "qa" } }
     },
