@@ -25,3 +25,7 @@
 - [x] 5.2 A proteção por texto do `settings.local.json` só vale com o mod ativo (marca ou flow em andamento): num clone inativo o arquivo é livre, como antes; comparação sem diferenciar maiúsculas. Testes: Edit no clone inativo passa; no ativo é recusado — cx: simple
 - [x] 5.3 `activeMode` falha fechado: erro ao ler a marca ou os flows com marca presente ou flow já conhecido vale "barrar"; só a ausência confirmada de marca e de flow deixa quieto. Teste — cx: simple
 - [x] 5.4 README e texto do painel: "barrar" é um freio do mod, não uma barreira; a trava de verdade é a proteção de branch do GitHub; um hook posto pelo modelo em outro arquivo de settings fica fora do alcance do mod — cx: simple
+
+## 6. Correção da 3ª revisão
+
+- [ ] 6.1 O registro do nível gravado pelo painel sobrevive a reinício: fica num arquivo da pasta de registros do mod (a mesma que já é protegida), por raiz do repositório, e é lido de lá; o hook `SessionStart` e o comportamento dizem o mesmo nível. Testes: estado limpo + registro em disco + arquivo com "lembrar" vale "lembrar" sem aviso; marca apagada depois de um reinício vale "barrar" com aviso — cx: simple
