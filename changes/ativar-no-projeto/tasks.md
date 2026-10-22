@@ -18,3 +18,10 @@
 - [x] 4.3 `activeMode` barato: sem varrer o diretório global de flows a cada render/chamada (cache curto ou índice do checkout via `loadRun`); erros dessa leitura capturados, sem negar ferramentas em "lembrar" nem derrubar a faixa; teste — cx: moderate
 - [x] 4.4 Gravação robusta: erro de leitura ≠ arquivo ausente (recusa gravar); `SessionStart` que não é lista fica intocado (recusa com motivo); `git check-ignore` só acrescenta ao exclude com saída 1; exclude garantido antes de gravar (falha vira aviso); não regrava quando nada muda; cria `.claude/` quando falta; testes — cx: moderate
 - [x] 4.5 Testes da quietude: faixa com só a marca (sem flow); `session.start` sem marca não abre painel; `tool.check`/`prompt.submit` inativos não rastreiam; texto do hook com acentos — cx: simple
+
+## 5. Correções da 2ª revisão
+
+- [ ] 5.1 O nível vale como o painel gravou, não como o arquivo diz: ao ativar/trocar/desativar, o painel guarda no estado do mod (que nenhuma ferramenta do modelo grava) o nível que escreveu para aquele repositório. Ao ler, uma marca que rebaixa ("lembrar") sem esse registro, ou diferente dele, vale como "barrar" e o painel avisa "a ativação foi mudada fora do painel — confirme por aqui"; uma marca "barrar" sem registro vale (é o mais rígido). Testes: marca "lembrar" escrita à mão com flow em andamento continua barrando; trocar pelo painel funciona; desativar pelo painel e a marca reaparecer escrita à mão vale como "barrar" — cx: complex
+- [ ] 5.2 A proteção por texto do `settings.local.json` só vale com o mod ativo (marca ou flow em andamento): num clone inativo o arquivo é livre, como antes; comparação sem diferenciar maiúsculas. Testes: Edit no clone inativo passa; no ativo é recusado — cx: simple
+- [ ] 5.3 `activeMode` falha fechado: erro ao ler a marca ou os flows com marca presente ou flow já conhecido vale "barrar"; só a ausência confirmada de marca e de flow deixa quieto. Teste — cx: simple
+- [ ] 5.4 README e texto do painel: "barrar" é um freio do mod, não uma barreira; a trava de verdade é a proteção de branch do GitHub; um hook posto pelo modelo em outro arquivo de settings fica fora do alcance do mod — cx: simple
