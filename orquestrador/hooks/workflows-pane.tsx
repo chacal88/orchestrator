@@ -19,6 +19,7 @@ import {
   WORKFLOW_ID,
   addLibraryStep,
   addNewStep,
+  brokenDependents,
   draftFile,
   draftOf,
   moveStep,
@@ -28,6 +29,7 @@ import {
   toggleStep,
 } from './workflow-edit'
 import type { StepField } from './workflow-edit'
+import type { FlowSource } from './flow'
 
 export const WORKFLOWS_PANE = 'orquestrador-workflows'
 export const WORKFLOWS_TITLE = '⚙️ Workflows'
@@ -540,7 +542,8 @@ export async function drawWorkflows(
         $.ui.toast(`Não achei o workflow base ${flow.base}.`)
         return
       }
-      const d = draftOf(flow, base, defaults[id] !== undefined)
+      const source = project ? loaded.files.find(f => idOf(f.raw) === id)?.source : undefined
+      const d = { ...draftOf(flow, base, defaults[id] !== undefined), ...(source === undefined ? {} : { source }) }
       void Promise.all([$.state.set(DRAFT, d), $.state.set(FOCUS, null), $.state.set(NOTICE, null)]).catch(fail('abrir a edição'))
     },
     form: field => value => {
@@ -557,12 +560,20 @@ export async function drawWorkflows(
         return
       }
       const base = forms$.newBase === '' ? undefined : loaded.flows[forms$.newBase]
-      void Promise.all([
-        $.state.set(DRAFT, newDraft(id, base)),
+      void takenBy($, loaded.files, loaded.dir, id)
+        .then(taken => {
+          if (taken !== undefined) {
+            $.ui.toast(`Já existe ${taken} com o id ou o nome ${id}; nada foi criado. Corrija ou apague esse arquivo, ou use outro id.`)
+            return
+          }
+          return Promise.all([
+            $.state.set(DRAFT, newDraft(id, base)),
         $.state.set(FORMS, { ...forms$, newId: '', newBase: '' }),
-        $.state.set(FOCUS, null),
-        $.state.set(NOTICE, null),
-      ]).catch(fail('criar o workflow'))
+            $.state.set(FOCUS, null),
+            $.state.set(NOTICE, null),
+          ])
+        })
+        .catch(fail('criar o workflow'))
     },
     head: field => value => editDraft(d => ({ ...d, [field]: value })),
     toggle: step => () => editDraft(d => toggleStep(d, step)),
@@ -596,21 +607,47 @@ async function saveDraft($: EngineInterface): Promise<void> {
   const { value: draft } = await $.state.get(DRAFT)
   if (draft == null) return
   const { files, dir } = await loadFlows($)
-  const target = files.find(f => (f.raw as { id?: unknown } | null)?.id === draft.id)?.source ?? `${dir}/${draft.id}.json`
+  const refuse = (error: string) => $.state.set(DRAFT, { ...draft, error })
+  const relative = (path: string) => `.orquestrador/flows/${path.slice(dir.length + 1)}`
+  // only the file the draft was opened from may be written over; any other of the same id or name stays
+  const target = draft.source ?? `${dir}/${draft.id}.json`
+  if (draft.source === undefined) {
+    const taken = await takenBy($, files, dir, draft.id)
+    if (taken !== undefined) {
+      await refuse(`já existe ${taken} com o id ou o nome ${draft.id}; nada foi gravado. Corrija ou apague esse arquivo, ou use outro id.`)
+      return
+    }
+  }
   const result = draftFile(draft, raw => resolveCandidate(DEFAULT_FLOWS, files, target, raw))
   if ('error' in result) {
-    await $.state.set(DRAFT, { ...draft, error: result.error })
+    await refuse(result.error)
+    return
+  }
+  const broken = brokenDependents(DEFAULT_FLOWS, files, target, result.raw)
+  if (broken.length > 0) {
+    const named = broken.map(p => p.split(`${dir}/`).join('.orquestrador/flows/'))
+    await refuse(`os workflows que derivam de ${draft.id} deixariam de resolver; nada foi gravado. ${named.join(' ')}`)
     return
   }
   await $.fs.write(target, `${JSON.stringify(result.raw, null, 2)}\n`)
-  const relative = `.orquestrador/flows/${target.slice(dir.length + 1)}`
   await $.state.set(DRAFT, null)
   await $.state.set(SELECTED, draft.id)
   await $.state.set(FOCUS, null)
   await $.state.set(
     NOTICE,
     (draft.replacesDefault
-      ? `Salvo em ${relative}. O workflow padrão ${draft.id} segue no mod, mas este projeto passa a usar o seu no lugar dele.`
-      : `Salvo em ${relative}.`) + ' Changes em andamento seguem com o workflow com que começaram.',
+      ? `Salvo em ${relative(target)}. O workflow padrão ${draft.id} segue no mod, mas este projeto passa a usar o seu no lugar dele.`
+      : `Salvo em ${relative(target)}.`) +
+      ' Changes em andamento seguem com o workflow com que começaram.' +
+      (result.notice === undefined ? '' : ` ${result.notice}`),
   )
+}
+
+const idOf = (raw: unknown): unknown => (raw as { id?: unknown } | null)?.id
+
+/** The project file, as the owner reads its path, that already holds `id`: by its id, or by its name `<id>.json`, valid or broken. */
+async function takenBy($: EngineInterface, files: readonly FlowSource[], dir: string, id: string): Promise<string | undefined> {
+  const named = `${dir}/${id}.json`
+  const path = files.find(f => idOf(f.raw) === id)?.source ?? ((await $.fs.exists(named)) ? named : undefined)
+  return path === undefined ? undefined : `.orquestrador/flows/${path.slice(dir.length + 1)}`
 }

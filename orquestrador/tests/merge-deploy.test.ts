@@ -170,9 +170,7 @@ describe('deploy', () => {
     const flow = trunk({ branch: 'main' }, { ci: false, commands: ['npm run migrate:prod', 'npm run seed:prod'] })
     let state = parked(flow, 'deploy')
     expect(stepAt(flow, 'deploy').kind).toBe('owner')
-    expect(flowView(state).ownerChoices).toEqual([])
     expect(describeFlow(state)).toContain('Waits on the owner: do not start the deploy unless they ask')
-    expect(err(ownerPress(state, 'deploy', 'publicado', at))).toMatch(/moves on by itself once the mod saw the whole deploy: it still waits on the routines/)
 
     state = ok(observeDeploy(state, 'npm run migrate:prod', false, at)).state
     expect(state.current).toBe('deploy')
@@ -215,6 +213,46 @@ describe('deploy', () => {
     expect(err(held)).toBe('the routine `npm run migrate:prod` failed; the deploy holds until it passes.')
   })
 
+  test('7.2 an owner\'s deploy of routines alone has the owner\'s "Deploy concluído", which moves it on', () => {
+    const flow = trunk({ branch: 'main' }, { ci: false, commands: ['npm run migrate:prod', 'npm run seed:prod'] })
+    let state = parked(flow, 'deploy')
+    expect(flowView(state).ownerChoices).toEqual([{ outcome: 'publicado', label: 'Deploy concluído' }])
+    expect(describeFlow(state)).toContain('The owner may also press "Deploy concluído" once they ran the routines.')
+    // a session cannot answer it, and neither can an outcome the step lacks
+    expect(err(applyOutcome(state, { step: 'deploy', outcome: 'publicado', by: 'session' }, at))).toMatch(/only the owner/)
+    // halfway through the routines, the owner still gets out
+    state = ok(observeDeploy(state, 'npm run migrate:prod', false, at)).state
+    expect(flowView(state).ownerChoices).toEqual([{ outcome: 'publicado', label: 'Deploy concluído' }])
+    const pressed = ok(ownerPress(state, 'deploy', 'publicado', at))
+    expect(pressed.state.current).toBe('producao')
+    expect(pressed.state.records.deploy).toMatchObject({ outcome: 'publicado', by: 'owner' })
+
+    // a deploy that waits on the CI keeps only the CI's button
+    const withCi = parked(trunk({ branch: 'main' }, { ci: true, commands: ['npm run migrate:prod'] }), 'deploy')
+    expect(flowView(withCi).ownerChoices).toEqual([{ outcome: DEPLOY_CI_OUTCOME, label: 'Deploy do CI concluído' }])
+    expect(err(ownerPress(withCi, 'deploy', 'publicado', at))).toMatch(/moves on by itself once the mod saw the whole deploy/)
+  })
+
+  test('7.3 a failing gh run --exit-status fails the deploy only while it waits on the CI', () => {
+    const watch = 'gh run watch 123 --exit-status'
+    // ci: false — the CI is none of the deploy's, automatic or the owner's
+    const auto = parked(trunk({ branch: 'main', auto: true }, { ci: false, commands: ['npm run migrate:prod'], auto: true }), 'deploy')
+    expect(observeDeploy(auto, watch, true, at)).toBeUndefined()
+    expect(observeDeploy(auto, 'gh run view 123 --exit-status', true, at)).toBeUndefined()
+    const owner = parked(trunk({ branch: 'main' }, { ci: false, commands: ['npm run migrate:prod'] }), 'deploy')
+    expect(observeDeploy(owner, watch, true, at)).toBeUndefined()
+
+    // ci: true, already confirmed — a later watch, passing or failing, is ignored
+    const both = parked(trunk({ branch: 'main', auto: true }, { ci: true, commands: ['npm run migrate:prod'], auto: true }), 'deploy')
+    const confirmed = ok(ownerPress(both, 'deploy', DEPLOY_CI_OUTCOME, at)).state
+    expect(observeDeploy(confirmed, watch, true, at)).toBeUndefined()
+    expect(observeDeploy(confirmed, watch, false, at)).toBeUndefined()
+    expect(ok(observeDeploy(confirmed, 'npm run migrate:prod', false, at)).state.current).toBe('producao')
+
+    // ci: true, not confirmed yet — the failure still fails it
+    expect(ok(observeDeploy(both, watch, true, at)).state).toMatchObject({ current: 'deploy', attempts: { deploy: 2 } })
+  })
+
   test('a routine out of order does not count', () => {
     const flow = trunk({ branch: 'main' }, { ci: false, commands: ['npm run migrate:prod', 'npm run seed:prod'] })
     const state = parked(flow, 'deploy')
@@ -239,6 +277,40 @@ describe('the deploy\'s routines answer production', () => {
     expect(producao.detect?.commands).toEqual(expect.arrayContaining(['vercel --prod', 'npm run migrate:prod']))
     expect(producao.detect?.outcome).toBe('publicado')
     expect(detectedOutcome(producao, 'npm run migrate:prod', false)).toBe('publicado')
+  })
+
+  /** A project workflow deriving from the project's trunk (rapido + a deploy running migrate). */
+  const fromTrunk = (raw: Record<string, unknown>): FlowDef => {
+    const trunkRaw = {
+      id: 'trunk',
+      title: 'Trunk',
+      base: 'rapido',
+      add: [{ after: 'pr', step: { use: 'deploy', deploy: { ci: true, commands: ['npm run migrate:prod'] } } }],
+    }
+    const find = (id: string) => (id === 'trunk' ? { source: 'trunk.json', raw: trunkRaw } : defaults[id])
+    return ok(resolveFlow({ id: 'filho', title: 'Filho', base: 'trunk', ...raw }, 'filho.json', find))
+  }
+
+  const OWN = stepAt(defaultFlows().find(f => f.id === 'rapido')!, 'producao').detect!.commands
+
+  test('7.1 a derived flow that removes the deploy drops its routines from producao, keeping producao\'s own', () => {
+    const producao = stepAt(fromTrunk({}), 'producao')
+    expect(producao.detect?.commands).toEqual([...OWN, 'npm run migrate:prod'])
+    const removed = stepAt(fromTrunk({ remove: ['deploy'] }), 'producao')
+    expect(removed.detect).toEqual({ commands: OWN, outcome: 'publicado' })
+    expect(detectedOutcome(removed, 'npm run migrate:prod', false)).toBeUndefined()
+    expect(detectedOutcome(removed, 'vercel --prod', false)).toBe('publicado')
+  })
+
+  test('7.1 a derived flow that overrides deploy.commands keeps only the new routines', () => {
+    const flow = fromTrunk({ override: { deploy: { deploy: { commands: ['npm run seed:prod'] } } } })
+    expect(stepAt(flow, 'deploy').deploy?.commands).toEqual(['npm run seed:prod'])
+    const producao = stepAt(flow, 'producao')
+    expect(producao.detect?.commands).toEqual([...OWN, 'npm run seed:prod'])
+    expect(detectedOutcome(producao, 'npm run migrate:prod', false)).toBeUndefined()
+    // producao's own commands stay, also when the derived flow overrides them
+    const own = stepAt(fromTrunk({ override: { producao: { detect: 'fly deploy' } } }), 'producao')
+    expect(own.detect?.commands).toEqual(['fly deploy', 'npm run migrate:prod'])
   })
 
   test('without a deploy, producao keeps its own', () => {

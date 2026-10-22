@@ -1,5 +1,5 @@
-import type { FlowDef, FlowDeploy, FlowMerge, WorkflowDraft, WorkflowDraftStep, WorkflowForms } from '../types'
-import { FLOW_END, PRODUCTION_STEP, resolveProjectFlows } from './flow'
+import type { FlowDef, FlowDeploy, FlowDetect, FlowMerge, WorkflowDraft, WorkflowDraftStep, WorkflowForms } from '../types'
+import { FLOW_END, PRODUCTION_STEP, ownDetect, resolveProjectFlows } from './flow'
 import type { FlowSource } from './flow'
 import { LIBRARY, NEXT_STEP, libraryStep } from './flows/library'
 
@@ -8,6 +8,13 @@ type Outcomes = Record<string, { label?: string; next: string }>
 
 const clone = <T>(v: T): T => JSON.parse(JSON.stringify(v)) as T
 const same = (a: unknown, b: unknown): boolean => JSON.stringify(a) === JSON.stringify(b)
+/** JSON with every object's keys in order, so two shapes of the same value compare equal. */
+const stable = (v: unknown): string =>
+  JSON.stringify(v, (_k, x: unknown) =>
+    typeof x === 'object' && x !== null && !Array.isArray(x)
+      ? Object.fromEntries(Object.entries(x).sort(([a], [b]) => a.localeCompare(b)))
+      : x,
+  ) ?? 'undefined'
 const outcomesOf = (step: RawStep): Outcomes => (step.outcomes ?? {}) as Outcomes
 
 export const EMPTY_FORMS: WorkflowForms = { newId: '', newBase: '', stepTitle: '', stepKind: 'session', stepAgent: '', stepCommand: '' }
@@ -189,6 +196,12 @@ const desiredSteps = (draft: WorkflowDraft): RawStep[] => {
     const i = draft.steps.indexOf(s)
     const step = clone(s.step)
     for (const o of Object.values(outcomesOf(step))) o.next = o.next === NEXT_STEP ? nextOn(i) : through(o.next, [])
+    // the deploy's routines in production's detect are the mod's to join, never written as its own
+    if (step.detect !== undefined) {
+      const own = ownDetect(step.detect as FlowDetect)
+      if (own === undefined) delete step.detect
+      else step.detect = own
+    }
     return step
   })
 }
@@ -210,6 +223,9 @@ const addSpec = (s: WorkflowDraftStep): RawStep | string => {
 
 const sequenceOf = (flow: FlowDef): string => flow.steps.map(s => s.id).join(' → ')
 
+/** The fields the editor changes on a step, compared between the draft and what the mod would load. */
+const EDITABLE = ['agent', 'model', 'effort', 'merge', 'deploy', 'details'] as const
+
 /**
  * The file "Salvar" writes for a draft: with a base, the derived form (`remove`, `add`, `override`,
  * and `order` only when the steps moved); without one, the whole `steps`. `resolve` resolves a
@@ -218,19 +234,22 @@ const sequenceOf = (flow: FlowDef): string => flow.steps.map(s => s.id).join(' �
 export const draftFile = (
   draft: WorkflowDraft,
   resolve: (raw: Record<string, unknown>) => FlowDef | { error: string },
-): { raw: Record<string, unknown>; flow: FlowDef } | { error: string } => {
+): { raw: Record<string, unknown>; flow: FlowDef; notice?: string } | { error: string } => {
   const head = { id: draft.id, title: draft.title.trim() || draft.id, description: draft.description }
   const desired = desiredSteps(draft)
   if (draft.base === undefined) {
     const raw = { ...head, steps: desired }
     const flow = resolve(raw)
-    return 'error' in flow ? flow : { raw, flow }
+    if ('error' in flow) return flow
+    const drift = driftOf(desired, flow)
+    return drift === undefined ? { raw, flow } : { error: drift }
   }
   const kept = new Set(draft.steps.filter(s => s.from === 'base' && s.on).map(s => String(s.step.id)))
   const remove = draft.baseIds.filter(id => !kept.has(id))
   const add: { after: string; step: RawStep | string }[] = []
   const override: Record<string, RawStep> = {}
   let previous: string | undefined
+  let notice: string | undefined
   for (const s of draft.steps.filter(x => x.on)) {
     const id = String(s.step.id)
     if (s.from === 'base') {
@@ -242,6 +261,17 @@ export const draftFile = (
         if (key !== 'id' && key !== 'kind' && key !== 'outcomes' && !same(value, orig[key])) changed[key] = value
       }
       const dropped = Object.keys(orig).filter(k => k !== 'outcomes' && s.step[k] === undefined)
+      if (id === PRODUCTION_STEP) {
+        const own = ownDetect(s.step.detect as FlowDetect | undefined)
+        const was = ownDetect(orig.detect as FlowDetect | undefined)
+        if (!same(own, was)) {
+          if (own === undefined) dropped.push('detect')
+          else {
+            changed.detect = own
+            notice = `O passo ${id} tem detect próprio (${own.commands.join(', ')}), gravado no override; as rotinas do deploy entram nele sozinhas.`
+          }
+        }
+      }
       if (dropped.length > 0) {
         return { error: `O passo "${id}" vem do workflow ${draft.base}: dá para trocar ${dropped.join(', ')}, não tirar.` }
       }
@@ -279,7 +309,38 @@ export const draftFile = (
   if (routes(flow.steps) !== routes(desired as { id: unknown; outcomes: unknown }[])) {
     return { error: 'O workflow salvo não sairia igual ao rascunho; nada foi gravado.' }
   }
-  return { raw: finalRaw, flow }
+  const drift = driftOf(desired, flow)
+  if (drift !== undefined) return { error: drift }
+  return { raw: finalRaw, flow, ...(notice === undefined ? {} : { notice }) }
+}
+
+/** Where the loaded flow would differ from the draft in a field the editor changes; undefined when nowhere. */
+const driftOf = (desired: readonly RawStep[], flow: FlowDef): string | undefined => {
+  for (const want of desired) {
+    const got = flow.steps.find(s => s.id === want.id) as unknown as RawStep | undefined
+    const off = EDITABLE.filter(key => stable(want[key]) !== stable(got?.[key]))
+    if (off.length > 0) {
+      return `O workflow salvo não sairia igual ao rascunho (passo "${String(want.id)}": ${off.join(', ')}); nada foi gravado.`
+    }
+  }
+  return undefined
+}
+
+/**
+ * The project's workflows that resolve now and would stop resolving with `raw` written at `source`
+ * (those that derive from it, directly or through others), by their file's error.
+ */
+export const brokenDependents = (
+  defaults: readonly FlowSource[],
+  project: readonly FlowSource[],
+  source: string,
+  raw: Record<string, unknown>,
+): string[] => {
+  const before = resolveProjectFlows(defaults, project).problems
+  const others = project.filter(f => f.source !== source)
+  const after = resolveProjectFlows(defaults, [...others, { source, raw }]).problems
+  const failed = (problems: string[], file: string) => problems.some(p => p.startsWith(`${file}:`))
+  return others.filter(f => !failed(before, f.source) && failed(after, f.source)).map(f => after.find(p => p.startsWith(`${f.source}:`))!)
 }
 
 /**

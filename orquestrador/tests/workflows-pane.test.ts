@@ -2,6 +2,9 @@ import { expect, mock, test } from 'claude-code/testing'
 import type { Engine, TestBody } from 'claude-code/testing'
 
 import type { FlowState } from '../types'
+import { parseFlow, resolveFlow } from '../hooks/flow'
+import { DEFAULT_FLOWS } from '../hooks/flows/index'
+import { draftFile, draftOf } from '../hooks/workflow-edit'
 
 type On = Parameters<TestBody>[1]
 type Surface = 'desktop' | 'terminal' | 'mobile'
@@ -351,4 +354,135 @@ test('4.4 editing a default writes a project workflow of the same id, with a war
   await again.press({ key: 'wf-save' })
   expect(file(w, 'rapido')).toEqual({ id: 'rapido', title: expect.any(String), description: expect.any(String), base: 'rapido' })
   await again.unmount()
+})
+
+test('7.4 Novo workflow and Salvar never write over a flow file of the same id or name, valid or broken', async ($, on) => {
+  const w = world(on)
+  w.disk.set(`${DIR}/quebrado.json`, '{ not json')
+  w.disk.set(`${DIR}/outro-nome.json`, JSON.stringify({ id: 'orfao', base: 'rapido', remove: ['nao-existe'] }))
+  const ui = await mount($)
+
+  // creating: the broken file by its name, and the one that does not resolve by its id
+  await ui.input({ key: 'wf-new-id', text: 'quebrado' })
+  await ui.press({ key: 'wf-new' })
+  expect(w.toasts.at(-1)).toMatch(/Já existe \.orquestrador\/flows\/quebrado\.json com o id ou o nome quebrado; nada foi criado/)
+  expect(await ui.find(text(/Workflows disponíveis/))).toBeDefined()
+  await ui.input({ key: 'wf-new-id', text: 'orfao' })
+  await ui.press({ key: 'wf-new' })
+  expect(w.toasts.at(-1)).toMatch(/Já existe \.orquestrador\/flows\/outro-nome\.json com o id ou o nome orfao/)
+
+  // saving: a file that turned up under the draft's name after it was created stays as it is
+  await ui.input({ key: 'wf-new-id', text: 'novo' })
+  await ui.select({ key: 'wf-new-base', value: 'rapido' })
+  await ui.press({ key: 'wf-new' })
+  w.disk.set(`${DIR}/novo.json`, '{ meu rascunho')
+  await ui.press({ key: 'wf-save' })
+  expect(await ui.find(text(/Não salvei: já existe \.orquestrador\/flows\/novo\.json com o id ou o nome novo; nada foi gravado/))).toBeDefined()
+  expect(w.disk.get(`${DIR}/novo.json`)).toBe('{ meu rascunho')
+  await ui.press({ key: 'wf-discard' })
+  await ui.unmount()
+
+  // saving a default edited while the project holds a broken file of its name
+  w.disk.set(`${DIR}/rapido.json`, '{ rapido meu, quebrado')
+  const edit = await mount($)
+  await edit.press({ key: 'wf-open:rapido' })
+  await edit.press({ key: 'wf-edit' })
+  await edit.press({ key: 'wf-save' })
+  expect(await edit.find(text(/Não salvei: já existe \.orquestrador\/flows\/rapido\.json/))).toBeDefined()
+  expect(w.disk.get(`${DIR}/rapido.json`)).toBe('{ rapido meu, quebrado')
+  await edit.unmount()
+})
+
+test('7.4 a project workflow opened for editing is saved over its own file', async ($, on) => {
+  const w = world(on)
+  w.disk.set(`${DIR}/meu-trunk.json`, JSON.stringify(TRUNK))
+  const ui = await mount($)
+  await ui.press({ key: 'wf-open:trunk' })
+  await ui.press({ key: 'wf-edit' })
+  await ui.press({ key: 'wf-step:planejar' })
+  await ui.select({ key: 'wf-model:planejar', value: 'claude-sonnet-5-5' })
+  await ui.press({ key: 'wf-save' })
+  expect(await ui.find(text(/Salvo em \.orquestrador\/flows\/meu-trunk\.json/))).toBeDefined()
+  expect(JSON.parse(w.disk.get(`${DIR}/meu-trunk.json`)!)).toMatchObject({ id: 'trunk', override: { planejar: { model: 'claude-sonnet-5-5' } } })
+  expect(w.disk.has(`${DIR}/trunk.json`)).toBe(false)
+  await ui.unmount()
+})
+
+test('7.5 Salvar refuses when a workflow deriving from the saved one would stop resolving, and lists them', async ($, on) => {
+  const w = world(on)
+  w.disk.set(`${DIR}/trunk.json`, JSON.stringify(TRUNK))
+  w.disk.set(`${DIR}/filho.json`, JSON.stringify({ id: 'filho', title: 'Filho', base: 'trunk', override: { merge: { model: 'claude-haiku-5-5' } } }))
+  w.disk.set(`${DIR}/neto.json`, JSON.stringify({ id: 'neto', title: 'Neto', base: 'filho', remove: ['revisao-pr'] }))
+  w.disk.set(`${DIR}/outro.json`, JSON.stringify({ id: 'outro', title: 'Outro', base: 'rapido', remove: ['qa'] }))
+  const before = w.disk.get(`${DIR}/trunk.json`)
+  const ui = await mount($)
+  await ui.press({ key: 'wf-open:trunk' })
+  await ui.press({ key: 'wf-edit' })
+  await ui.press({ key: 'wf-step:merge' })
+  await ui.press({ key: 'wf-toggle:merge' })
+  await ui.press({ key: 'wf-save' })
+  const refusal = await ui.find(text(/Não salvei: os workflows que derivam de trunk deixariam de resolver; nada foi gravado\./))
+  const said = (refusal as { text?: string } | undefined)?.text ?? ''
+  expect(said).toMatch(/ \.orquestrador\/flows\/filho\.json: `override`: "merge" is no step of the flow\./)
+  expect(said).toMatch(/ \.orquestrador\/flows\/neto\.json: base "filho" does not resolve/)
+  expect(said).not.toMatch(/outro\.json/)
+  expect(w.disk.get(`${DIR}/trunk.json`)).toBe(before)
+
+  // a change the derived ones still resolve with is saved
+  await ui.press({ key: 'wf-toggle:merge' })
+  await ui.press({ key: 'wf-step:planejar' })
+  await ui.select({ key: 'wf-effort:planejar', value: 'low' })
+  await ui.press({ key: 'wf-save' })
+  expect(await ui.find(text(/Salvo em \.orquestrador\/flows\/trunk\.json/))).toBeDefined()
+  expect(file(w, 'trunk')).toMatchObject({ override: { planejar: { effort: 'low' } } })
+  await ui.unmount()
+})
+
+test('7.6 producao\'s own detect is kept on save, with a notice, and the deploy\'s routines are not written as its own', async ($, on) => {
+  const w = world(on)
+  w.disk.set(
+    `${DIR}/meu.json`,
+    JSON.stringify({ ...TRUNK, id: 'meu', title: 'Meu', override: { producao: { detect: 'fly deploy' } } }),
+  )
+  const ui = await mount($)
+  await ui.press({ key: 'wf-open:meu' })
+  await ui.press({ key: 'wf-edit' })
+  await ui.press({ key: 'wf-step:planejar' })
+  await ui.select({ key: 'wf-model:planejar', value: 'claude-sonnet-5-5' })
+  await ui.press({ key: 'wf-save' })
+  expect(file(w, 'meu')?.override).toEqual({
+    planejar: { model: 'claude-sonnet-5-5' },
+    producao: { detect: { commands: ['fly deploy'], outcome: 'publicado' } },
+  })
+  expect(await ui.find(text(/O passo producao tem detect próprio \(fly deploy\), gravado no override/))).toBeDefined()
+  await ui.unmount()
+
+})
+
+test('7.6 the final guard compares the editable fields too; a whole workflow writes producao\'s own detect only', () => {
+  const defaults = Object.fromEntries(DEFAULT_FLOWS.map(f => [(f.raw as { id: string }).id, f]))
+  const trunk = resolveFlow(TRUNK, 'trunk.json', id => defaults[id])
+  if ('error' in trunk) throw new Error(trunk.error)
+  const whole = draftOf(trunk, undefined, false)
+  const saved = draftFile(whole, raw => parseFlow(raw, 'x.json'))
+  if ('error' in saved) throw new Error(saved.error)
+  const steps = saved.raw.steps as { id: string; detect?: { commands: string[] } }[]
+  const producao = steps.find(s => s.id === 'producao')!
+  expect(producao.detect?.commands).not.toContain('npm run migrate')
+  expect(producao.detect).not.toHaveProperty('routines')
+  expect(saved.flow.steps.find(s => s.id === 'producao')!.detect?.commands).toContain('npm run migrate')
+
+  // a load that would lose a field the owner set is refused, naming the step and the field
+  const lossy = (field: 'model' | 'deploy') => (raw: Record<string, unknown>) => {
+    const flow = parseFlow(raw, 'x.json')
+    if ('error' in flow) return flow
+    return { ...flow, steps: flow.steps.map(s => (s.id === (field === 'model' ? 'planejar' : 'deploy') ? { ...s, [field]: undefined } : s)) }
+  }
+  const edited = { ...whole, steps: whole.steps.map(s => (s.step.id === 'planejar' ? { ...s, step: { ...s.step, model: 'claude-haiku-5-5' } } : s)) }
+  expect(draftFile(edited, lossy('model'))).toEqual({
+    error: 'O workflow salvo não sairia igual ao rascunho (passo "planejar": model); nada foi gravado.',
+  })
+  expect(draftFile(whole, lossy('deploy'))).toEqual({
+    error: 'O workflow salvo não sairia igual ao rascunho (passo "deploy": deploy); nada foi gravado.',
+  })
 })

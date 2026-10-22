@@ -110,8 +110,11 @@ export type FlowDeploy = { ci: boolean; commands: string[]; auto: boolean }
 /** How far a deploy step got: the CI's deploy confirmed, and the routines seen passing, in order. */
 export type FlowDeployProgress = { ci: boolean; commands: string[] }
 
-/** Commands whose success answers a step, and the outcome they give it; logged with actor "detect". */
-export type FlowDetect = { commands: string[]; outcome: string }
+/**
+ * Commands whose success answers a step, and the outcome they give it; logged with actor "detect".
+ * routines: the deploy's routines the mod joined into production's commands, not the step's own.
+ */
+export type FlowDetect = { commands: string[]; outcome: string; routines?: string[] }
 
 /** base: the flow a derived project flow was resolved from. */
 export type FlowDef = { id: string; title: string; description: string; steps: FlowStep[]; base?: string }
@@ -467,6 +470,8 @@ export type WorkflowDraft = {
   /** The workflow edited is a default of the mod: the project's file of the same id replaces it. */
   replacesDefault: boolean
   steps: WorkflowDraftStep[]
+  /** The project file the draft was opened from, the only one "Salvar" may write over. */
+  source?: string
   /** Why the last "Salvar" wrote nothing. */
   error?: string
 }

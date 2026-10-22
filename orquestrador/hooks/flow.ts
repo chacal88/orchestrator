@@ -131,13 +131,24 @@ export const parseFlow = (raw: unknown, source: string): FlowDef | { error: stri
 /** The step that says the change reached production; it also sees the deploy's routines. */
 export const PRODUCTION_STEP = 'producao'
 
-/** A flow with a deploy and the production step: the deploy's routines also answer production. */
+/**
+ * A flow with a deploy and the production step: the deploy's routines also answer production. The
+ * ones joined are kept apart in `routines`, so a derived flow starts again from production's own.
+ */
 const watchRoutines = (steps: FlowStep[]): void => {
-  const routines = steps.flatMap(s => s.deploy?.commands ?? [])
   const production = steps.find(s => s.id === PRODUCTION_STEP)
+  const own = production?.detect?.commands ?? []
+  const routines = [...new Set(steps.flatMap(s => s.deploy?.commands ?? []))].filter(c => !own.includes(c))
   if (production === undefined || routines.length === 0) return
-  const commands = [...new Set([...(production.detect?.commands ?? []), ...routines])]
-  production.detect = { commands, outcome: production.detect?.outcome ?? Object.keys(production.outcomes)[0]! }
+  production.detect = { commands: [...own, ...routines], outcome: production.detect?.outcome ?? Object.keys(production.outcomes)[0]!, routines }
+}
+
+/** A detect without the deploy's routines the mod joined in: the step's own, or nothing when it had none. */
+export const ownDetect = (detect: FlowDetect | undefined): FlowDetect | undefined => {
+  if (detect === undefined) return undefined
+  const joined = detect.routines ?? []
+  const commands = detect.commands.filter(c => !joined.includes(c))
+  return commands.length === 0 ? undefined : { commands, outcome: detect.outcome }
 }
 
 /**
@@ -292,6 +303,12 @@ export const resolveFlow = (
   const base = resolveFlow(found.raw, found.source, find, path)
   if ('error' in base) return fail(`base "${baseId}" does not resolve: ${base.error}`)
   let steps = JSON.parse(JSON.stringify(base.steps)) as RawStep[]
+  // production's detect goes back to its own commands; parseFlow joins the routines of the deploy that stays
+  for (const step of steps) {
+    const own = ownDetect(step.detect as FlowDetect | undefined)
+    if (own === undefined) delete step.detect
+    else step.detect = own
+  }
   const at = (sid: string) => steps.findIndex(s => s.id === sid)
 
   const remove = names(raw.remove)
@@ -549,7 +566,7 @@ export const applyOutcome = (
   if (asked.outcomes[report.outcome] === undefined) {
     return { error: `step "${asked.id}" has no outcome "${report.outcome}"; it declares ${Object.keys(asked.outcomes).join(', ')}.` }
   }
-  if (asked.deploy !== undefined && report.outcome !== 'falhou') {
+  if (asked.deploy !== undefined && report.outcome !== 'falhou' && !ownerConfirms(asked, report.by, report.outcome)) {
     return {
       error:
         `step "${asked.id}" (${asked.title}) moves on by itself once the mod saw the whole deploy: ` +
@@ -609,6 +626,13 @@ const deployWaits = (state: FlowState, step: FlowStep): string => {
   return parts.length === 0 ? 'nothing is left' : `it still waits on ${parts.join(', then ')}`
 }
 
+/**
+ * An owner's deploy of routines alone: the owner may confirm it whole with the step's forward
+ * outcome ("Deploy concluído"), having run the routines where the mod did not see them.
+ */
+const ownerConfirms = (step: FlowStep, by: FlowActor, outcome: string): boolean =>
+  step.kind === 'owner' && step.deploy?.ci === false && by === 'owner' && outcome === Object.keys(step.outcomes)[0]
+
 /** One more thing the deploy saw done; with nothing left, the step moves on. */
 const tick = (state: FlowState, step: FlowStep, done: FlowDeployProgress, by: FlowActor, note: string, at: number): Moved => {
   const progressed: FlowState = { ...state, progress: { ...state.progress, [step.id]: done }, seq: state.seq + 1, updatedAt: at }
@@ -633,8 +657,8 @@ export const confirmDeployCi = (state: FlowState, stepId: string, at: number): M
 /**
  * One finished Bash command, read by the deploy step the flow is on: `gh run watch|view
  * --exit-status` passing confirms the CI's deploy; a routine passing counts only after the CI
- * (when the step waits on it) and only as the next one in order. A masked exit code proves
- * nothing. A failure fails an automatic deploy; an owner's deploy holds. Undefined when the
+ * (when the step waits on it) and only as the next one in order. A CI watch is read only while
+ * the step waits on the CI it has not seen yet. A masked exit code proves nothing. A failure fails an automatic deploy; an owner's deploy holds. Undefined when the
  * command is none of the deploy's; an error when it is one but does not count.
  */
 export const observeDeploy = (state: FlowState, command: string, failed: boolean, at: number): Moved | { error: string } | undefined => {
@@ -646,15 +670,16 @@ export const observeDeploy = (state: FlowState, command: string, failed: boolean
   const pattern = routine === -1 ? (CI_WATCH.test(code) ? CI_WATCH : undefined) : routines[routine]!
   if (pattern === undefined) return undefined
   const what = routine === -1 ? "the CI's deploy" : `the routine \`${step.deploy.commands[routine]}\``
+  const done = progressOf(state, step)
+  // a CI watch counts, either way, only while the step still waits on the CI
+  if (routine === -1 && (!step.deploy.ci || done.ci)) return undefined
   if (failed) {
     return step.kind === 'automatic'
       ? settle(state, step, 'falhou', 'automatic', `${what} failed`, at)
       : { error: `${what} failed; the deploy holds until it passes.` }
   }
   if (masksExitCode(code, pattern)) return { error: `${what} ran with its exit code hidden; run it alone for it to count.` }
-  const done = progressOf(state, step)
   if (routine === -1) {
-    if (!step.deploy.ci || done.ci) return undefined
     return tick(state, step, { ...done, ci: true }, 'detect', executedTextShort(command), at)
   }
   if (step.deploy.ci && !done.ci) return { error: `${what} ran before the CI's deploy was confirmed; it does not count.` }
@@ -826,7 +851,9 @@ export const flowView = (state: FlowState): FlowView => {
       : step?.deploy !== undefined
         ? deployPending(state, step).ci
           ? [{ outcome: DEPLOY_CI_OUTCOME, label: DEPLOY_CI_LABEL }]
-          : []
+          : ownerConfirms(step, 'owner', Object.keys(step.outcomes)[0]!)
+            ? Object.entries(step.outcomes).slice(0, 1).map(([outcome, o]) => ({ outcome, label: o.label }))
+            : []
         : step?.kind === 'owner'
           ? Object.entries(step.outcomes).map(([outcome, o]) => ({ outcome, label: o.label }))
           : []
@@ -919,9 +946,11 @@ const describeDeploy = (state: FlowState, step: FlowStep, where: string): string
       ? ` Routines left, each as its own command and in this order${pending.ci ? ', after the CI' : ''}: ${pending.commands.map(c => `\`${c}\``).join(', ')}.`
       : ''
   const fails = step.kind === 'automatic' ? `a failure → ${step.outcomes.falhou?.next}` : 'a failure holds the step'
+  const [forward, first] = Object.entries(step.outcomes)[0]!
+  const confirm = ownerConfirms(step, 'owner', forward) ? ` The owner may also press "${first.label}" once they ran the routines.` : ''
   return (
     `${who}${ci}${routines} The mod ticks each part it sees pass (a hidden exit code does not count) and moves on ` +
-    `(→ ${Object.values(step.outcomes)[0]?.next}) once all are done; ${fails}. It cannot be reported.`
+    `(→ ${first.next}) once all are done; ${fails}.${confirm} It cannot be reported.`
   )
 }
 
