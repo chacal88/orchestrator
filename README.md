@@ -175,6 +175,23 @@ Cada projeto escolhe o idioma em `.orquestrador/config.json`, em dois eixos inde
 
 Idiomas: `pt-BR` e `en`. `"language": "en"` vale para os dois eixos. Sem o arquivo, fica `pt-BR` nos dois. Um valor desconhecido também fica em `pt-BR`, e o painel avisa. O exemplo acima mostra as fases em inglês e os textos dos itens em português.
 
+### Configurações do projeto
+
+O mesmo `.orquestrador/config.json` guarda o padrão dos passos de merge e deploy de todos os workflows do projeto, ao lado do `language`:
+
+```json
+{
+  "language": { "ui": "pt-BR", "content": "pt-BR" },
+  "merge": { "auto": false, "branch": "main", "method": "squash" },
+  "deploy": { "auto": false, "ci": true, "commands": ["npm run migrate:prod"] }
+}
+```
+
+- **Herança:** um passo `merge` ou `deploy` recebe do projeto cada campo que o workflow não escreveu. Um campo escrito no workflow vence. `auto` do projeto decide se um passo da biblioteca (`use: "merge"` / `use: "deploy"`) é do dono ou automático; um passo escrito à mão mantém o tipo que declarou. Uma change em andamento segue com o flow com que começou.
+- **Valor errado:** vira um aviso com o nome do campo e é ignorado, nunca adivinhado.
+- **Onde ver:** `flow status` e `flow list` dizem quais campos vieram do projeto.
+- **Painel ⚙️ Workflows:** o cartão "Este projeto", no topo, resume idioma, merge e deploy; "Configurar" abre a edição em rascunho (nada é gravado até "Salvar", que só muda as chaves alteradas e preserva as outras do arquivo). O bloco "Nos workflows" mostra se cada workflow usa o do projeto, tem valor próprio ("Passar a usar o do projeto") ou não tem passo de merge/deploy ("Acrescentar merge e deploy"); as duas ações pedem confirmação e gravam pelo mesmo caminho do editor de workflows.
+
 ## Desenvolvimento
 
 O código fica em `orquestrador/hooks/`, os tipos em `orquestrador/types/` e os testes em `orquestrador/tests/`.

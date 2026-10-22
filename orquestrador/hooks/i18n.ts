@@ -1,4 +1,5 @@
-import type { EvidenceState, GateState, Lang, Languages, Localized, PhaseStatus } from '../types'
+import type { EvidenceState, GateState, Lang, Languages, Localized, PhaseStatus, ProjectSettings } from '../types'
+import { parseProjectBlocks } from './project-config'
 
 export const LANGS: readonly Lang[] = ['pt-BR', 'en']
 export const DEFAULT_LANG: Lang = 'pt-BR'
@@ -28,18 +29,59 @@ export const parseLanguages = (raw: unknown): { languages: Languages; problems: 
   return { languages: { ui: pick('ui'), content: pick('content') }, problems }
 }
 
-/** The project's config.json, already read; a file that is not JSON leaves pt-BR and says why. */
-export const parseConfig = (text: string | undefined): { languages: Languages; problems: string[] } => {
-  if (text === undefined) return { languages: DEFAULT_LANGUAGES, problems: [] }
+/** What a config file sets for the languages: only the axes it names. */
+const languagePartial = (raw: unknown): { ui?: Lang; content?: Lang; problems: string[] } => {
+  if (raw === undefined) return { problems: [] }
+  if (isLang(raw)) return { ui: raw, content: raw, problems: [] }
+  if (!isRecord(raw)) return { problems: [`language must be ${LANGS.join(' or ')}, or { ui, content }.`] }
+  const out: { ui?: Lang; content?: Lang; problems: string[] } = { problems: [] }
+  for (const axis of ['ui', 'content'] as const) {
+    const v = raw[axis]
+    if (v === undefined) continue
+    if (isLang(v)) out[axis] = v
+    else out.problems.push(`language.${axis} "${String(v)}" is not ${LANGS.join(' or ')}.`)
+  }
+  return out
+}
+
+type ConfigRead = {
+  ui?: Lang
+  content?: Lang
+  settings: Required<ProjectSettings>
+  problems: string[]
+}
+
+const readConfig = (text: string | undefined, path: string): ConfigRead => {
+  const none: ConfigRead = { settings: { merge: {}, deploy: {} }, problems: [] }
+  if (text === undefined) return none
   let raw: unknown
   try {
     raw = JSON.parse(text)
   } catch {
-    return { languages: DEFAULT_LANGUAGES, problems: [`${CONFIG_PATH}: not valid JSON.`] }
+    return { ...none, problems: [`${path}: not valid JSON.`] }
   }
-  if (!isRecord(raw)) return { languages: DEFAULT_LANGUAGES, problems: [`${CONFIG_PATH}: a JSON object is expected.`] }
-  const parsed = parseLanguages(raw.language)
-  return { languages: parsed.languages, problems: parsed.problems.map(p => `${CONFIG_PATH}: ${p}`) }
+  if (!isRecord(raw)) return { ...none, problems: [`${path}: a JSON object is expected.`] }
+  const lang = languagePartial(raw.language)
+  const blocks = parseProjectBlocks(raw)
+  return {
+    ...(lang.ui === undefined ? {} : { ui: lang.ui }),
+    ...(lang.content === undefined ? {} : { content: lang.content }),
+    settings: blocks.settings,
+    problems: [...lang.problems, ...blocks.problems].map(p => `${path}: ${p}`),
+  }
+}
+
+/**
+ * The project's `.orquestrador/config.json`, already read: its languages and its merge and deploy
+ * defaults. A file that is not JSON, or a value that is wrong, is named in `problems` and left out.
+ */
+export const parseConfig = (text: string | undefined): { languages: Languages; project: ProjectSettings; problems: string[] } => {
+  const read = readConfig(text, CONFIG_PATH)
+  return {
+    languages: { ui: read.ui ?? DEFAULT_LANG, content: read.content ?? DEFAULT_LANG },
+    project: read.settings,
+    problems: read.problems,
+  }
 }
 
 /** A flow field as a file writes it: plain text, or one text per language. */

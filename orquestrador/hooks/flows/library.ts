@@ -1,3 +1,4 @@
+import type { ProjectSettings } from '../../types'
 import { completo } from './completo'
 import { rapido } from './rapido'
 
@@ -5,7 +6,7 @@ import { rapido } from './rapido'
 export const NEXT_STEP = '$seguinte'
 
 type RawStep = Record<string, unknown>
-type Build = (changes: RawStep) => RawStep
+type Build = (changes: RawStep, project?: ProjectSettings) => RawStep
 
 const isRecord = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v)
 
@@ -26,8 +27,31 @@ const revisaoPr: Build = () => ({
 })
 
 /** The owner merges (and the mod sees `gh pr merge`), or with `auto` the coordinator runs it. */
-const merge: Build = changes => {
-  const config = { branch: 'main', method: 'squash', auto: false, ...(isRecord(changes.merge) ? changes.merge : {}) }
+const settled = (
+  written: unknown,
+  defaults: Record<string, unknown>,
+  project: Record<string, unknown> | undefined,
+  keys: readonly string[],
+): Record<string, unknown> => {
+  const own = isRecord(written) ? written : {}
+  const baked = Array.isArray(own.fromProject) ? (own.fromProject as unknown[]) : []
+  const { fromProject: _marker, ...fields } = own
+  const config: Record<string, unknown> = { ...defaults }
+  const fromProject: string[] = []
+  for (const key of keys) {
+    const stillProject = baked.includes(key) && JSON.stringify(fields[key]) === JSON.stringify(project?.[key])
+    if (fields[key] !== undefined && !stillProject) config[key] = fields[key]
+    else if (project?.[key] !== undefined) {
+      config[key] = project[key]
+      fromProject.push(key)
+    }
+  }
+  for (const [key, value] of Object.entries(fields)) if (!keys.includes(key)) config[key] = value
+  return fromProject.length === 0 ? config : { ...config, fromProject }
+}
+
+const merge: Build = (changes, project) => {
+  const config = settled(changes.merge, { branch: 'main', method: 'squash', auto: false }, project?.merge, ['branch', 'method', 'auto'])
   const id = typeof changes.id === 'string' ? changes.id : 'merge'
   const shared = {
     id,
@@ -69,8 +93,8 @@ const merge: Build = changes => {
  * The deploy after the merge, by the CI and/or routines. The mod ticks each part it sees done and
  * moves the step on with all of them; `command` only names where an automatic one starts.
  */
-const deploy: Build = changes => {
-  const config = { ci: true, commands: [] as unknown[], auto: false, ...(isRecord(changes.deploy) ? changes.deploy : {}) }
+const deploy: Build = (changes, project) => {
+  const config = settled(changes.deploy, { ci: true, commands: [] as unknown[], auto: false }, project?.deploy, ['ci', 'commands', 'auto'])
   const commands = Array.isArray(config.commands) ? config.commands : [config.commands]
   const id = typeof changes.id === 'string' ? changes.id : 'deploy'
   const shared = {
@@ -138,18 +162,21 @@ export const overlay = (a: unknown, b: unknown): unknown =>
  * An `add`'s step: a library id, `{ use: <library id>, ...changes }` (the changes laid over the
  * library's step, which reads its `id`, `merge` or `deploy` from them), or a whole step of its own.
  */
-export const libraryStep = (spec: unknown): RawStep | string => {
+export const libraryStep = (spec: unknown, project?: ProjectSettings): RawStep | string => {
   const ids = Object.keys(LIBRARY).join(', ')
   if (typeof spec === 'string') {
     const build = LIBRARY[spec]
-    return build === undefined ? `"${spec}" is no step of the library (${ids}).` : build({})
+    return build === undefined ? `"${spec}" is no step of the library (${ids}).` : build({}, project)
   }
   if (!isRecord(spec)) return '`step` is a library id, { use, ... } or a whole step.'
   const { use, ...changes } = spec
   if (use !== undefined) {
     const build = typeof use === 'string' ? LIBRARY[use] : undefined
     if (build === undefined) return `"${String(use)}" is no step of the library (${ids}).`
-    return overlay(build(changes), changes) as RawStep
+    const built = build(changes, project)
+    // the baked-in fields stay as the library settled them; the rest of `changes` lies over the step
+    const { merge: _m, deploy: _d, ...rest } = changes
+    return overlay(built, rest) as RawStep
   }
   if (changes.outcomes !== undefined) return changes
   const first = typeof changes.kind === 'string' ? FIRST_OUTCOMES[changes.kind] : undefined

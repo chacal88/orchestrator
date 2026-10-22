@@ -14,3 +14,12 @@ Flow `rapido` (plugin). Estado: `qa` (conferência do dono). PR https://github.c
 | 6 | 6 Merge seguro | 🛠️ | 6.1–6.4 | fpp-merge-seguro (`local_33be0dd7`) | claude/fpp-merge-seguro-e21dc5 | fechada | — |
 | 6 | 7 Deploy e painel | 🛠️ | 7.1–7.6 | fpp-deploy-painel (`local_93970253`) | claude/fpp-deploy-painel-837674 | fechada | — |
 | 8 | 9 Merge escondido e git | 🛠️ | 9.1–9.2 | coordenação | esta branch (d1952c3) | fechada | — |
+
+## Encerramento (2026-10-22)
+
+Flow concluído: release v0.8.2 (https://github.com/chacal88/orquestrador/releases/tag/v0.8.2), PRs #5, #6 e #7 na `main`.
+- Fases 1–5: formato, merge/deploy, agentes e skill, agente no status, painel ⚙️, docs (0.8.0).
+- Fases 6–9: três rodadas de correção da revisão de segurança e qualidade (merge seguro, deploy e painel).
+- Fases 10–11: painel ⚙️ refeito pelo mockup aprovado e ajustado na 2ª conferência (0.8.1, 0.8.2).
+- Portões pulados pelo dono: lint da fase 1, regras da 3a. Risco residual aceito: ver evidence.md.
+- Pendente fora desta change: PR #2 (idioma por projeto) e uma seção "Projeto" no painel ⚙️.

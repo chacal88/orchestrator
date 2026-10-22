@@ -119,10 +119,29 @@ export type FlowStepDetails = { inputs?: string; produces?: string; blocks?: str
 export type FlowEffort = 'low' | 'medium' | 'high' | 'xhigh' | 'max'
 
 /** auto: the coordinator merges by itself (an automatic step); otherwise the owner merges (an owner step). */
-export type FlowMerge = { branch: string; method: 'squash' | 'merge' | 'rebase'; auto: boolean }
+export type FlowMerge = {
+  branch: string
+  method: 'squash' | 'merge' | 'rebase'
+  auto: boolean
+  /** The fields the step did not write: their value comes from the project's settings (config.json). */
+  fromProject?: string[]
+}
 
 /** ci: the merge's CI deploys and the step waits for it; commands: routines run after the merge, in order. */
-export type FlowDeploy = { ci: boolean; commands: string[]; auto: boolean }
+export type FlowDeploy = {
+  ci: boolean
+  commands: string[]
+  auto: boolean
+  /** The fields the step did not write: their value comes from the project's settings. */
+  fromProject?: string[]
+}
+
+/** The project's merge defaults, each field optional: only what the config files set. */
+export type ProjectMerge = Partial<Pick<FlowMerge, 'branch' | 'method' | 'auto'>>
+/** The project's deploy defaults, each field optional. */
+export type ProjectDeploy = Partial<Pick<FlowDeploy, 'ci' | 'commands' | 'auto'>>
+/** The project's defaults for the merge and deploy steps of every workflow. */
+export type ProjectSettings = { merge?: ProjectMerge; deploy?: ProjectDeploy }
 
 /** How far a deploy step got: the CI's deploy confirmed, and the routines seen passing, in order. */
 export type FlowDeployProgress = { ci: boolean; commands: string[] }
@@ -505,6 +524,19 @@ export type WorkflowDraft = {
   initial?: { title: string; description: string; steps: { id: string; step: Record<string, unknown>; on: boolean }[] }
 }
 
+/** The project settings being edited: kept in the mod's state until "Salvar" or "Descartar". */
+export type ConfigDraft = {
+  languages: Languages
+  merge: ProjectMerge
+  deploy: ProjectDeploy
+  /** What the file held when the edit opened: the settings are compared with it. */
+  initial: { languages: Languages; merge: ProjectMerge; deploy: ProjectDeploy }
+  error?: string
+}
+
+/** An action on a workflow from "Nos workflows", waiting for the owner's confirmation. */
+export type ConfigAsk = { what: 'add' | 'use'; id: string }
+
 /** The "Novo workflow" and "Acrescentar passo" fields, as the owner fills them. */
 export type WorkflowForms = {
   newId: string
@@ -548,6 +580,10 @@ declare module 'claude-code' {
       wfForms: WorkflowForms
       /** Workflows panel: what the last save did, for the owner to read. */
       wfNotice: string | null
+      /** Workflows panel: the project settings edit in progress. */
+      wfCfgDraft: ConfigDraft | null
+      /** Workflows panel: the "Nos workflows" action awaiting confirmation. */
+      wfCfgAsk: ConfigAsk | null
     }
   }
 }

@@ -10,8 +10,22 @@ import type {
   TextProps,
 } from 'claude-code'
 
-import type { FlowDef, FlowDeploy, FlowMerge, FlowStepDetails, FlowStepKind, Lang, Languages, Translations, WorkflowDraft, WorkflowForms } from '../types'
-import { findAgent, listAgents, loadFlows } from './flow-files'
+import type {
+  ConfigAsk,
+  ConfigDraft,
+  FlowDef,
+  FlowDeploy,
+  FlowMerge,
+  FlowStepDetails,
+  FlowStepKind,
+  Lang,
+  Languages,
+  ProjectSettings,
+  Translations,
+  WorkflowDraft,
+  WorkflowForms,
+} from '../types'
+import { findAgent, listAgents, loadConfig, loadFlows } from './flow-files'
 import type { AgentInfo } from './flow-files'
 import { DEFAULT_FLOWS, defaultFlows } from './flows/index'
 import { LIBRARY, libraryStep } from './flows/library'
@@ -30,11 +44,23 @@ import {
   setStepField,
   slug,
   toggleStep,
+  useProjectValues,
 } from './workflow-edit'
 import type { StepField } from './workflow-edit'
 import type { FlowSource } from './flow'
-import { CONFIG_PATH, DEFAULT_LANGUAGES, localize, parseConfig, parseLocalized } from './i18n'
+import { CONFIG_PATH, DEFAULT_LANGUAGES, localize, parseLocalized } from './i18n'
 import { workflowsText } from './i18n-workflows'
+import {
+  applyConfigChange,
+  configChanged,
+  configChanges,
+  configText,
+  draftOfConfig,
+  effectiveDeploy,
+  effectiveMerge,
+  workflowState,
+} from './project-edit'
+import type { ConfigChange, WorkflowState } from './project-edit'
 import type { WorkflowsText } from './i18n-workflows'
 
 export const WORKFLOWS_PANE = 'orquestrador-workflows'
@@ -46,6 +72,10 @@ const INSERT = { plugin: 'orquestrador', key: 'wfInsert' } as const
 const DRAFT = { plugin: 'orquestrador', key: 'wfDraft' } as const
 const FORMS = { plugin: 'orquestrador', key: 'wfForms' } as const
 const NOTICE = { plugin: 'orquestrador', key: 'wfNotice' } as const
+const CFG = { plugin: 'orquestrador', key: 'wfCfgDraft' } as const
+const ASK = { plugin: 'orquestrador', key: 'wfCfgAsk' } as const
+/** The `routineFor` value that opens "+ rotina" in the project's deploy settings. */
+const CFG_ROUTINE = ':cfg'
 
 /** Below this many columns the pane stacks what sits side by side. */
 const NARROW_COLUMNS = 44
@@ -76,6 +106,8 @@ const WHO_PILL: Record<FlowStepKind, { bg: string; fg: string }> = {
 const TAG_BLUE = { bg: '#EEF3FC', fg: '#1E4C9E' }
 const TAG_GRAY = { bg: '#F2F1EC', fg: '#3D3C39' }
 const TAG_AMBER = { bg: '#FDF3E1', fg: '#7A4A00' }
+const AMBER_BAR = '#FFF8EB'
+const AMBER_RULE = '#F0DDB8'
 const RULE = '#E4E2DC'
 const MUTED = '#5F5E5A'
 
@@ -94,6 +126,14 @@ export type WorkflowEntry = { flow: FlowDef; origin: string; project: boolean; r
 /** A default workflow this project does not use because its own of the same id wins. */
 export type RetiredEntry = { flow: FlowDef; by: FlowDef }
 
+export type ConfigView = {
+  project: ProjectSettings
+  problems: string[]
+  draft: ConfigDraft | null
+  ask: ConfigAsk | null
+  states: WorkflowState[]
+}
+
 export type WorkflowsView = {
   entries: WorkflowEntry[]
   retired: RetiredEntry[]
@@ -110,6 +150,8 @@ export type WorkflowsView = {
   /** Every agent that can be picked, with its description and model. */
   agentList: AgentInfo[]
   narrow: boolean
+  /** The project's settings (config.json): what the summary shows, the edit in progress and how each workflow stands. */
+  config?: ConfigView
   /** The project's languages: `ui` for the pane's words and titles, `content` for descriptions and details; absent, pt-BR. */
   languages?: Languages
 }
@@ -130,6 +172,15 @@ export type WorkflowsActions = {
   add: () => void
   save: () => void
   discard: () => void
+  /** "Configurar": opens the project settings as a draft. */
+  configure: () => void
+  cfgSet: (change: ConfigChange) => () => void
+  cfgSave: () => void
+  cfgDiscard: () => void
+  /** "Acrescentar merge e deploy" / "Passar a usar o do projeto": asks for the confirmation. */
+  ask: (what: ConfigAsk['what'], id: string) => () => void
+  confirm: () => void
+  cancel: () => void
 }
 
 /** A step as the pane reads it: a flow's, or a draft's raw one. */
@@ -621,6 +672,231 @@ export const renderWorkflows = (els: WorkflowsElements, view: WorkflowsView, act
     )
   }
 
+  /* ---------- configurações do projeto ---------- */
+
+  const notice$ = (n: string | null): RenderElement[] => (n === null ? [] : [box([line(n)])])
+
+  const cfg = view.config
+  const P = t.project
+  const rule = (key: string) => (
+    <Box key={key} width="100%" height={1} overflow="hidden" minWidth={0}>
+      <Text color={RULE} wrap="truncate">{'─'.repeat(200)}</Text>
+    </Box>
+  )
+  /** A button that says its state: filled when on. */
+  const stateButton = (key: string, label: string, on: boolean, press: () => void) =>
+    buttons(
+      <Button key={key} variant={on ? 'primary' : 'secondary'} onPress={press}>
+        {label}
+      </Button>,
+    )
+  const entryTitle = (id: string): string => {
+    const entry = view.entries.find(e => e.flow.id === id)
+    return entry === undefined ? id : flowTitle(entry.flow, ui)
+  }
+
+  /** "Nos workflows": how each workflow stands, and what can be done about it. */
+  const workflowCards = (c: ConfigView): RenderElement[] =>
+    c.states.map(state => {
+      const name = entryTitle(state.id)
+      const W = P.workflows
+      const sentence =
+        state.missing.length === 2
+          ? W.none(name)
+          : state.missing[0] === 'merge'
+            ? W.noMerge(name)
+            : state.missing[0] === 'deploy'
+              ? W.noDeploy(name)
+              : state.own.length > 0
+                ? W.own(
+                    name,
+                    state.own.map(o => {
+                      const block = o.step[o.what] as unknown as Record<string, unknown>
+                      const words = W.fieldText as Record<string, (v: never) => string>
+                      return W.ownPart(
+                        W.what[o.what],
+                        o.fields.map(f => words[f]!(block[f] as never)).join(', '),
+                      )
+                    }),
+                  )
+                : W.uses(name)
+      const rest = sentence.startsWith(name) ? sentence.slice(name.length) : ` ${sentence}`
+      const asked = c.ask !== null && c.ask.id === state.id ? c.ask : null
+      const missingNames = state.missing.map(m => W.what[m])
+      const replaces = view.entries.find(e => e.flow.id === state.id)?.project === false
+      const actions$: RenderElement[] = []
+      if (asked !== null) {
+        actions$.push(
+          line(
+            (asked.what === 'add' ? W.confirmAdd(name, missingNames) : W.confirmUse(name)) + (replaces ? W.replacesDefault(state.id) : ''),
+          ),
+          buttons(
+            <Button key="cfg-confirm" variant="primary" onPress={actions.confirm}>
+              {W.confirm}
+            </Button>,
+            <Button key="cfg-cancel" onPress={actions.cancel}>
+              {W.cancel}
+            </Button>,
+          ),
+        )
+      } else {
+        if (state.missing.length > 0) {
+          actions$.push(
+            buttons(
+              <Button key={`cfg-add:${state.id}`} onPress={actions.ask('add', state.id)}>
+                {W.add(name, missingNames)}
+              </Button>,
+            ),
+          )
+        }
+        if (state.own.length > 0) {
+          actions$.push(
+            <Button key={`cfg-use:${state.id}`} plain onPress={actions.ask('use', state.id)}>
+              <Text color={LINK}>{W.use}</Text>
+            </Button>,
+          )
+        }
+      }
+      const missing = state.missing.length > 0
+      return (
+        <Box
+          key={`cfg-wf:${state.id}`}
+          flexDirection="column"
+          rowGap={1}
+          borderStyle="round"
+          borderColor={missing ? AMBER_RULE : RULE}
+          backgroundColor={missing ? AMBER_BAR : undefined}
+          paddingX={1}
+          minWidth={0}
+        >
+          <Text wrap="wrap">
+            <Text weight="semibold">{name}</Text>
+            {rest}
+          </Text>
+          {actions$}
+        </Box>
+      )
+    })
+
+  if (cfg?.draft != null) {
+    const c = cfg.draft
+    const E = P.edit
+    const changes = configChanges(c, t)
+    const merge = effectiveMerge(c.merge)
+    const deploy = effectiveDeploy(c.deploy)
+    const set = (change: ConfigChange) => actions.cfgSet(change)
+    const langOptions = Object.entries(E.langOption).map(([value, label]) => ({ value, label }))
+    const langSelect = (axis: 'ui' | 'content', label$: string, about: string) =>
+      Select === undefined
+        ? [noFields]
+        : [
+            <Select
+              key={`cfg-${axis}`}
+              label={label$}
+              options={langOptions}
+              value={c.languages[axis]}
+              onSelect={v => set({ kind: axis, value: v as Lang })()}
+            />,
+            help(about),
+          ]
+    const commands = (list: string[]) => set({ kind: 'deploy', value: { commands: list } })()
+    const block = (key: string, title$: string, children: RenderElement[]) => (
+      <Box key={key} flexDirection="column" rowGap={1} marginTop={1} minWidth={0}>
+        {rule(`${key}-rule`)}
+        {label(title$)}
+        {children}
+      </Box>
+    )
+    return (
+      <Box flexDirection="column" minWidth={0}>
+        {notice$(view.notice)}
+        <Box flexDirection="column" borderStyle="round" borderColor={AMBER_RULE} backgroundColor={AMBER_BAR} paddingX={1} minWidth={0}>
+          <Text weight="semibold">{E.title}</Text>
+          <Text size="caption" color="#6B4A12">{E.draftHelp}</Text>
+          {buttons(
+            <Button key="cfg-discard" onPress={actions.cfgDiscard}>
+              {E.discard}
+            </Button>,
+            <Button key="cfg-save" variant="primary" onPress={actions.cfgSave}>
+              {E.save}
+            </Button>,
+          )}
+          <Text size="caption" color="#6B4A12" wrap="wrap">
+            {changes.length === 0 ? E.noChanges : t.edit.changes(changes)}
+          </Text>
+        </Box>
+        {c.error === undefined ? [] : box([line(E.notSaved(c.error), ERROR)], ERROR)}
+        <Box marginTop={1} minWidth={0}>
+          {help(E.about)}
+        </Box>
+        <Box flexDirection="column" rowGap={1} marginTop={1} minWidth={0}>
+          {label(E.language)}
+          {langSelect('ui', E.uiLabel, E.uiHelp)}
+          {langSelect('content', E.contentLabel, E.contentHelp)}
+        </Box>
+        {block('cfg-merge', E.merge, [
+          stateButton('cfg-merge-auto', E.mergeAuto(yes(merge.auto)), merge.auto, set({ kind: 'merge', value: { auto: !merge.auto } })),
+          help(E.mergeAutoHelp),
+          ...(fields
+            ? [
+                text('cfg-merge-branch', E.branchLabel, merge.branch, v => set({ kind: 'merge', value: { branch: v.trim() } })()),
+                help(E.branchHelp),
+                <Select
+                  key="cfg-merge-method"
+                  label={E.methodLabel}
+                  options={Object.entries(t.methods).map(([value, label$]) => ({ value, label: label$ }))}
+                  value={merge.method}
+                  onSelect={v => set({ kind: 'merge', value: { method: v as FlowMerge['method'] } })()}
+                />,
+              ]
+            : []),
+        ])}
+        {block('cfg-deploy', E.deploy, [
+          stateButton('cfg-deploy-auto', E.deployAuto(yes(deploy.auto)), deploy.auto, set({ kind: 'deploy', value: { auto: !deploy.auto } })),
+          help(E.deployAutoHelp),
+          stateButton('cfg-deploy-ci', E.ci(yes(deploy.ci)), deploy.ci, set({ kind: 'deploy', value: { ci: !deploy.ci } })),
+          help(E.ciHelp),
+          <Text key="cfg-routines" weight="medium">{E.routines}</Text>,
+          ...(fields
+            ? deploy.commands.flatMap((command, i) => [
+                text(
+                  `cfg-routine:${i}`,
+                  E.routine(i + 1),
+                  command,
+                  v => {
+                    if (v.trim() !== '') commands(deploy.commands.map((x, j) => (j === i ? v.trim() : x)))
+                  },
+                  v => commands(v.trim() === '' ? deploy.commands.filter((_, j) => j !== i) : deploy.commands.map((x, j) => (j === i ? v.trim() : x))),
+                ),
+                buttons(
+                  <Button key={`cfg-routine-del:${i}`} onPress={() => commands(deploy.commands.filter((_, j) => j !== i))}>
+                    {E.remove}
+                  </Button>,
+                ),
+              ])
+            : deploy.commands.map((command, i) => line(`${i + 1}. ${command}`))),
+          ...(fields && view.forms.routineFor === CFG_ROUTINE
+            ? [
+                text('cfg-routine-new', E.newRoutine, undefined, () => {}, v => {
+                  if (v.trim() !== '') commands([...deploy.commands, v.trim()])
+                  actions.form('routineFor')('')
+                }),
+              ]
+            : []),
+          ...(fields
+            ? [
+                <Button key="cfg-routine-add" plain onPress={() => actions.form('routineFor')(CFG_ROUTINE)}>
+                  <Text color={LINK}>{E.addRoutine}</Text>
+                </Button>,
+              ]
+            : []),
+          help(E.routinesHelp),
+        ])}
+        {block('cfg-workflows', E.inWorkflows, workflowCards(cfg))}
+      </Box>
+    )
+  }
+
   if (view.draft !== null) {
     const d = view.draft
     const onSteps = d.steps.filter(s => s.on).map(s => s.step as unknown as StepLike)
@@ -773,6 +1049,7 @@ export const renderWorkflows = (els: WorkflowsElements, view: WorkflowsView, act
       steps.some(s => s.merge?.auto === true) ? { label: t.list.mergeAuto, tone: TAG_GRAY } : undefined,
       steps.some(s => s.deploy?.auto === true) ? { label: t.list.deployAuto, tone: TAG_GRAY } : undefined,
       project && replaces ? { label: t.list.replaces(flow.id), tone: TAG_AMBER } : undefined,
+      view.config?.states.find(x => x.id === flow.id)?.missing.includes('merge') ? { label: P.noMergeStep, tone: TAG_AMBER } : undefined,
     ].filter((x): x is { label: string; tone: { bg: string; fg: string } } => x !== undefined)
     return (
       <Box key={`wf-entry:${flow.id}`} flexDirection="column" borderStyle="round" borderColor={RULE} paddingX={1} minWidth={0}>
@@ -784,6 +1061,38 @@ export const renderWorkflows = (els: WorkflowsElements, view: WorkflowsView, act
         </Box>
         {flowDescription(flow, content) === '' ? [] : [<Text key="wf-desc" wrap="wrap" color={MUTED}>{flowDescription(flow, content)}</Text>]}
         {tags.length === 0 ? [] : [<Box key="wf-tags" flexDirection="row" flexWrap="wrap" columnGap={1} minWidth={0}>{tags.map(t => pill(t.label, t.tone))}</Box>]}
+      </Box>
+    )
+  }
+  /** "Este projeto": the settings in three lines, with "Configurar". */
+  const projectCard = (c: ConfigView) => {
+    const merge = effectiveMerge(c.project.merge ?? {})
+    const deploy = effectiveDeploy(c.project.deploy ?? {})
+    const name = (l: Lang) => P.langName[l] ?? l
+    const line$ = (key: string, value: string, who?: string) => (
+      <Box key={key} flexDirection={view.narrow ? 'column' : 'row'} columnGap={1} minWidth={0}>
+        <Box width={view.narrow ? undefined : 10} flexShrink={0}>
+          <Text color={MUTED} size="footnote">{P.rows[key as 'language' | 'merge' | 'deploy']}</Text>
+        </Box>
+        <Box flexDirection="row" flexWrap="wrap" columnGap={1} flexShrink={1} minWidth={0}>
+          <Text wrap="wrap" size="footnote">{value}</Text>
+          {who === undefined ? [] : pill(who, TAG_GRAY)}
+        </Box>
+      </Box>
+    )
+    return (
+      <Box key="cfg-card" flexDirection="column" rowGap={1} borderStyle="round" borderColor={RULE} paddingX={1} marginTop={1} minWidth={0}>
+        <Box flexDirection="row" justifyContent="space-between" alignItems="center" columnGap={1} minWidth={0}>
+          <Text weight="semibold">{P.title}</Text>
+          <Button key="cfg-open" onPress={actions.configure}>
+            {P.configure}
+          </Button>
+        </Box>
+        {line$('language', P.languageSummary(name(languages.ui), name(languages.content)))}
+        {line$('merge', P.mergeSummary(merge.branch, merge.method), merge.auto ? P.mergeWho.auto : P.mergeWho.owner)}
+        {line$('deploy', P.deploySummary(deploy.ci, deploy.commands), deploy.auto ? P.deployWho.auto : P.deployWho.owner)}
+        <Text size="caption" color={MUTED} wrap="wrap">{P.applies}</Text>
+        {c.problems.length === 0 ? [] : box(c.problems.map(p => line(p, ERROR)), ERROR)}
       </Box>
     )
   }
@@ -802,6 +1111,7 @@ export const renderWorkflows = (els: WorkflowsElements, view: WorkflowsView, act
       <Text size="title" weight="semibold">{t.list.title}</Text>
       {divider}
       {help(t.list.intro)}
+      {view.config === undefined ? [] : [projectCard(view.config)]}
       {mine.length === 0 ? [] : [section(t.list.mine, mine.map(card))]}
       {section(t.list.standard, [
         ...standard.map(card),
@@ -885,16 +1195,6 @@ const defaultsById = (): Record<string, FlowDef> => Object.fromEntries(defaultFl
 const originOf = (t: WorkflowsText, flow: FlowDef, project: boolean): string =>
   flow.base !== undefined ? t.origin.derived(flow.base) : project ? t.origin.project : t.origin.standard
 
-/** The project's languages from `<repo>/.orquestrador/config.json`, read fresh; no file or a bad one, pt-BR. */
-async function loadLanguages($: EngineInterface): Promise<Languages> {
-  try {
-    const path = `${await $.session.root()}/${CONFIG_PATH}`
-    return parseConfig((await $.fs.exists(path)) ? await $.fs.read(path) : undefined).languages
-  } catch {
-    return DEFAULT_LANGUAGES
-  }
-}
-
 /** The ⚙️ pane drawn: its view read from the disk and the state, its presses bound to `$`. */
 export async function drawWorkflows(
   $: EngineInterface,
@@ -902,15 +1202,18 @@ export async function drawWorkflows(
   columns: number,
 ): Promise<RenderElement> {
   const loaded = await loadFlows($)
-  const languages = await loadLanguages($)
+  const languages = loaded.config.languages
+  const project = loaded.config.project
   const t = workflowsText(languages.ui)
-  const [selected, focus, insert, draft, forms, notice] = await Promise.all([
+  const [selected, focus, insert, draft, forms, notice, cfgDraft, cfgAsk] = await Promise.all([
     $.state.get(SELECTED),
     $.state.get(FOCUS),
     $.state.get(INSERT),
     $.state.get(DRAFT),
     $.state.get(FORMS),
     $.state.get(NOTICE),
+    $.state.get(CFG),
+    $.state.get(ASK),
   ])
   const defaults = defaultsById()
   const entries = Object.values(loaded.flows).map(flow => ({
@@ -945,6 +1248,13 @@ export async function drawWorkflows(
     agentList: await listAgents($),
     narrow: columns < NARROW_COLUMNS,
     languages,
+    config: {
+      project,
+      problems: loaded.config.problems,
+      draft: cfgDraft.value ?? null,
+      ask: cfgAsk.value ?? null,
+      states: entries.map(e => workflowState(e.flow, project)),
+    },
   }
 
   const fail = (what: keyof WorkflowsText['failed']) => () => $.ui.toast(t.couldNot(t.failed[what]))
@@ -956,6 +1266,63 @@ export async function drawWorkflows(
     }).catch(fail('draft'))
   }
   const forms$ = view.forms
+  /** A draft to edit workflow `id` as the editor opens it; a text when it cannot (its base is gone). */
+  const openDraft = (id: string): WorkflowDraft | string | undefined => {
+    const flow = loaded.flows[id]
+    if (flow === undefined) return undefined
+    const mine = loaded.projectIds.has(id)
+    const base = !mine ? flow : flow.base === undefined ? undefined : flow.base === id ? defaults[id] : loaded.flows[flow.base]
+    if (mine && flow.base !== undefined && base === undefined) return t.toast.noBase(flow.base)
+    const source = mine ? loaded.files.find(f => idOf(f.raw) === id)?.source : undefined
+    return { ...draftOf(flow, base, defaults[id] !== undefined), ...(source === undefined ? {} : { source }) }
+  }
+  const W = t.project.workflows
+  const say = (text$: string) => $.state.set(NOTICE, text$)
+  /** "Acrescentar merge e deploy" / "Passar a usar o do projeto", written through the editor's own save. */
+  const runAsk = async (ask: ConfigAsk): Promise<void> => {
+    const flow = loaded.flows[ask.id]
+    const name = flow === undefined ? ask.id : flowTitle(flow, languages.ui)
+    const stop = async (why: string) => {
+      await Promise.all([say(W.failed(name, why)), $.state.set(ASK, null)])
+      $.ui.toast(W.failed(name, why))
+    }
+    const opened = openDraft(ask.id)
+    if (opened === undefined || typeof opened === 'string') {
+      await stop(opened ?? W.nothing)
+      return
+    }
+    let d: WorkflowDraft = opened
+    if (ask.what === 'use') {
+      for (const s of d.steps) if (s.on && (s.step.merge !== undefined || s.step.deploy !== undefined)) d = useProjectValues(d, String(s.step.id), project)
+    } else {
+      const has = (field: 'merge' | 'deploy') => d.steps.find(s => s.on && s.step[field] !== undefined)?.step.id
+      const ids = (x: WorkflowDraft) => new Set(x.steps.map(s => String(s.step.id)))
+      const on = (id: string) => d.steps.some(s => s.on && s.step.id === id)
+      const before = d.steps.filter(s => s.on)
+      const idx = before.findIndex(s => s.step.id === 'producao')
+      const anchor: string | null =
+        ['revisao-pr', 'pr'].find(on) ?? (idx > 0 ? String(before[idx - 1]!.step.id) : null)
+      let mergeId = has('merge') as string | undefined
+      for (const field of ['merge', 'deploy'] as const) {
+        if (has(field) !== undefined) continue
+        const known = ids(d)
+        const added = addLibraryStep(d, field, field === 'deploy' ? (mergeId ?? anchor) : anchor, project)
+        if (!('steps' in added)) {
+          await stop(added.error)
+          return
+        }
+        d = added
+        const fresh = added.steps.find(s => !known.has(String(s.step.id)))
+        if (field === 'merge' && fresh !== undefined) mergeId = String(fresh.step.id)
+      }
+    }
+    const written = await writeDraft($, t, d)
+    if ('error' in written) {
+      await stop(written.error)
+      return
+    }
+    await Promise.all([say(W.done(name, written.relative)), $.state.set(ASK, null)])
+  }
 
   return renderWorkflows(els, view, {
     open: id => () => {
@@ -968,16 +1335,12 @@ export async function drawWorkflows(
       void update($, FOCUS, f => (f === step ? null : step)).catch(fail('step'))
     },
     edit: id => () => {
-      const flow = loaded.flows[id]
-      if (flow === undefined) return
-      const project = loaded.projectIds.has(id)
-      const base = !project ? flow : flow.base === undefined ? undefined : flow.base === id ? defaults[id] : loaded.flows[flow.base]
-      if (project && flow.base !== undefined && base === undefined) {
-        $.ui.toast(t.toast.noBase(flow.base))
+      const d = openDraft(id)
+      if (d === undefined) return
+      if (typeof d === 'string') {
+        $.ui.toast(d)
         return
       }
-      const source = project ? loaded.files.find(f => idOf(f.raw) === id)?.source : undefined
-      const d = { ...draftOf(flow, base, defaults[id] !== undefined), ...(source === undefined ? {} : { source }) }
       void Promise.all([$.state.set(DRAFT, d), $.state.set(FOCUS, null), $.state.set(INSERT, null), $.state.set(NOTICE, null)]).catch(fail('edit'))
     },
     form: field => value => {
@@ -1014,7 +1377,7 @@ export async function drawWorkflows(
     head: field => value => editDraft(d => ({ ...d, [field]: value })),
     toggle: step => () => editDraft(d => toggleStep(d, step)),
     move: (step, by) => () => editDraft(d => moveStep(d, step, by)),
-    set: (step, change) => () => editDraft(d => setStepField(d, step, change)),
+    set: (step, change) => () => editDraft(d => setStepField(d, step, change, project)),
     insert: after => () => {
       void update($, INSERT, i => (i === after ? null : after)).catch(fail('insert'))
     },
@@ -1023,7 +1386,7 @@ export async function drawWorkflows(
       const at = view.insert
       if (d === null || at === null) return
       const after = at === INSERT_END ? null : at
-      const added = forms$.libraryUse === '' ? addNewStep(d, forms$, after, t) : addLibraryStep(d, forms$.libraryUse, after)
+      const added = forms$.libraryUse === '' ? addNewStep(d, forms$, after, t) : addLibraryStep(d, forms$.libraryUse, after, project)
       if (!('steps' in added)) {
         void $.state.set(DRAFT, { ...d, error: added.error }).catch(fail('add'))
         return
@@ -1040,6 +1403,29 @@ export async function drawWorkflows(
     save: () => {
       void saveDraft($, t).catch(fail('save'))
     },
+    configure: () => {
+      void Promise.all([$.state.set(CFG, draftOfConfig(languages, project)), $.state.set(NOTICE, null), $.state.set(ASK, null)]).catch(fail('open'))
+    },
+    cfgSet: change => () => {
+      void update($, CFG, c => (c == null ? null : applyConfigChange(c, change))).catch(fail('draft'))
+    },
+    cfgSave: () => {
+      void saveConfig($, t).catch(fail('save'))
+    },
+    cfgDiscard: () => {
+      void Promise.all([$.state.set(CFG, null), $.state.set(ASK, null), $.state.set(NOTICE, null)]).catch(fail('discard'))
+    },
+    ask: (what, id) => () => {
+      void $.state.set(ASK, { what, id }).catch(fail('open'))
+    },
+    confirm: () => {
+      const ask = view.config?.ask
+      if (ask == null) return
+      void runAsk(ask).catch(fail('save'))
+    },
+    cancel: () => {
+      void $.state.set(ASK, null).catch(fail('discard'))
+    },
     discard: () => {
       void Promise.all([$.state.set(DRAFT, null), $.state.set(FOCUS, null), $.state.set(INSERT, null)]).catch(fail('discard'))
     },
@@ -1047,48 +1433,70 @@ export async function drawWorkflows(
 }
 
 /**
- * "Salvar": the draft resolved as the mod would load it; with an error nothing is written and the
- * error stays on the draft. Only this press writes a workflow file.
+ * The draft resolved as the mod would load it and, when it does, written. With an error nothing is
+ * written. Only "Salvar" and the project settings' two workflow actions write a workflow file, here.
  */
-async function saveDraft($: EngineInterface, t: WorkflowsText): Promise<void> {
-  const { value: draft } = await $.state.get(DRAFT)
-  if (draft == null) return
-  const { files, dir } = await loadFlows($)
-  const refuse = (error: string) => $.state.set(DRAFT, { ...draft, error })
+async function writeDraft($: EngineInterface, t: WorkflowsText, draft: WorkflowDraft): Promise<{ error: string } | { relative: string; target: string; notice?: string }> {
+  const { files, dir, config } = await loadFlows($)
   const relative = (path: string) => `.orquestrador/flows/${path.slice(dir.length + 1)}`
   // only the file the draft was opened from may be written over; any other of the same id or name stays
   const target = draft.source ?? `${dir}/${draft.id}.json`
   if (draft.source === undefined) {
     const taken = await takenBy($, files, dir, draft.id)
-    if (taken !== undefined) {
-      await refuse(t.saved.taken(taken, draft.id))
-      return
-    }
+    if (taken !== undefined) return { error: t.saved.taken(taken, draft.id) }
   }
-  const result = draftFile(draft, raw => resolveCandidate(DEFAULT_FLOWS, files, target, raw, t), t)
-  if ('error' in result) {
-    await refuse(result.error)
-    return
-  }
-  const broken = brokenDependents(DEFAULT_FLOWS, files, target, result.raw)
+  const result = draftFile(draft, raw => resolveCandidate(DEFAULT_FLOWS, files, target, raw, t, config.project), t, config.project)
+  if ('error' in result) return { error: result.error }
+  const broken = brokenDependents(DEFAULT_FLOWS, files, target, result.raw, config.project)
   if (broken.length > 0) {
     const named = broken.map(p => p.split(`${dir}/`).join('.orquestrador/flows/'))
-    await refuse(t.saved.broken(draft.id, named.join(' ')))
-    return
+    return { error: t.saved.broken(draft.id, named.join(' ')) }
   }
   await $.fs.write(target, `${JSON.stringify(result.raw, null, 2)}\n`)
+  return { relative: relative(target), target, ...(result.notice === undefined ? {} : { notice: result.notice }) }
+}
+
+/** "Salvar": the draft written by `writeDraft`; with an error it stays on the draft. */
+async function saveDraft($: EngineInterface, t: WorkflowsText): Promise<void> {
+  const { value: draft } = await $.state.get(DRAFT)
+  if (draft == null) return
+  const written = await writeDraft($, t, draft)
+  if ('error' in written) {
+    await $.state.set(DRAFT, { ...draft, error: written.error })
+    return
+  }
   await $.state.set(DRAFT, null)
   await $.state.set(SELECTED, draft.id)
   await $.state.set(FOCUS, null)
   await $.state.set(INSERT, null)
   await $.state.set(
     NOTICE,
-    (draft.replacesDefault
-      ? t.saved.replacing(relative(target), draft.id)
-      : t.saved.at(relative(target))) +
+    (draft.replacesDefault ? t.saved.replacing(written.relative, draft.id) : t.saved.at(written.relative)) +
       t.saved.runningKeep +
-      (result.notice === undefined ? '' : ` ${result.notice}`),
+      (written.notice === undefined ? '' : ` ${written.notice}`),
   )
+}
+
+/**
+ * "Salvar" of the project settings: the file read again, only the keys the draft changed set, every
+ * other key kept; a file that would not parse cleanly is not written.
+ */
+async function saveConfig($: EngineInterface, t: WorkflowsText): Promise<void> {
+  const { value: draft } = await $.state.get(CFG)
+  if (draft == null) return
+  const refuse = (error: string) => $.state.set(CFG, { ...draft, error })
+  if (!configChanged(draft)) {
+    await Promise.all([$.state.set(CFG, null), $.state.set(NOTICE, t.project.edit.nothingToSave)])
+    return
+  }
+  const config = await loadConfig($)
+  const next = configText(config.text, draft, t)
+  if ('error' in next) {
+    await refuse(next.error)
+    return
+  }
+  await $.fs.write(`${await $.session.root()}/${CONFIG_PATH}`, next.text)
+  await Promise.all([$.state.set(CFG, null), $.state.set(ASK, null), $.state.set(NOTICE, t.project.edit.saved)])
 }
 
 const idOf = (raw: unknown): unknown => (raw as { id?: unknown } | null)?.id

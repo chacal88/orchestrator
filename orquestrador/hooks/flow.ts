@@ -18,6 +18,7 @@ import type {
   Lang,
   Languages,
   Localized,
+  ProjectSettings,
   Translations,
 } from '../types'
 import { libraryStep, NEXT_STEP, overlay } from './flows/library'
@@ -26,6 +27,7 @@ import { DEFAULT_LANGUAGES, baseText, localize, parseLocalized, uiText } from '.
 import type { UiText } from './i18n'
 import { MOCKUP_STEP } from './grill'
 import { parseJiraTarget } from './jira'
+import { DEPLOY_KEYS, MERGE_KEYS, isBranchName } from './project-config'
 
 /** The pseudo-step every flow ends on. */
 export const FLOW_END = 'fim'
@@ -60,7 +62,7 @@ const byLang = (v: Localized | undefined): Translations | undefined => (v === un
 const perLang = (v: Localized): Translations => byLang(v) ?? {}
 
 /** A flow file, checked whole: every next step exists, every kind is known, every automatic step names its command. */
-export const parseFlow = (raw: unknown, source: string): FlowDef | { error: string } => {
+export const parseFlow = (raw: unknown, source: string, project: ProjectSettings = {}): FlowDef | { error: string } => {
   const fail = (why: string) => ({ error: `${source}: ${why}` })
   if (!isRecord(raw)) return fail('a flow is a JSON object.')
   const id = text(raw.id)
@@ -113,7 +115,7 @@ export const parseFlow = (raw: unknown, source: string): FlowDef | { error: stri
     if (typeof detect === 'string') return fail(`step "${stepId}": ${detect}`)
     const jira = parseJiraTarget(s.jira)
     if (typeof jira === 'string') return fail(`step "${stepId}": ${jira}`)
-    const extras = parseExtras(s, kind)
+    const extras = parseExtras(s, kind, project)
     if (typeof extras === 'string') return fail(`step "${stepId}": ${extras}`)
     steps.push({
       id: stepId,
@@ -205,7 +207,7 @@ type StepExtras = Pick<FlowStep, 'details' | 'detailsByLang' | 'agent' | 'model'
  * `merge` or `deploy` it carries out. An agent runs a session, a loop's phases, or a merge or deploy
  * the coordinator carries out; a merge or deploy is the owner's, or automatic with `auto`.
  */
-const parseExtras = (s: Record<string, unknown>, kind: FlowStepKind): StepExtras | string => {
+const parseExtras = (s: Record<string, unknown>, kind: FlowStepKind, project: ProjectSettings): StepExtras | string => {
   const out: StepExtras = {}
   if (s.details !== undefined) {
     if (!isRecord(s.details)) return '`details` is an object with inputs, produces and blocks.'
@@ -235,12 +237,12 @@ const parseExtras = (s: Record<string, unknown>, kind: FlowStepKind): StepExtras
     out.effort = s.effort as FlowEffort
   }
   if (s.merge !== undefined) {
-    const merge = parseMerge(s.merge)
+    const merge = parseMerge(s.merge, project.merge, kind)
     if (typeof merge === 'string') return merge
     out.merge = merge
   }
   if (s.deploy !== undefined) {
-    const deploy = parseDeploy(s.deploy)
+    const deploy = parseDeploy(s.deploy, project.deploy, kind)
     if (typeof deploy === 'string') return deploy
     out.deploy = deploy
   }
@@ -259,30 +261,66 @@ const parseExtras = (s: Record<string, unknown>, kind: FlowStepKind): StepExtras
 const flag = (v: unknown, name: string, fallback: boolean): boolean | string =>
   v === undefined ? fallback : typeof v === 'boolean' ? v : `\`${name}\` must be true or false.`
 
-/** `merge`: the target branch, the method (squash unless said) and whether the coordinator merges by itself. */
-const parseMerge = (raw: unknown): FlowMerge | string => {
+/** The fields a raw block lists as not written by the step (the project's value baked in), kept while they still match. */
+const bakedKeys = (raw: Record<string, unknown>, keys: readonly string[], project: Record<string, unknown> | undefined): string[] =>
+  Array.isArray(raw.fromProject)
+    ? keys.filter(k => (raw.fromProject as unknown[]).includes(k) && raw[k] !== undefined && JSON.stringify(raw[k]) === JSON.stringify(project?.[k]))
+    : []
+
+/** `merge`: the target branch, the method (squash unless said) and whether the coordinator merges by itself; what the step leaves out comes from the project. */
+const parseMerge = (raw: unknown, project: ProjectSettings['merge'], kind: FlowStepKind): FlowMerge | string => {
   if (!isRecord(raw)) return '`merge` is an object with branch, method and auto.'
-  const branch = text(raw.branch)
+  const baked = bakedKeys(raw, MERGE_KEYS, project as Record<string, unknown> | undefined)
+  const fromProject: string[] = []
+  let branch = text(raw.branch)
+  if (raw.branch === undefined && project?.branch !== undefined) {
+    branch = project.branch
+    fromProject.push('branch')
+  } else if (baked.includes('branch')) fromProject.push('branch')
   if (branch === undefined) return '`merge.branch` names the branch the PR merges into.'
-  const method = raw.method === undefined ? 'squash' : raw.method
+  if (!isBranchName(branch)) return `\`merge.branch\` "${branch}" is not a branch name (letters, digits, . _ / -).`
+  let method: unknown = raw.method
+  if (method === undefined) {
+    method = project?.method ?? 'squash'
+    if (project?.method !== undefined) fromProject.push('method')
+  } else if (baked.includes('method')) fromProject.push('method')
   if (typeof method !== 'string' || !MERGE_METHODS.includes(method)) return `\`merge.method\` must be one of ${MERGE_METHODS.join(', ')}.`
-  const auto = flag(raw.auto, 'merge.auto', false)
+  let auto = flag(raw.auto, 'merge.auto', false)
   if (typeof auto === 'string') return auto
-  return { branch, method: method as FlowMerge['method'], auto }
+  if (raw.auto === undefined && project?.auto !== undefined && project.auto === (kind === 'automatic')) {
+    auto = project.auto
+    fromProject.push('auto')
+  } else if (baked.includes('auto')) fromProject.push('auto')
+  return { branch, method: method as FlowMerge['method'], auto, ...(fromProject.length === 0 ? {} : { fromProject }) }
 }
 
-/** `deploy`: the CI's deploy waited on, routines run after the merge, or both; and whether it runs by itself. */
-const parseDeploy = (raw: unknown): FlowDeploy | string => {
+/** `deploy`: the CI's deploy waited on, routines run after the merge, or both; and whether it runs by itself. What the step leaves out comes from the project. */
+const parseDeploy = (raw: unknown, project: ProjectSettings['deploy'], kind: FlowStepKind): FlowDeploy | string => {
   if (!isRecord(raw)) return '`deploy` is an object with ci, commands and auto.'
-  const ci = flag(raw.ci, 'deploy.ci', false)
+  const baked = bakedKeys(raw, DEPLOY_KEYS, project as Record<string, unknown> | undefined)
+  const fromProject: string[] = []
+  let ci = flag(raw.ci, 'deploy.ci', false)
   if (typeof ci === 'string') return ci
-  const auto = flag(raw.auto, 'deploy.auto', false)
+  if (raw.ci === undefined && project?.ci !== undefined) {
+    ci = project.ci
+    fromProject.push('ci')
+  } else if (baked.includes('ci')) fromProject.push('ci')
+  let auto = flag(raw.auto, 'deploy.auto', false)
   if (typeof auto === 'string') return auto
-  const list = raw.commands === undefined ? [] : typeof raw.commands === 'string' ? [raw.commands] : raw.commands
+  if (raw.auto === undefined && project?.auto !== undefined && project.auto === (kind === 'automatic')) {
+    auto = project.auto
+    fromProject.push('auto')
+  } else if (baked.includes('auto')) fromProject.push('auto')
+  let list: unknown = raw.commands === undefined ? [] : typeof raw.commands === 'string' ? [raw.commands] : raw.commands
+  if (raw.commands === undefined && project?.commands !== undefined) {
+    list = project.commands
+    fromProject.push('commands')
+  } else if (baked.includes('commands')) fromProject.push('commands')
   if (!Array.isArray(list) || list.some(c => text(c) === undefined)) return '`deploy.commands` is a list of commands.'
   const commands = list.map(c => text(c) as string)
   if (!ci && commands.length === 0) return '`deploy` needs `ci: true`, `commands`, or both.'
-  return { ci, commands, auto }
+  const order = DEPLOY_KEYS.filter(k => fromProject.includes(k))
+  return { ci, commands, auto, ...(order.length === 0 ? {} : { fromProject: order }) }
 }
 
 /** The flows on offer: the mod's defaults, each replaced by a project's flow of the same id. */
@@ -339,8 +377,9 @@ export const resolveFlow = (
   source: string,
   find: (id: string, from: string) => FlowSource | undefined,
   chain: readonly { id: string; source: string }[] = [],
+  project: ProjectSettings = {},
 ): FlowDef | { error: string } => {
-  if (!isRecord(raw) || raw.base === undefined) return parseFlow(raw, source)
+  if (!isRecord(raw) || raw.base === undefined) return parseFlow(raw, source, project)
   const fail = (why: string) => ({ error: `${source}: ${why}` })
   const id = text(raw.id)
   if (id === undefined) return fail('`id` is required.')
@@ -353,7 +392,7 @@ export const resolveFlow = (
   if (path.some(p => p.source === found.source)) {
     return fail(`\`base\` goes round in a circle: ${[...path.map(p => p.id), baseId].join(' → ')}.`)
   }
-  const base = resolveFlow(found.raw, found.source, find, path)
+  const base = resolveFlow(found.raw, found.source, find, path, project)
   if ('error' in base) return fail(`base "${baseId}" does not resolve: ${base.error}`)
   // each text goes back to how a file writes it, one per language, so a derived flow keeps the translations
   let steps = (JSON.parse(JSON.stringify(base.steps)) as FlowStep[]).map(asWritten) as unknown as RawStep[]
@@ -396,7 +435,7 @@ export const resolveFlow = (
     const after = text(a.after)
     const anchor = after === undefined ? undefined : steps[at(after)]
     if (anchor === undefined) return fail(`${where}: \`after\` "${after ?? ''}" is no step of the flow.`)
-    const step = libraryStep(a.step)
+    const step = libraryStep(a.step, project)
     if (typeof step === 'string') return fail(`${where}: ${step}`)
     const sid = text(step.id)
     if (sid === undefined) return fail(`${where}: the step needs an \`id\`.`)
@@ -441,6 +480,7 @@ export const resolveFlow = (
       steps,
     },
     source,
+    project,
   )
   return 'error' in parsed ? parsed : { ...parsed, base: baseId }
 }
@@ -452,6 +492,7 @@ export const resolveFlow = (
 export const resolveProjectFlows = (
   defaults: readonly FlowSource[],
   project: readonly FlowSource[],
+  settings: ProjectSettings = {},
 ): { flows: FlowDef[]; problems: string[] } => {
   const byId = (files: readonly FlowSource[]) =>
     Object.fromEntries(files.flatMap(f => (isRecord(f.raw) && text(f.raw.id) !== undefined ? [[text(f.raw.id) as string, f]] : [])))
@@ -461,7 +502,7 @@ export const resolveProjectFlows = (
   const flows: FlowDef[] = []
   const problems: string[] = []
   for (const file of project) {
-    const resolved = resolveFlow(file.raw, file.source, find)
+    const resolved = resolveFlow(file.raw, file.source, find, [], settings)
     if ('error' in resolved) problems.push(resolved.error)
     else flows.push(resolved)
   }
@@ -971,7 +1012,16 @@ export const describeFlow = (state: FlowState): string => {
   return describeStep(state, step, where, outcomes) + reopened
 }
 
-const describeStep = (state: FlowState, step: FlowStep, where: string, outcomes: string): string => {
+/** Which of a merge or deploy step's values come from the project's settings rather than the workflow. */
+const projectNote = (step: FlowStep): string => {
+  const fields = (step.merge ?? step.deploy)?.fromProject ?? []
+  return fields.length === 0 ? '' : ` From the project's settings (not the workflow): ${fields.join(', ')}.`
+}
+
+const describeStep = (state: FlowState, step: FlowStep, where: string, outcomes: string): string =>
+  describeStepBody(state, step, where, outcomes) + projectNote(step)
+
+const describeStepBody = (state: FlowState, step: FlowStep, where: string, outcomes: string): string => {
   if (step.deploy !== undefined) return describeDeploy(state, step, where)
   if (step.merge?.auto === true) {
     return (
@@ -1071,12 +1121,15 @@ const ANSWERER_LABEL: Record<FlowStepKind, string> = {
   owner: 'dono',
 }
 
+const fromProjectText = (fields: string[] | undefined): string =>
+  fields === undefined || fields.length === 0 ? '' : ` — do projeto: ${fields.join(', ')}`
+
 /** One step of the sequence with who answers it and whether merge/deploy run on their own. */
 const stepSummary = (s: FlowStep): string => {
   const mode = (auto: boolean) => (auto ? 'automático' : 'manual')
   const extra = [
-    s.merge === undefined ? undefined : `merge ${mode(s.merge.auto)}`,
-    s.deploy === undefined ? undefined : `deploy ${mode(s.deploy.auto)}`,
+    s.merge === undefined ? undefined : `merge ${mode(s.merge.auto)}${fromProjectText(s.merge.fromProject)}`,
+    s.deploy === undefined ? undefined : `deploy ${mode(s.deploy.auto)}${fromProjectText(s.deploy.fromProject)}`,
     s.agent === undefined ? undefined : `agente ${s.agent}`,
   ].filter((x): x is string => x !== undefined)
   return `${s.id} (${[ANSWERER_LABEL[s.kind], ...extra].join(', ')})`
