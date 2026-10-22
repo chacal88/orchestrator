@@ -138,7 +138,7 @@ export type ConfigView = {
   ask: ConfigAsk | null
   states: WorkflowState[]
   /** This clone's activation, read from its settings.local.json: the level (none: inactive), a broken file, the confirmation open. */
-  activation: { level: ActivationLevel | undefined; invalid: boolean; ask: ActivationAsk | null }
+  activation: { level: ActivationLevel | undefined; invalid: boolean; tampered: boolean; ask: ActivationAsk | null }
 }
 
 export type WorkflowsView = {
@@ -1085,7 +1085,7 @@ export const renderWorkflows = (els: WorkflowsElements, view: WorkflowsView, act
     const merge = effectiveMerge(c.project.merge ?? {})
     const deploy = effectiveDeploy(c.project.deploy ?? {})
     const A = P.activation
-    const { level, invalid, ask } = c.activation
+    const { level, invalid, tampered, ask } = c.activation
     const name = (l: Lang) => P.langName[l] ?? l
     const line$ = (key: string, value: string, who?: string) => (
       <Box key={key} flexDirection={view.narrow ? 'column' : 'row'} columnGap={1} minWidth={0}>
@@ -1114,6 +1114,7 @@ export const renderWorkflows = (els: WorkflowsElements, view: WorkflowsView, act
               ))
             : <Select key="act-level" label={A.howMuch} options={levelOptions} value={a.level} onSelect={v => actions.actLevel(v as ActivationLevel)} />}
           <Text size="caption" color={MUTED} wrap="wrap">{A.levelHelp}</Text>
+          <Text size="caption" color={MUTED} wrap="wrap">{A.brake}</Text>
         </Box>
         <Box flexDirection="column" backgroundColor="#F7F6F2" paddingX={1} minWidth={0}>
           <Text size="footnote" weight="semibold">{A.written}</Text>
@@ -1136,6 +1137,7 @@ export const renderWorkflows = (els: WorkflowsElements, view: WorkflowsView, act
             {level === undefined ? pill(A.off, TAG_GRAY) : pill(A.on(A.level[level] ?? level), TAG_BLUE)}
           </Box>
           {level === undefined ? <Text key="act-quiet" size="footnote" color={MUTED} wrap="wrap">{A.quiet}</Text> : []}
+          {tampered ? <Text key="act-tampered" size="footnote" color={ERROR} wrap="wrap">{A.tampered}</Text> : []}
           {invalid ? <Text key="act-invalid" size="footnote" color={ERROR} wrap="wrap">{A.invalid}</Text> : []}
           {line$('language', P.languageSummary(name(languages.ui), name(languages.content)))}
           {line$('merge', P.mergeSummary(merge.branch, merge.method), merge.auto ? P.mergeWho.auto : P.mergeWho.owner)}
@@ -1152,11 +1154,13 @@ export const renderWorkflows = (els: WorkflowsElements, view: WorkflowsView, act
             ...(level === undefined
               ? []
               : [
+                  ...(tampered ? [<Button key="act-confirm-level" variant="primary" onPress={actions.actSwitch(level)}>{A.confirmLevel(A.level[level] ?? level)}</Button>] : []),
                   <Button key="act-switch" onPress={actions.actSwitch(other)}>{A.switchTo(A.level[other] ?? other)}</Button>,
                   <Button key="act-off" plain onPress={actions.actOff}>{A.deactivate}</Button>,
                 ]),
           )}
           {level === undefined ? [] : <Text key="act-off-help" size="caption" color={MUTED} wrap="wrap">{A.deactivateHelp}</Text>}
+          {level === undefined ? [] : <Text key="act-brake" size="caption" color={MUTED} wrap="wrap">{A.brake}</Text>}
         </Box>
         {ask === null || level !== undefined ? [] : confirm(ask)}
       </Box>
@@ -1322,7 +1326,7 @@ export async function drawWorkflows(
       draft: cfgDraft.value ?? null,
       ask: cfgAsk.value ?? null,
       states: entries.map(e => workflowState(e.flow, project)),
-      activation: { level: activation.level, invalid: activation.invalid, ask: actAsk.value ?? null },
+      activation: { level: activation.level, invalid: activation.invalid, tampered: activation.tampered, ask: actAsk.value ?? null },
     },
   }
 

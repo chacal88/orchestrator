@@ -806,7 +806,7 @@ const FLOW_FAILED = { result: 'Flow: the orchestrator failed to read or store th
 const READ_ONLY_COMMANDS = new Set(['ls', 'cat', 'head', 'tail', 'grep', 'rg', 'find', 'wc', 'stat', 'jq', 'diff', 'file', 'du'])
 
 /** The folder named with or without its trailing slash: `rm -rf ~/.claude/orquestrador` must not slip through. */
-const MENTIONS_PROTECTED_DIR = /\.claude\/orquestrador(?=$|[\/\s"'])/
+const MENTIONS_PROTECTED_DIR = /\.claude\/orquestrador(?=$|[\/\s"'])/i
 
 const isReadOnlyCommand = (command: string): boolean => {
   const quiet = command.replace(/\d?>&\d|\d?>\s*\/dev\/null/g, '')
@@ -837,10 +837,12 @@ const touchesGateFiles = (tool: string, input: Record<string, unknown>): boolean
 
 /**
  * The activation file is the owner's, written by the panel alone: a mark or a hook the model planted there
- * (Edit, Write or a shell) would switch the guards off or run its own command. Protected in every mode, even with no mark.
+ * (Edit, Write or a shell) would switch the guards off or run its own command. A first line of defense by the text
+ * of the call, easy to get around; what actually holds is that the level counts only as the panel recorded it
+ * (`readActivation`). It applies only where the mod is active: an inactive clone's file is free, as before.
  */
-const SETTINGS_FILE = /(^|\/)\.claude\/settings\.local\.json$/
-const MENTIONS_SETTINGS = /settings\.local\.json/
+const SETTINGS_FILE = /(^|\/)\.claude\/settings\.local\.json$/i // APFS ignores case
+const MENTIONS_SETTINGS = /settings\.local\.json/i
 const touchesSettings = (tool: string, input: Record<string, unknown>): boolean => {
   if (EDIT_TOOLS.has(tool)) {
     const path = input.file_path ?? input.notebook_path
@@ -1052,7 +1054,6 @@ const isGuarded = (tool: string, input: Record<string, unknown>): boolean =>
   tool === START_SESSION ||
   tool === ARCHIVE_SESSION ||
   tool.endsWith(TRANSITION_SUFFIX) ||
-  touchesSettings(tool, input) ||
   (tool === 'Bash' && typeof input.command === 'string' && GH_MERGE.test(input.command))
 
 const FLOW_SCHEMA = {
@@ -1156,31 +1157,42 @@ const noteReminded = async ($: EngineInterface, note: string): Promise<void> => 
 const ownsFlow = (state: FlowState, root: string): boolean =>
   root === state.coordinatorCwd || root.startsWith(`${state.coordinatorCwd}/`)
 
-/**
- * What the mod does in this checkout. The owner's mark in the clone's `.claude/settings.local.json` says
- * "barrar" or "lembrar"; with no mark, a flow still running here keeps everything working (as "barrar")
- * so nothing stops halfway; with neither, the mod stays quiet.
- */
 /** Longer than the refresh tick (`REFRESH_MS`), which keeps the answer warm; a flow started or moved here drops it at once. */
 const RUNNING_TTL_MS = 20_000
-/** `remember: false` for a render, which may read state but never write it: it uses the answer kept, or scans without keeping. */
+
+/**
+ * What the mod does in this checkout. The owner's mark in the clone's `.claude/settings.local.json` says
+ * "barrar" or "lembrar", and counts as far as the panel's own record backs it (see `readActivation`); with no
+ * mark, a flow still running here keeps everything working (as "barrar") so nothing stops halfway; only a
+ * confirmed absence of both leaves the mod quiet. It fails closed: a mark or flow that cannot be read, or a flow
+ * already known to run, is "barrar". The flow answer is kept a few seconds (`RUNNING_TTL_MS`; saveFlow drops it)
+ * so a render or a tool call does not scan every flow on disk. `remember: false` for a render, which may read
+ * state but never write it: it uses the answer kept, or scans without keeping.
+ */
 const activeMode = async ($: EngineInterface, remember = true): Promise<ActivationLevel | undefined> => {
-  const { level } = await readActivation($).catch(() => ({ level: undefined }))
-  if (level !== undefined) return level
-  // with no mark only a running flow counts: the answer is kept for a few seconds (saveFlow drops it), so a
-  // render or a tool call does not scan every flow on disk; a failed read means "no flow", never a denial
+  let marked: Awaited<ReturnType<typeof readActivation>>
   try {
-    const root = await $.session.root()
+    marked = await readActivation($)
+  } catch {
+    return 'barrar'
+  }
+  if (marked.level !== undefined) return marked.level
+  let root: string | undefined
+  try {
+    const here = await $.session.root()
+    root = here
     const now = await $.clock.now()
     const { value: known } = await $.state.get(RUNNING)
-    if (known !== undefined && known !== null && known.root === root && now >= known.at && now - known.at < RUNNING_TTL_MS) {
+    if (known !== undefined && known !== null && known.root === here && now >= known.at && now - known.at < RUNNING_TTL_MS) {
       return known.running ? 'barrar' : undefined
     }
-    const running = (await allFlowStates($)).some(s => s.status !== 'done' && s.status !== 'aborted' && ownsFlow(s, root))
-    if (remember) await $.state.set(RUNNING, { root, at: now, running })
+    const running = (await allFlowStates($)).some(s => s.status !== 'done' && s.status !== 'aborted' && ownsFlow(s, here))
+    if (remember) await $.state.set(RUNNING, { root: here, at: now, running })
     return running ? 'barrar' : undefined
   } catch {
-    return undefined
+    // the scan failed: a flow already known to run here (even past the short memory) keeps "barrar"; otherwise nothing is known
+    const { value: known } = await $.state.get(RUNNING).catch(() => ({ value: undefined }))
+    return known !== undefined && known !== null && known.running && (root === undefined || known.root === root) ? 'barrar' : undefined
   }
 }
 
@@ -1749,12 +1761,12 @@ export const register: Register = on => {
     if (tool === PLAN_TOOL) return publishPlan($, e as unknown as Record<string, unknown>)
     if (tool === FLOW_TOOL) return handleFlowTool($, e as unknown as Record<string, unknown>)
     const input = e as unknown as Record<string, unknown>
-    if (touchesSettings(tool, input)) {
-      return { deny: 'Orchestrator: .claude/settings.local.json is the owner\'s; only the panel (Workflows, "Este projeto") activates, switches or deactivates the orchestrator.' }
-    }
     const mode = await activeMode($)
     // an inactive clone is left alone; "lembrar" says what "barrar" would have refused, leaves a trace, and lets the call go
     if (mode === undefined) return next(e)
+    if (touchesSettings(tool, input)) {
+      return { deny: 'Orchestrator: .claude/settings.local.json is the owner\'s; only the panel (Workflows, "Este projeto") activates, switches or deactivates the orchestrator.' }
+    }
     const stop = async (deny: string): Promise<{ deny: string } | undefined> => {
       if (mode === 'barrar') return { deny }
       $.ui.log(`orquestrador (lembrar): ${deny}`)
@@ -1847,13 +1859,13 @@ export const register: Register = on => {
       openspec: undefined, jira: {}, jiraNote: undefined, skips: {},
     }
     const { value: reminded } = await $.state.get(REMINDED)
-    const view: PanelView =
-      reminded === undefined || reminded === null
-        ? base
-        : {
-            ...base,
-            warning: [base.warning, uiText(base.languages?.ui).warning.reminded(reminded.count, reminded.last)].filter(x => x !== undefined).join(' · '),
-          }
+    const tampered = (await readActivation($).catch(() => undefined))?.tampered === true
+    const warnings = [
+      base.warning,
+      reminded === undefined || reminded === null ? undefined : uiText(base.languages?.ui).warning.reminded(reminded.count, reminded.last),
+      tampered ? uiText(base.languages?.ui).warning.tampered : undefined,
+    ].filter(x => x !== undefined)
+    const view: PanelView = warnings.length === 0 || (warnings.length === 1 && warnings[0] === base.warning) ? base : { ...base, warning: warnings.join(' · ') }
     const { value: collapsed = {} } = await $.state.get(COLLAPSED)
     const { value: answered = [] } = await $.state.get(ANSWERED)
     const { value: drafts = {} } = await $.state.get(GRILL_DRAFTS)

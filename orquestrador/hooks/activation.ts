@@ -98,24 +98,55 @@ export async function projectRoot($: EngineInterface): Promise<{ root: string; g
   return { root: cwd, gitDir: undefined }
 }
 
-export type Activation = { level: ActivationLevel | undefined; invalid: boolean }
+/**
+ * What the clone's mark says and what the mod trusts. `level` is the one that counts; `tampered` is true when the
+ * file's mark differs from what the panel wrote (a "lembrar" the panel never wrote, or a mark taken away).
+ */
+export type Activation = { level: ActivationLevel | undefined; invalid: boolean; tampered: boolean }
+
+/** The level the panel itself wrote for each repository, by the main checkout's path: in the mod's own state, which no tool of the model writes. */
+const RECORD = { plugin: 'orquestrador', key: 'activationRecord' } as const
+
+async function recordedLevel($: EngineInterface, root: string): Promise<ActivationLevel | undefined> {
+  const { value } = await $.state.get(RECORD)
+  const level = value?.[root]
+  return LEVELS.find(l => l === level)
+}
+
+/** Remembers the level the panel wrote for `root` (`null`: the panel took the activation back). */
+export async function recordLevel($: EngineInterface, root: string, level: ActivationLevel | null): Promise<void> {
+  const { value } = await $.state.get(RECORD)
+  const { [root]: _old, ...others } = value ?? {}
+  await $.state.set(RECORD, level === null ? others : { ...others, [root]: level })
+}
 
 /** The file's text; `undefined` only when it is absent. A read that fails throws: it is not "absent". */
 async function readSettings($: EngineInterface, path: string): Promise<string | undefined> {
   return (await $.fs.exists(path)) ? await $.fs.read(path) : undefined
 }
 
-/** The mark, read from the file itself so it counts at once, with no restart. A broken or unreadable file marks nothing. */
+/**
+ * The level that counts, read from the file itself so it counts at once, with no restart, but only as far as the
+ * panel's record backs it: "barrar" stands alone (the strictest); "lembrar" lowers the guard, so it counts only
+ * when it is what the panel wrote; a mark with no record or another one is "barrar". A mark taken away or a file
+ * that cannot be parsed after the panel activated is still "barrar". A file that cannot be read is "barrar" too:
+ * only a confirmed absence of mark leaves the mod quiet. Throws when the state cannot be read.
+ */
 export async function readActivation($: EngineInterface): Promise<Activation> {
   const { root } = await projectRoot($)
+  const recorded = await recordedLevel($, root)
   let text: string | undefined
   try {
     text = await readSettings($, `${root}/${SETTINGS_PATH}`)
   } catch {
-    return { level: undefined, invalid: true }
+    return { level: 'barrar', invalid: true, tampered: recorded !== undefined }
   }
   const parsed = parseSettings(text)
-  return 'error' in parsed ? { level: undefined, invalid: true } : { level: levelOf(parsed.data), invalid: false }
+  const marked = 'error' in parsed ? undefined : levelOf(parsed.data)
+  const invalid = 'error' in parsed
+  if (marked === 'barrar') return { level: 'barrar', invalid, tampered: false }
+  if (marked === 'lembrar') return recorded === 'lembrar' ? { level: 'lembrar', invalid, tampered: false } : { level: 'barrar', invalid, tampered: true }
+  return recorded === undefined ? { level: undefined, invalid, tampered: false } : { level: 'barrar', invalid, tampered: true }
 }
 
 /**
@@ -139,6 +170,16 @@ export type Written = { ok: true } | { ok: false; error: 'notJson' | 'notObject'
  * or whose `hooks.SessionStart` is not a list is left untouched; so is a write with nothing to change.
  */
 export async function writeActivation($: EngineInterface, level: ActivationLevel | null): Promise<Written> {
+  const written = await writeFile($, level)
+  // the panel's record follows the file: what the panel wrote is what the mod trusts
+  if (written.ok) {
+    await recordLevel($, (await projectRoot($)).root, level)
+    await $.state.set({ plugin: 'orquestrador', key: 'reminded' }, null) // a new level (or none) starts a new count of warnings
+  }
+  return written
+}
+
+async function writeFile($: EngineInterface, level: ActivationLevel | null): Promise<Written> {
   const { root, gitDir } = await projectRoot($)
   const path = `${root}/${SETTINGS_PATH}`
   let text: string | undefined

@@ -169,7 +169,7 @@ test('2.1 a settings.local.json that is not valid JSON is named, left untouched,
   const w = world(on)
   w.disk.set(MARK, '{ "env": ')
   const ui = await mount($)
-  expect(await ui.find(text(/\.claude\/settings\.local\.json não é um JSON válido: o orquestrador o trata como inativo/))).toBeDefined()
+  expect(await ui.find(text(/\.claude\/settings\.local\.json não é um JSON válido: sem uma marca legível/))).toBeDefined()
   expect(await ui.find({ key: 'act-open' })).toBeUndefined()
   expect(w.disk.get(MARK)).toBe('{ "env": ')
   await ui.unmount()
@@ -187,5 +187,23 @@ test('2.1 the card in English', async ($, on) => {
   await ui.press({ key: 'act-confirm-go' })
   await settle()
   expect(await ui.find(text(/^active in this clone · block$/))).toBeDefined()
+  await ui.unmount()
+})
+
+test('5.1 a mark the panel did not write is warned in the card, counts as "barrar", and pressing confirm makes it the panel\'s', async ($, on) => {
+  const w = world(on)
+  w.disk.set(MARK, JSON.stringify({ env: { ORQUESTRADOR: 'lembrar' } })) // by hand, not by the panel
+  const ui = await mount($)
+  expect(await ui.find(text(/^ativo neste clone · barrar$/))).toBeDefined()
+  expect(await ui.find(text(/A ativação foi mudada fora do painel/))).toBeDefined()
+  expect((await ui.find({ key: 'act-confirm-level' }))?.text).toBe('Confirmar barrar')
+  // "barrar" is a brake, not a barrier
+  expect(await ui.find(text(/freio do orquestrador, não uma barreira.*proteção de branch do GitHub/))).toBeDefined()
+
+  await ui.press({ key: 'act-switch' }) // to "lembrar", the level on the file: now the panel wrote it
+  await settle()
+  expect(await ui.find(text(/^ativo neste clone · lembrar$/))).toBeDefined()
+  expect(await ui.find(text(/A ativação foi mudada fora do painel/))).toBeUndefined()
+  expect(await ui.find({ key: 'act-confirm-level' })).toBeUndefined()
   await ui.unmount()
 })

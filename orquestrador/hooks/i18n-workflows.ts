@@ -198,10 +198,13 @@ const pt = {
       confirm: 'Ativar',
       cancel: 'Cancelar',
       switchTo: (level: string) => `Trocar para ${level}`,
+      confirmLevel: (level: string) => `Confirmar ${level}`,
+      tampered: 'A ativação foi mudada fora do painel (o arquivo diz outra coisa do que o painel gravou): vale "barrar" até você confirmar por aqui.',
+      brake: '"Barrar" é um freio do orquestrador, não uma barreira: quem trava de verdade é a proteção de branch do GitHub. Um hook que o Claude ponha em outro arquivo de settings fica fora do alcance do orquestrador.',
       deactivate: 'Desativar neste clone',
       deactivateHelp:
         'Desativar tira só o que o "Ativar" pôs no .claude/settings.local.json; o resto do arquivo fica como está. Vale a partir da próxima mensagem, sem reiniciar.',
-      invalid: '.claude/settings.local.json não é um JSON válido: o orquestrador o trata como inativo. Corrija o arquivo para ativar.',
+      invalid: '.claude/settings.local.json não é um JSON válido: sem uma marca legível o orquestrador só segue um flow em andamento (ou "barrar", se o painel já tinha ativado). Corrija o arquivo.',
       done: {
         on: (level: string) => `Orquestrador ativado neste clone (${level}).`,
         switched: (level: string) => `Orquestrador agora em ${level} neste clone.`,
@@ -550,10 +553,13 @@ const en: WorkflowsText = {
       confirm: 'Activate',
       cancel: 'Cancel',
       switchTo: level => `Switch to ${level}`,
+      confirmLevel: level => `Confirm ${level}`,
+      tampered: 'The activation was changed outside the panel (the file says something other than what the panel wrote): "block" applies until you confirm it here.',
+      brake: '"Block" is a brake of the orchestrator, not a barrier: what really locks is GitHub\'s branch protection. A hook that Claude puts in another settings file is out of the orchestrator\'s reach.',
       deactivate: 'Deactivate in this clone',
       deactivateHelp:
         'Deactivating removes only what "Activate" put in .claude/settings.local.json; the rest of the file stays as it is. It applies from the next message, with no restart.',
-      invalid: '.claude/settings.local.json is not valid JSON: the orchestrator treats it as inactive. Fix the file to activate.',
+      invalid: '.claude/settings.local.json is not valid JSON: without a readable mark the orchestrator only follows a running flow (or "block", if the panel had activated). Fix the file.',
       done: {
         on: level => `Orchestrator activated in this clone (${level}).`,
         switched: level => `Orchestrator now set to ${level} in this clone.`,

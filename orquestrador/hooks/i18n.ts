@@ -318,6 +318,7 @@ const pt = {
   },
   warning: {
     noSessions: 'Sessões filhas indisponíveis: o app não expõe a lista de sessões aqui.',
+    tampered: 'A ativação foi mudada fora do painel: vale "barrar" até você confirmar por aqui (Workflows, "Este projeto").',
     reminded: (count: number, last: string) => `Em "lembrar", ${count} recusa(s) viraram só aviso. Última: ${last}`,
   },
   question: 'Pergunta para você',
@@ -527,6 +528,7 @@ const en: UiText = {
   },
   warning: {
     noSessions: 'Child sessions unavailable: the app does not expose the session list here.',
+    tampered: 'The activation was changed outside the panel: "block" applies until you confirm it here (Workflows, "Este projeto").',
     reminded: (count: number, last: string) => `In "remind", ${count} refusal(s) became a warning only. Last: ${last}`,
   },
   question: 'A question for you',

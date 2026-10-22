@@ -71,3 +71,14 @@ trocar de nível sem segundo hook e desativar devolve o arquivo original; JSON i
 **4.5** Testes: faixa só com a marca e uma run publicada, sem flow; `session.start` sem marca não abre painel (com marca abre); `tool.check` e `prompt.submit` inativos não rastreiam; texto do hook com acentos (agora "nível", "só o dono", "portões", gravado sem escapes).
 
 Portões depois da última edição: tipos, validação e testes com saída 0 cada; 338 testes passando.
+
+## Fase 5 — Correções da 2ª revisão (5.1–5.4)
+
+**5.1** `activation.ts`: `writeActivation` grava, depois do arquivo, o nível no estado do mod (`orquestrador.activationRecord`, por raiz do repositório principal; `recordLevel`); `readActivation` só aceita "lembrar" se for o que o painel gravou, senão vale "barrar" com `tampered: true`; "barrar" vale sempre; marca apagada ou arquivo ilegível depois de o painel ter ativado vale "barrar". O painel avisa (cartão "Este projeto" com botão "Confirmar barrar", e aviso no painel principal). Testes: "lembrar" à mão com flow em andamento segue barrando; ativar/trocar/desativar pelo painel; marca que reaparece à mão após desativar vale "barrar"; marca apagada; aviso no cartão e no painel principal.
+**5.2** `register.tsx`: `touchesSettings` só é consultado depois de `activeMode` (clone inativo: arquivo livre); regex com `/i` (também a da pasta de registros). Removido de `isGuarded`. Testes: Edit e `echo >` livres no inativo; recusados no ativo (marca ou flow), inclusive com caixa trocada.
+**5.3** `activeMode` falha fechado: erro de leitura da marca (ou do estado) vale "barrar"; varredura de flows falha vale "barrar" se o flow já era conhecido (`running`), senão quieto. Testes: arquivo ilegível; listagem falhando com flow conhecido e sem.
+**5.4** README e `i18n-workflows.ts` (pt-BR e en): "barrar" é um freio, não uma barreira; a trava de verdade é a proteção de branch do GitHub; hooks postos pelo modelo em outros arquivos de settings ficam fora do alcance. Aproveitados: `reminded` zera ao ativar/trocar/desativar; doc de `activeMode`/`RUNNING_TTL_MS` unida.
+
+Onde fica o estado: no `$.state` do mod; nenhuma ferramenta do modelo o grava (ele não é um arquivo do projeto). Restos: o modelo ainda pode apagar/mudar a marca, mas isso só endurece (vale "barrar").
+
+Portões depois da última edição: tipos, validação e testes com saída 0 cada; 345 testes passando.
