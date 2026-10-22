@@ -11,3 +11,10 @@
 **1.3** `describeFlow`/`describeStep` dizem a aprovação do merge por agente (`merge`: aprovação no GitHub e CI; `merge-pelo-workflow`: aprovação do workflow, sem GitHub); o painel (aba Workflows) mostra a linha "Aprovação do merge" no passo aberto e a mesma ajuda sob o seletor de agente quando se edita, em pt-BR e en; as descrições dos dois agentes aparecem no seletor. Testes: `merge-deploy.test.ts` (describeFlow dos dois agentes, automático e do dono) e `workflows-pane.test.ts` (as duas ajudas).
 
 Portões rodados depois da última edição: tipos (saída 0), validação (`Validation passed`), testes (saída 0; 352 passando).
+
+## Fase 2 — Este repositório e versão (2.1, 2.2)
+
+**2.1** `.orquestrador/flows/rapido.json` reescrito: planejar → validar → executar → revisao-codigo → checagem → tipos (automático, `tsc`; `falhou` volta a executar) → publicar → merge (automático, agente `merge-pelo-workflow`, só `branch: main`) → deploy (automático, `deploy: {}`) → lancar → fim; sem `qa`. Merge e deploy não escrevem `auto`, `ci` nem `commands`: herdam do `.orquestrador/config.json`, commitado junto (o `completo.json` não). O harness não lê fora da pasta do plugin, então `orquestrador/tests/rapido-repo.test.ts` traz uma cópia do JSON (manter as duas em dia) e roda `parseFlow` com as configurações do `config.json`: resolve sem erro, na ordem acima, `merge` com `auto` vindo do projeto (`fromProject: ["auto"]`), `deploy` com `ci: false`, `auto: true` e as duas rotinas de update do plugin, `lancar` terminando em `fim`, sem `qa`.
+**2.2** `README.md`: os dois agentes de merge (seção do merge, biblioteca de passos e lista de agentes) e a seção "Publicação automática (este repositório)"; versão 0.10.0 → 0.11.0 em `orquestrador/.claude-plugin/plugin.json`.
+
+Portões rodados depois da última edição: tipos (saída 0), validação (`Validation passed`), testes (saída 0; 352 passando).

@@ -6,5 +6,5 @@
 
 ## 2. Este repositório e versão
 
-- [ ] 2.1 `.orquestrador/flows/rapido.json`: planejar → validar → executar → revisao-codigo → checagem → tipos (automático, `tsc`) → publicar → merge (automático, agente `merge-pelo-workflow`, herdando do projeto) → deploy (automático, herdando do projeto) → lancar → fim; sem `qa`; o arquivo resolve sem erro (`flow list`); commitar junto com `.orquestrador/config.json` (não o `completo.json`) — cx: simple
-- [ ] 2.2 README (os dois agentes de merge e a publicação automática), versão 0.11.0, evidence.md — cx: simple
+- [x] 2.1 `.orquestrador/flows/rapido.json`: planejar → validar → executar → revisao-codigo → checagem → tipos (automático, `tsc`) → publicar → merge (automático, agente `merge-pelo-workflow`, herdando do projeto) → deploy (automático, herdando do projeto) → lancar → fim; sem `qa`; o arquivo resolve sem erro (`flow list`); commitar junto com `.orquestrador/config.json` (não o `completo.json`) — cx: simple
+- [x] 2.2 README (os dois agentes de merge e a publicação automática), versão 0.11.0, evidence.md — cx: simple

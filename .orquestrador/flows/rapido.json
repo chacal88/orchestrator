@@ -1,7 +1,7 @@
 {
   "id": "rapido",
   "title": "Rápido (plugin)",
-  "description": "Flow rápido deste repositório de plugin: plano curto, validação e testes do plugin, fases, revisão, publicação no GitHub, conferência do dono e lançamento da versão.",
+  "description": "Flow rápido deste repositório de plugin: plano curto, validação, fases, revisão de código, testes e tipos, publicação no GitHub, merge e deploy automáticos e lançamento da versão, sem conferência do dono.",
   "steps": [
     {
       "id": "planejar",
@@ -34,7 +34,7 @@
     {
       "id": "revisao-codigo",
       "title": "Revisão",
-      "description": "Revisão de qualidade do que vai ficar público.",
+      "description": "Revisão de qualidade do que vai ficar público. Quem aprova o merge neste flow.",
       "kind": "session",
       "agent": "revisor-codigo",
       "outcomes": {
@@ -50,6 +50,17 @@
       "command": "plugin test",
       "requiresEvidence": true,
       "outcomes": {
+        "passou": { "label": "Passou", "next": "tipos" },
+        "falhou": { "label": "Falhou", "next": "executar" }
+      }
+    },
+    {
+      "id": "tipos",
+      "title": "Tipos",
+      "description": "O mod vê o `tsc` passar sobre o código do plugin; o código de saída decide.",
+      "kind": "automatic",
+      "command": "tsc",
+      "outcomes": {
         "passou": { "label": "Passou", "next": "publicar" },
         "falhou": { "label": "Falhou", "next": "executar" }
       }
@@ -57,21 +68,36 @@
     {
       "id": "publicar",
       "title": "Publicar no GitHub",
-      "description": "Uma sessão cria o repositório público e envia o código.",
+      "description": "Uma sessão envia a branch ao GitHub e abre o PR da change, que o merge seguinte usa.",
       "kind": "session",
       "agent": "publicador",
       "jira": false,
-      "outcomes": { "publicado": { "label": "Repositório publicado", "next": "qa" } }
+      "outcomes": { "publicado": { "label": "PR publicado", "next": "merge" } }
     },
     {
-      "id": "qa",
-      "title": "Conferência do dono",
-      "description": "O dono instala o plugin a partir do GitHub e confere se funciona.",
-      "kind": "owner",
-      "jira": false,
+      "id": "merge",
+      "title": "Merge em main",
+      "description": "O PR da change entra em main quando o workflow aprovou: revisão de código aprovada, portões finais passados e CI verde se houver.",
+      "kind": "automatic",
+      "command": "gh pr merge",
+      "agent": "merge-pelo-workflow",
+      "merge": { "branch": "main" },
       "outcomes": {
-        "aprovado": { "label": "Instalei e funciona", "next": "lancar" },
-        "ajustes": { "label": "Precisa de ajustes", "next": "executar" }
+        "passou": { "label": "Mergeado", "next": "deploy" },
+        "falhou": { "label": "Falhou", "next": "merge" }
+      }
+    },
+    {
+      "id": "deploy",
+      "title": "Deploy",
+      "description": "Atualiza o plugin instalado pelas rotinas do projeto, logo depois do merge.",
+      "kind": "automatic",
+      "command": "claude plugin marketplace update orquestrador",
+      "agent": "deploy",
+      "deploy": {},
+      "outcomes": {
+        "passou": { "label": "Publicado", "next": "lancar" },
+        "falhou": { "label": "Falhou", "next": "deploy" }
       }
     },
     {
