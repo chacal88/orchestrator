@@ -76,7 +76,7 @@ const raw: unknown =
       "title": "Publicar no GitHub",
       "description": "Uma sessão envia a branch ao GitHub e abre o PR da change, que o merge seguinte usa.",
       "kind": "session",
-      "agent": "publicador",
+      "agent": "abre-pr",
       "jira": false,
       "outcomes": { "publicado": { "label": "PR publicado", "next": "merge" } }
     },
