@@ -490,6 +490,8 @@ const splitWords = (code: string): { commands: Word[][]; nested: string[] } => {
 /** Words that run the command after them: `env`, `time`, `command`, a `VAR=value` before it… */
 const PREFIX_WORDS = new Set(['{', '!', 'if', 'then', 'else', 'elif', 'while', 'until', 'do', 'time', 'command', 'exec', 'nohup', 'env', 'sudo'])
 const SHELLS = /(^|\/)(ba|z|da|k)?sh$/
+/** Interpreters that run a script they are handed: like a shell, the mod cannot read what it does. */
+const INTERPRETERS = /^(python[0-9.]*|node|deno|bun|ruby|perl|php|osascript)$/
 
 /**
  * Every command a command line runs, as its words: across line continuations and quotes, and
@@ -600,9 +602,11 @@ const namesMerge = (text: string): boolean => /\bgh\b/.test(text) && /merge/i.te
  * under a name a variable holds (`$G pr merge`). Its text when it is that, so the guard fails
  * closed; undefined when every command is a `gh` the mod reads or a program that only prints.
  *
- * With no merge read on the line, any such command counts. With one read, each other command is
- * judged on its own, so a readable merge cannot cover a hidden one beside it
- * (`gh pr merge 6 --squash && xargs gh pr merge --admin`) and `gh pr merge 6 && npm test` passes.
+ * Each command is judged on what it does itself: a program counts when it names the merge itself,
+ * a shell or interpreter when it reads its script from stdin (or from a file, with no readable merge
+ * on the line). So a readable merge cannot cover a hidden one beside it
+ * (`gh pr merge 6 --squash && xargs gh pr merge --admin`), while `gh pr merge 6 && npm test` and a
+ * loop that only reads PRs (`for n in …; do gh pr view $n --json mergeable; done`) pass.
  */
 export const opaqueMerge = (command: string): string | undefined => {
   if (!namesMerge(command)) return undefined
@@ -612,11 +616,17 @@ export const opaqueMerge = (command: string): string | undefined => {
     if (head === undefined || mergeCall(words) !== undefined) return false
     const name = head.text.split('/').pop() ?? ''
     if (name === 'gh' && !head.dynamic) return false
-    const runs = head.dynamic || (name === 'git' ? gitRuns(words) : !INERT.has(name))
-    if (!runs) return false
-    if (!read) return true
-    const stdinShell = SHELLS.test(name) && words.slice(1).every(w => w.text.startsWith('-') || w.text.startsWith('<'))
-    return head.dynamic || stdinShell || namesMerge(words.map(w => w.text).join(' '))
+    if (head.dynamic) return true
+    if (name === 'git') return gitRuns(words)
+    if (INERT.has(name)) return false
+    // a shell or an interpreter runs a script the mod does not read: from stdin always, from a file when the
+    // line holds no readable merge (a readable one beside `bash check.sh` is not covering anything)
+    if (SHELLS.test(name) || INTERPRETERS.test(name)) {
+      const fromStdin = words.slice(1).every(w => w.text.startsWith('-') || w.text.startsWith('<'))
+      if (fromStdin || !read) return true
+    }
+    // any other program counts only when it names the merge itself (`xargs gh pr merge`, `timeout 5 gh pr merge`)
+    return namesMerge(words.map(w => w.text).join(' '))
   })
   return hidden?.map(w => w.text).join(' ').replace(/\s+/g, ' ').slice(0, 80)
 }
