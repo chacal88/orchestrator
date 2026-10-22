@@ -338,7 +338,7 @@ export const renderWorkflows = (els: WorkflowsElements, view: WorkflowsView, act
   const summary = (s: StepLike): string => {
     if (s.merge !== undefined) {
       return s.merge.auto
-        ? t.summary.mergeAuto(s.merge.method, s.merge.branch)
+        ? t.summary.mergeAuto(s.merge.method, s.merge.branch, s.agent)
         : t.summary.mergeOwner(s.merge.method, s.merge.branch)
     }
     if (s.deploy !== undefined) {

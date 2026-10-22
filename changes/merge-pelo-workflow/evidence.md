@@ -28,3 +28,10 @@ Portões rodados depois da última edição: tipos (saída 0), validação (`Val
 **3.3** `hooks/i18n-workflows.ts`: `merge.autoHelp(agent)` diz a aprovação conforme o agente (workflow, GitHub ou agente do projeto); `approval(agent)` só promete GitHub para `merge`/sem agente, e para outro agente diz que a aprovação segue o agente escolhido; o texto do workflow diz que a coordenação declara o `aprovado`. `describeFlow` (`hooks/flow.ts`) idem; `workflows-pane.tsx` usa `autoHelp(s.agent)`. Testes: `workflows-pane.test.ts` (textos por agente, pt-BR e en; "declarada pela coordenação") e `merge-deploy.test.ts` (describeFlow).
 
 Portões rodados depois da última edição: tipos (saída 0), validação (`Validation passed`), testes (saída 0; 356 passando).
+
+## Fase 4 — Ajuste da conferência do dono (coordenação)
+
+No print do dono, o passo "Merge em main" do Rápido (agente `merge-pelo-workflow`) dizia no resumo "só com PR
+aprovado e CI verde". `summary.mergeAuto` (pt-BR e en, `i18n-workflows.ts`) passou a receber o agente, e o painel o
+passa. Teste em `workflows-pane.test.ts` ("a merge step with the merge-pelo-workflow agent…"). Suíte: 356 pass,
+0 fail; tsc 0. Versão 0.11.1.

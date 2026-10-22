@@ -14,3 +14,7 @@
 - [x] 3.1 O PR da change é reconhecido também pela nota do passo que o abre (agente `abre-pr` ou `publicador`, além dos ids `pr`/`merge`); teste de harness com o `rapido.json` deste repositório parado no merge, PR citado no `publicar`, sem revisão aprovada: recusa; com revisão aprovada: passa — cx: moderate
 - [x] 3.2 Variantes de `pendingCodeReview` testadas: flow sem passo de revisão; revisão com `when: visual` numa change não visual; passo reconhecido só pelo agente `revisor-codigo`; flow depois do merge. `parseFlow` recusa um passo de revisão de código (agente `revisor-codigo` ou id `revisao-codigo`) que não declare o outcome `aprovado`; README cita a exigência — cx: moderate
 - [x] 3.3 Textos: a ajuda do merge automático diz a aprovação conforme o agente (GitHub ou workflow); `approval(agent)` não promete "aprovação no GitHub" para um agente do projeto desconhecido; o painel e o `describeFlow` dizem que a aprovação da revisão é declarada pela coordenação — cx: simple
+
+## 4. Ajuste da conferência do dono
+
+- [x] 4.1 A linha de resumo do passo de merge automático no painel ⚙️ diz a aprovação conforme o agente (com `merge-pelo-workflow`: "quando o workflow aprovou"; não "só com PR aprovado e CI verde"); teste; versão 0.11.1 — cx: simple
