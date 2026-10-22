@@ -267,3 +267,64 @@ test('the owner skips a phase gate from the Gates card while the loop runs, and 
   const closed = await flow($, { action: 'close', phase: 'A' })
   expect(String(closed.result)).toMatch(/^Phase A closed/)
 })
+
+const PANE = {
+  component: 'Pane',
+  requestId: 'orquestrador',
+  props: { title: 'Orquestrador', isFocused: false, bodyColumns: 60, placement: 'dock', scroll: { offset: 0, bodyRows: 60 }, view: {} },
+} as const
+
+const paneShows = async ($: Engine, text: RegExp): Promise<boolean> => {
+  const ui = await $.ui.mount({ plugin: 'orquestrador', surface: 'desktop', ...PANE })
+  const found = (await ui.find({ type: 'Text', text })) !== undefined
+  await ui.unmount()
+  return found
+}
+
+const publish = ($: Engine, statuses: Record<string, string>) =>
+  $.tool.call({
+    tool: 'mcp__orquestrador__plano',
+    change: 'demo',
+    changePath: 'openspec/changes/demo',
+    waves: [{ phases: [
+      { id: 'A', title: 'Base', status: statuses.A, tasks: '1.x', session: 'fase-a', gates: ['testes'] },
+      { id: 'B', title: 'Tela', status: statuses.B, tasks: '2.x', session: 'fase-b', gates: ['testes'] },
+    ] }],
+  } as never) as Promise<Reply>
+
+test('the panel shows a phase the loop closed and a finished flow without the plan published again; publishing it then asks no gates', async ($, on) => {
+  const w = world(on)
+  plan(w)
+  w.disk.set(
+    '/w/.orquestrador/flows/curto.json',
+    JSON.stringify({
+      id: 'curto',
+      title: 'Curto',
+      steps: [{ id: 'executar', title: 'Executar', kind: 'loop', over: 'tasks', outcomes: { concluidas: { label: 'Fases fechadas', next: 'fim' } } }],
+    }),
+  )
+  await flow($, { action: 'start', change: 'demo', flow: 'curto', changePath: 'openspec/changes/demo' })
+  expect(await paneShows($, /0 de 2 fases/)).toBe(true)
+
+  w.disk.set(TASKS, '## 1. Base\n- [x] 1.1 Modelo\n- [x] 1.2 Rotas\n\n## 2. Tela\n- [x] 2.1 Lista\n')
+  passTests(w, '/w/wt/a')
+  expect(String((await flow($, { action: 'close', phase: 'A' })).result)).toMatch(/^Phase A closed/)
+  expect(await paneShows($, /1 de 2 fases/)).toBe(true)
+  expect(await paneShows($, /1 em voo/)).toBe(true)
+
+  // the closed phase's session no longer shows its gate pass (an edit after it, or gone): publishing it done still goes through
+  w.disk.delete(`${BASE}/sessions/${activityKey('/w/wt/a')}.json`)
+  expect((await publish($, { A: 'done', B: 'running' })).isError).toBeUndefined()
+  expect(String((await publish($, { A: 'done', B: 'done' })).result)).toMatch(/phase B \(Tela\) cannot close: testes not run/)
+
+  // the last close ends the flow: every phase reads closed, none in flight, and the final plan publishes without gates
+  passTests(w, '/w/wt/b')
+  expect(String((await flow($, { action: 'close', phase: 'B' })).result)).toMatch(/Every phase is closed/)
+  expect(saved(w).status).toBe('done')
+  expect(await paneShows($, /2 de 2 fases/)).toBe(true)
+  expect(await paneShows($, /em voo/)).toBe(false)
+  w.disk.delete(`${BASE}/sessions/${activityKey('/w/wt/b')}.json`)
+  expect((await publish($, { A: 'running', B: 'running' })).isError).toBeUndefined()
+  expect(await paneShows($, /2 de 2 fases/)).toBe(true)
+  expect((await publish($, { A: 'done', B: 'done' })).isError).toBeUndefined()
+})

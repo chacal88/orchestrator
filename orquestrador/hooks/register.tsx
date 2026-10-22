@@ -109,6 +109,7 @@ import {
   activityKey,
   applyPlanUpdate,
   changePrs,
+  closedByFlow,
   finishedSessionIds,
   completePlan,
   parseRun,
@@ -121,6 +122,7 @@ import {
   runKey,
   sessionActivityKey,
   toCard,
+  withFlowStatus,
 } from './model'
 
 const PANE = 'orquestrador'
@@ -632,7 +634,7 @@ const refresh = async ($: EngineInterface): Promise<void> => {
 
   const view: PanelView = {
     ...sessions,
-    run,
+    run: run === undefined ? undefined : withFlowStatus(run, flowState),
     repoUrl,
     openspec,
     jira: jira.issues,
@@ -753,12 +755,14 @@ const publishPlan = async ($: EngineInterface, input: Record<string, unknown>): 
   if ('error' in parsed) return { result: `Plan not published: ${parsed.error}`, isError: true as const }
   const before = await readJson<OrchestrationRun>($, `${await baseDir($)}/runs/${runKey(parsed.change)}.json`)
   const wasDone = new Set(before?.waves.flatMap(w => w.phases.filter(p => p.status === 'done').map(p => p.id)) ?? [])
+  // a phase the loop already closed, or any phase once the flow is over, passed its gates there
+  const flowState = await loadFlowState($, parsed.change).catch(() => undefined)
   const refusals = phaseRefusals(
     parsed,
     await loadFamily($),
     await ownCheck($),
     await loadSkips($, parsed.change),
-    phase => phase.status === 'done' && !wasDone.has(phase.id),
+    phase => phase.status === 'done' && !wasDone.has(phase.id) && !closedByFlow(flowState, phase.id),
   )
   if (refusals.length > 0) {
     await logGateEvent($, parsed.change, { kind: 'refused', action: 'done', reasons: refusals })
