@@ -54,3 +54,12 @@ Ran 180 tests across 17 files.
 $ npx -p typescript@5.6.3 tsc -p <scratchpad>/tc/tsconfig.json   # tipos do engine 2.1.308, opções do cabeçalho
 exit 0
 ```
+
+## Fase 3a — Agentes e skill (3.1, 3.4)
+
+- 8 agentes em `orquestrador/agents/` (planejador, revisor-plano, executor, revisor-codigo, abre-pr, publicador, merge, deploy), em português, com papel, leitura, entradas/entrega, critério de pronto, outcome e o que nunca fazem. `merge` confere `reviewDecision`/`statusCheckRollup` antes do `gh pr merge`; `deploy` confirma o CI (`gh run watch --exit-status`) e roda cada rotina de `commands` na ordem.
+- Correção da fase 1: laço `executar` de `completo.ts` e `rapido.ts` passa a `agent: "executor"`; `.orquestrador/flows/rapido.json` ganha `executar`→`executor` e `publicar`→`publicador`. Só esses campos.
+- Teste: `tests/flow-resolve.test.ts:97` esperava `executar: 'publicador'`; ajustado para `'executor'` (única mudança em testes, consequência da correção).
+- Skill: § 1 mostra sempre os workflows de `flow list` antes do `flow start`; § 2 e § 4 despacham com o agente do passo (corpo no prompt, o do projeto vence, modelo/esforço do passo valem); § 6 trata `revisao-pr`, `merge` e `deploy` manuais/automáticos (nunca `--admin`).
+- Portões: `claude plugin test orquestrador` → 189 pass, 0 fail, saída 0; `claude plugin validate orquestrador` → "Validation passed" (a saída não lista os agentes por nome; só avisa do ícone ausente).
+- Revisão de regras (aidakit:reviewer-quality): bloqueante corrigido (merge/deploy automáticos não levam `flow report`); skill agora instrui em vez de afirmar recusa do mod que só chega na 2.2, aponta o caminho do plugin por `${CLAUDE_PLUGIN_ROOT}` e manda avisar o dono em falha; "nunca faz" específico em merge e deploy. Não feito de propósito: `planejador`/`revisor-codigo` no `rapido.json` (a tarefa limitou a mudança a `executar` e `publicar`); bloco comum de "nunca faz" repetido nos agentes é intencional, pois cada corpo vai sozinho no prompt da sessão.

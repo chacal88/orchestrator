@@ -94,7 +94,7 @@ describe('the default flows describe their steps', () => {
     expect(Object.fromEntries(parsed.completo!.steps.filter(s => s.agent).map(s => [s.id, s.agent]))).toEqual({
       planejar: 'planejador',
       'revisao-plano': 'revisor-plano',
-      executar: 'publicador',
+      executar: 'executor',
       'revisao-codigo': 'revisor-codigo',
       pr: 'abre-pr',
     })

@@ -14,11 +14,13 @@ Ferramentas do mod (carregue via ToolSearch): `mcp__orquestrador__flow` e
 
 ## 1. Começar o flow
 
-1. Escolha o flow **com o dono**, numa pergunta só, com recomendação:
+1. **Antes do `flow start`, mostre sempre ao dono os workflows de `flow list`**: de cada um,
+   título, descrição e passos, numa pergunta só, com a sua recomendação. Nunca escolha
+   sozinha, nem quando só há um. Os do projeto (`.orquestrador/flows/`) valem mais que os
+   padrões. Para a recomendação:
    - `completo` — feature, tela nova, mudança grande, arquitetural ou irreversível.
    - `rapido` — correção pequena e reversível (sem grill, mockup nem liberação).
-   - Na dúvida, `completo`. `flow list` mostra os flows disponíveis (os do projeto, em
-     `.orquestrador/flows/`, valem mais que os padrões).
+   - Na dúvida, recomende `completo`.
 2. `flow start {change, flow, visual, changePath}` — `visual: true` quando a change
    altera o que o usuário vê (liga o passo de mockup).
 3. Sidebar: `list_groups`; reuse o grupo da change se existir, senão `create_group`
@@ -30,8 +32,8 @@ A cada acionamento (mensagem de fase, fim de sessão, clique do dono, tick):
 
 1. `flow status` → passo atual e **quem responde** (sessão, automático ou dono).
 2. Aja **só** sobre esse passo, conforme o tipo:
-   - **Sessão** → faça ou despache o trabalho; ao terminar, `flow report {step, outcome,
-     note}` com um dos resultados que o passo declara.
+   - **Sessão** → faça ou despache o trabalho **com o agente do passo** (ver abaixo); ao
+     terminar, `flow report {step, outcome, note}` com um dos resultados que o passo declara.
    - **Automático** (`validar` = `openspec validate`, `checagem` = `scripts/check.sh` com
      `evidence.md` preenchido, `arquivar` = `openspec archive`) → rode o comando numa
      sessão; o mod observa o código de saída e avança. **Nunca** informe esse passo.
@@ -40,6 +42,13 @@ A cada acionamento (mensagem de fase, fim de sessão, clique do dono, tick):
      disparar, confira `flow status`.
 3. O mod recusa pular etapa ou informar passo que não é o atual; diante de uma recusa,
    leia o motivo e corrija a causa, não contorne.
+
+**Agente do passo.** Cada passo de sessão (e o laço `executar`) nomeia um agente, com
+`model` e `effort`. Despache assim: o **corpo** do agente vai no prompt da sessão (ele traz
+papel, o que ler, critério de pronto e o que nunca fazer); o agente do projeto em
+`.orquestrador/agents/<nome>.md` **vence** o do plugin (`agents/<nome>.md` na raiz do plugin, `${CLAUDE_PLUGIN_ROOT}`); e o
+modelo e o esforço do passo valem (`set_session_model` / `set_session_effort`), no lugar da
+tabela do § 4. Passo sem agente declarado segue o prompt autocontido do § 4.
 
 **Clique do dono acorda você.** Quando o dono aperta um botão do flow e o próximo passo é
 seu (sessão, automático, `executar`, ou o mockup de novo depois de "Pedir ajustes"), o painel
@@ -106,9 +115,12 @@ diagnóstico pronto ao dono.
    | ⚖️    | banca adversarial / validação     |
    | 🧭    | coordenação                       |
 
-   **Modelo e esforço por fase** (`set_session_model` / `set_session_effort` assim que a
-   sessão abrir; ajuste os ids ao seletor). O que decide o resto usa o mais forte; o
-   custo cai com a complexidade (`cx:` do `tasks.md`).
+   **Agente, modelo e esforço por fase.** Cada sessão de fase usa o agente do passo
+   `executar` (`executor`, ou o do projeto): coloque o corpo dele no prompt. Modelo e esforço
+   do passo valem quando declarados; a tabela abaixo é o padrão quando o passo não os traz
+   (`set_session_model` / `set_session_effort` assim que a sessão abrir; ajuste os ids ao
+   seletor). O que decide o resto usa o mais forte; o custo cai com a complexidade (`cx:` do
+   `tasks.md`).
 
    | Natureza                                                  | Modelo                                    | Esforço |
    | --------------------------------------------------------- | ----------------------------------------- | ------- |
@@ -181,9 +193,24 @@ passo do dono? O `ScheduleWakeup` longo está agendado?
 3. **Em QA** (dono): botões **"QA aprovou"** / **"QA pediu ajustes"**. Se souber o que
    o QA pediu, deixe com `flow note` antes do clique. Ajustes devolvem o flow às fases:
    acrescente as tarefas novas ao `tasks.md` e volte ao § 4.
-4. **Em produção** (dono): botão **"Está em produção"**, ou o mod detecta o comando de
+4. **Revisão do PR, merge e deploy** (`revisao-pr`, `merge`, `deploy`), nos workflows que os
+   têm. A **revisão do PR** é sempre do dono (aprova no GitHub; botão "PR aprovado").
+   - **Manual** (`auto: false`): é do dono. O merge é o botão dele ou o `gh pr merge` que o mod
+     vê; o deploy, o botão "Deploy concluído". Não faça por ele.
+   - **Automático** (`auto: true`): você segue sozinha, com o agente `merge` ou `deploy`.
+     **Nunca com `--admin`.** O merge só sai com a aprovação no GitHub e o CI verde, conferidos
+     com `gh pr view <pr> --json reviewDecision,statusCheckRollup`; faltando algo, não faça o
+     merge, avise o dono com o que falta. Depois, `gh pr merge <pr> --<método>` (método do
+     passo, padrão `squash`). O deploy confirma o do CI quando `ci` (`gh run watch <id>
+     --exit-status`) e roda cada rotina de `commands`, na ordem, como comando próprio; a que
+     falhar segura o passo para o dono decidir.
+   - Não rode `gh pr merge` antes da revisão do PR respondida nem com `--admin` (o mod passará a
+     recusar). Se faltar aprovação ou CI, ou uma rotina de deploy falhar, não repita em laço:
+     avise o dono com o diagnóstico e espere a decisão dele.
+   - Merge e deploy automáticos não levam `flow report`: o mod avança pelo código de saída.
+5. **Em produção** (dono): botão **"Está em produção"**, ou o mod detecta o comando de
    deploy sozinho.
-5. **Arquivar** (automático): rode `openspec archive` numa sessão; quando passa, o mod
+6. **Arquivar** (automático): rode `openspec archive` numa sessão; quando passa, o mod
    arquiva as sessões restantes e remove o grupo da sidebar. Registre o resumo final
    no ledger, resuma por fase em poucas linhas ao dono e arquive a coordenadora por
    último.
