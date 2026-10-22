@@ -1,7 +1,7 @@
 # Orquestração — fases-por-projeto
 
 Coordenação: sessão `🧭 fases-por-projeto: coordenação`, branch `claude/orchestrator-phases-automation-f69f0d`.
-Flow `rapido` (plugin). Estado: `publicar`. Revisão aprovada (3 revisores), checagem final passou (248 testes). Aguarda o ok do dono para push e PR.
+Flow `rapido` (plugin). Estado: `qa` (conferência do dono). PR https://github.com/chacal88/orquestrador/pull/5 aberto; depois: lançar a versão (gh release create).
 
 | Onda | Fase | Ícone | Tarefas | Sessão | Branch | Estado | Próximo passo |
 | ---- | ---- | ----- | ------- | ------ | ------ | ------ | ------------- |
