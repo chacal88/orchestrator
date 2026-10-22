@@ -35,9 +35,17 @@ A cada acionamento (mensagem de fase, fim de sessão, clique do dono, tick):
    - **Automático** (`validar` = `openspec validate`, `checagem` = `scripts/check.sh` com
      `evidence.md` preenchido, `arquivar` = `openspec archive`) → rode o comando numa
      sessão; o mod observa o código de saída e avança. **Nunca** informe esse passo.
-   - **Dono** → **nunca** responda. Aponte o botão no painel (`/orquestrador`) e espere.
+   - **Dono** → **nunca** responda. Aponte o botão no painel (`/orquestrador`) e espere:
+     termine o turno com `ScheduleWakeup` longo (1200 s ou mais) como reserva e, quando ele
+     disparar, confira `flow status`.
 3. O mod recusa pular etapa ou informar passo que não é o atual; diante de uma recusa,
    leia o motivo e corrija a causa, não contorne.
+
+**Clique do dono acorda você.** Quando o dono aperta um botão do flow e o próximo passo é
+seu (sessão, automático, `executar`, ou o mockup de novo depois de "Pedir ajustes"), o painel
+manda uma mensagem em nome do mod, por exemplo `Painel: o dono apertou "Aprovar mockup".
+Próximo passo: planejar (Planejar OpenSpec). Siga o flow.` Confira `flow status` e siga, sem
+esperar o dono escrever. Se o próximo passo também é do dono, ou o flow acabou, nada chega.
 
 **Escalada:** depois de 3 tentativas num passo, o mod passa a decisão ao dono
 ("tentar de novo" ou "encerrar"). Não tente de novo por conta própria; leve o
@@ -54,9 +62,11 @@ diagnóstico pronto ao dono.
    escrever. Botão só para escolha fechada (sim/não, A/B).
 2. **Mockup** (dono, só se `visual`). Produza o mockup e anexe com `flow mockup
    {artifact}`. O dono clica **"Aprovar mockup"** ou **"Pedir ajustes"** (com nota): no
-   ajuste, refaça e anexe de novo.
+   ajuste, refaça e anexe de novo. Depois do "Aprovar mockup" o próximo passo é **sempre**
+   `planejar`, mesmo que os artefatos de planejamento já existam.
 3. **Planejar** (sessão). Escreva proposta, design e tarefas do OpenSpec (no `rapido`,
-   só proposta e tarefas); `flow report planejar pronto`.
+   só proposta e tarefas); `flow report planejar pronto`. Se já existem, reconcilie-os com
+   o grill e o mockup aprovado antes de reportar `pronto`.
 4. **Validar** (automático): rode `openspec validate` numa sessão.
 5. **Revisão do plano** (sessão): revisores contra ADRs e specs; `flow report
    revisao-plano aprovado|rejeitado`.
@@ -131,7 +141,9 @@ diagnóstico pronto ao dono.
    mensagem ao coordenador (`<session-id do coordenador>`) com `FASE <id>: pronta —
    <resumo>` ou `FASE <id>: bloqueada — preciso de <X>`".
 2. **Puxar.** Com fase em voo, NUNCA termine o turno sem `ScheduleWakeup` (120 s); tick
-   sem mudança é `noop: true`. A notificação de fim de sessão não é confiável.
+   sem mudança é `noop: true`. A notificação de fim de sessão não é confiável. Sem fase em
+   voo e esperando um passo do dono, o painel acorda você no clique; mesmo assim termine o
+   turno com `ScheduleWakeup` longo (1200 s ou mais) e confira `flow status` quando disparar.
 3. **Ledger.** `<changeRoot>/orchestration.md` (fase, ícone, sessão, branch, estado,
    próximo passo) atualizado a cada transição, para qualquer sessão retomar.
 4. **Painel.** Publique com `plano` logo após montar as ondas e a cada transição:
@@ -149,7 +161,8 @@ diagnóstico pronto ao dono.
 5. **Jira.** Quando o passo pede mudança de estado, o painel avisa; a issue só se move
    no botão **"Mover no Jira"** do dono.
 
-Antes de encerrar qualquer turno: há fase em voo? A checagem está agendada?
+Antes de encerrar qualquer turno: há fase em voo? A checagem está agendada? Espera um
+passo do dono? O `ScheduleWakeup` longo está agendado?
 
 ## 6. Depois do PR
 

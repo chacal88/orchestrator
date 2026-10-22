@@ -59,6 +59,7 @@ import {
   ownerPress,
   parseFlow,
   pressedToast,
+  wakePrompt,
   startFlow,
 } from './flow'
 import type { Moved } from './flow'
@@ -1270,7 +1271,10 @@ const observeFlows = async ($: EngineInterface, command: string, failed: boolean
   }
 }
 
-/** Only the panel's press reaches this: no tool call answers an owner step. */
+/**
+ * Only the panel's press reaches this: no tool call answers an owner step. When the flow lands on a
+ * step the coordinator drives, the press also wakes it with a message in the mod's name.
+ */
 const pressFlow = async ($: EngineInterface, change: string, step: string, outcome: string, note?: string): Promise<void> => {
   const state = await loadFlowState($, change)
   if (state === undefined) return
@@ -1287,7 +1291,8 @@ const pressFlow = async ($: EngineInterface, change: string, step: string, outco
     $.ui.toast(t.toast.notRecorded(prep.error))
     return
   }
-  const moved = ownerPress(state, step, outcome, at, note === undefined || note.trim() === '' ? undefined : note.trim())
+  const noted = note === undefined || note.trim() === '' ? undefined : note.trim()
+  const moved = ownerPress(state, step, outcome, at, noted)
   if ('error' in moved) {
     $.ui.toast(t.toast.notRecorded(moved.error))
     return
@@ -1296,6 +1301,8 @@ const pressFlow = async ($: EngineInterface, change: string, step: string, outco
   await saveFlow($, moved.state, moved.events)
   await refreshQuietly($)
   $.ui.toast(pressedToast(state, moved.state, step, outcome, languages.ui))
+  const wake = wakePrompt(state, moved.state, step, outcome, noted)
+  if (wake !== undefined) await $.prompt.submit({ text: wake })
 }
 
 /**

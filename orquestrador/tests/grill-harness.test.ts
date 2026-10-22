@@ -110,7 +110,8 @@ test('grill rounds go to grill.md and the panel, and only the owner closes the u
 })
 
 test("the mockup: attached, adjusted with the owner's note typed in the panel, then approved", async ($, on) => {
-  const disk = world(on, { answer: 'approve' })
+  const sink: Sink = { toasts: [], prompts: [] }
+  const disk = world(on, { answer: 'approve' }, sink)
   await flow($, { action: 'start', change: 'demo', flow: 'completo', visual: true })
   await press($, 'flow:grill:fechado')
   expect(saved(disk).current).toBe('mockup')
@@ -138,6 +139,14 @@ test("the mockup: attached, adjusted with the owner's note typed in the panel, t
   await press($, 'flow:mockup:aprovado')
   expect(saved(disk).current).toBe('planejar')
   expect(saved(disk).records.mockup).toMatchObject({ outcome: 'aprovado', by: 'owner' })
+  expect(sink.prompts).toEqual([
+    { text: 'Painel: o dono apertou "Entendimento fechado". Próximo passo: mockup (Mockup). Siga o flow.', asUser: false },
+    {
+      text: 'Painel: o dono apertou "Pedir ajustes" com a nota "botão de salvar maior". Próximo passo: mockup (Mockup). Siga o flow.',
+      asUser: false,
+    },
+    { text: 'Painel: o dono apertou "Aprovar mockup". Próximo passo: planejar (Planejar OpenSpec). Siga o flow.', asUser: false },
+  ])
 })
 
 const toRelease = async ($: Engine) => {
@@ -178,6 +187,25 @@ test("the release comes only from the owner approving ExitPlanMode in the app's 
   expect(saved(disk).current).toBe('executar')
   expect(saved(disk).records.liberacao).toMatchObject({ outcome: 'liberado', by: 'owner', note: 'aprovado no plan mode' })
   expect(prep(disk).release?.plan).toMatch(/Plano de execução/)
+})
+
+test('asking for plan adjustments in the panel wakes the coordinator; the plan-mode release sends nothing', async ($, on) => {
+  const sink: Sink = { toasts: [], prompts: [] }
+  const disk = world(on, { answer: 'approve' }, sink)
+  await toRelease($)
+  sink.prompts.length = 0
+  await press($, 'flow:liberacao:ajustes')
+  expect(saved(disk).current).toBe('planejar')
+  expect(sink.prompts).toEqual([
+    { text: 'Painel: o dono apertou "Pedir ajustes no plano". Próximo passo: planejar (Planejar OpenSpec). Siga o flow.', asUser: false },
+  ])
+
+  await flow($, { action: 'report', step: 'planejar', outcome: 'pronto' })
+  await $.tool.call({ tool: 'Bash', command: 'openspec validate demo' } as never)
+  await flow($, { action: 'report', step: 'revisao-plano', outcome: 'aprovado' })
+  await $.tool.call({ tool: 'ExitPlanMode' } as never)
+  expect(saved(disk).current).toBe('executar')
+  expect(sink.prompts).toHaveLength(1)
 })
 
 test('a plan approved while the flow is elsewhere moves nothing', async ($, on) => {

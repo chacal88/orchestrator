@@ -18,6 +18,7 @@ import type {
 import { executedText, masksExitCode } from './gates'
 import { DEFAULT_LANGUAGES, baseText, localize, parseLocalized, uiText } from './i18n'
 import type { UiText } from './i18n'
+import { MOCKUP_STEP } from './grill'
 import { parseJiraTarget } from './jira'
 
 /** The pseudo-step every flow ends on. */
@@ -373,11 +374,7 @@ export const pressedToast = (
   lang: Lang = DEFAULT_LANGUAGES.ui,
 ): string => {
   const t = uiText(lang)
-  const declared = stepOf(before.flow, step)?.outcomes[outcome]
-  const label =
-    (declared === undefined ? undefined : outcomeLabel(declared, lang)) ??
-    escalationChoices(t).find(c => c.outcome === outcome)?.label ??
-    outcome
+  const label = pressedLabel(before, step, outcome, lang)
   const nextStep = stepOf(after.flow, after.current)
   const next =
     after.status === 'done'
@@ -393,6 +390,29 @@ export const stepTitle = (step: FlowStep, lang: Lang): string => localize(step.t
 const stepDescription = (step: FlowStep, lang: Lang): string | undefined =>
   localize(step.descriptions, lang) ?? step.description
 export const outcomeLabel = (o: FlowOutcome, lang: Lang): string => localize(o.labels, lang) ?? o.label
+
+/** The button's own words, in the owner's language: the owner step's outcome label, or the escalation choice's. */
+const pressedLabel = (before: FlowState, step: string, outcome: string, lang: Lang = DEFAULT_LANGUAGES.ui): string => {
+  const declared = stepOf(before.flow, step)?.outcomes[outcome]
+  return (
+    (declared === undefined ? undefined : outcomeLabel(declared, lang)) ??
+    escalationChoices(uiText(lang)).find(c => c.outcome === outcome)?.label ??
+    outcome
+  )
+}
+
+/**
+ * What the coordinator reads after an owner press, or nothing when it has nothing to do: the flow
+ * ended, waits on the owner again, or escalated. A session, automatic or loop step is the
+ * coordinator's to drive; of the owner steps only the mockup is, since it attaches a new one.
+ */
+export const wakePrompt = (before: FlowState, after: FlowState, step: string, outcome: string, note?: string): string | undefined => {
+  if (after.status !== 'running') return undefined
+  const next = currentStep(after)
+  if (next === undefined || (next.kind === 'owner' && next.id !== MOCKUP_STEP)) return undefined
+  const noted = note === undefined ? '' : ` com a nota "${note}"`
+  return `Painel: o dono apertou "${pressedLabel(before, step, outcome)}"${noted}. Próximo passo: ${next.id} (${next.title}). Siga o flow.`
+}
 
 /** Words of a declared command, matched in what the shell ran: `openspec validate` in `npx openspec validate x --strict`. */
 const commandPattern = (command: string): RegExp =>

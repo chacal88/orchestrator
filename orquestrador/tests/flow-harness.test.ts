@@ -15,8 +15,14 @@ const PANE = {
 const STATE = '/h/.claude/orquestrador/flows/demo.json'
 const LOG = '/h/.claude/orquestrador/flows/demo.ndjson'
 
-/** A coordinator at /w with an in-memory disk; Bash commands holding FAIL exit 1; toasts land in `toasts`. */
-const world = (on: On, toasts: string[] = []): Map<string, string> => {
+/** A prompt the mod submitted, and whether it went as the person's own words. */
+type Sent = { text: string; asUser: boolean }
+
+/**
+ * A coordinator at /w with an in-memory disk; Bash commands holding FAIL exit 1; toasts land in
+ * `toasts` and the prompts the mod submits in `prompts`.
+ */
+const world = (on: On, toasts: string[] = [], prompts: Sent[] = []): Map<string, string> => {
   mock.store(on)
   const disk = new Map<string, string>()
   on('env.get', () => ({ value: '/h' }))
@@ -49,6 +55,11 @@ const world = (on: On, toasts: string[] = []): Map<string, string> => {
   on('ui.toast', ($, e) => {
     toasts.push(e.text)
     return { value: undefined } as never
+  })
+  on('prompt.submit', ($, e) => {
+    const origin = e.origin as { kind: string; asUser?: true }
+    prompts.push({ text: e.text, asUser: origin.kind === 'plugin' && origin.asUser === true })
+    return { text: e.text } as never
   })
   return disk
 }
@@ -157,6 +168,97 @@ test('an owner press shows a toast naming the answer recorded and the next step'
   await ui.unmount()
   expect(toasts.at(-1)).toBe('Registrado: Lancei. Flow concluído.')
   expect(saved(disk).status).toBe('done')
+})
+
+const press = async ($: Engine, key: string) => {
+  const ui = await $.ui.mount({ plugin: 'orquestrador', surface: 'desktop', ...PANE })
+  await ui.press({ key })
+  await ui.unmount()
+}
+
+test('an owner press that lands on a step the coordinator drives wakes it with one message in the mod\'s name', async ($, on) => {
+  const toasts: string[] = []
+  const prompts: Sent[] = []
+  const disk = world(on, toasts, prompts)
+  await flow($, { action: 'start', change: 'demo', flow: 'completo' })
+  await press($, 'flow:grill:fechado')
+  expect(saved(disk).current).toBe('planejar')
+  expect(toasts).toEqual(['Registrado: Entendimento fechado. Próximo passo: Planejar OpenSpec.'])
+  expect(prompts).toEqual([
+    {
+      text: 'Painel: o dono apertou "Entendimento fechado". Próximo passo: planejar (Planejar OpenSpec). Siga o flow.',
+      asUser: false,
+    },
+  ])
+})
+
+test('a press that lands on another owner step or ends the flow sends no message', async ($, on) => {
+  const prompts: Sent[] = []
+  const disk = world(on, [], prompts)
+  disk.set(
+    '/w/.orquestrador/flows/rapido.json',
+    JSON.stringify({
+      id: 'rapido',
+      title: 'Rápido da casa',
+      steps: [
+        { id: 'qa', title: 'Conferência do dono', kind: 'owner', outcomes: { aprovado: { label: 'Instalei e funciona', next: 'lancar' } } },
+        { id: 'lancar', title: 'Lançar a versão', kind: 'owner', outcomes: { lancado: { label: 'Lancei', next: 'fim' } } },
+      ],
+    }),
+  )
+  await flow($, { action: 'start', change: 'demo', flow: 'rapido' })
+  await press($, 'flow:qa:aprovado')
+  expect(saved(disk).current).toBe('lancar')
+  await press($, 'flow:lancar:lancado')
+  expect(saved(disk).status).toBe('done')
+  expect(prompts).toEqual([])
+})
+
+test('an escalation retried on a session step wakes the coordinator; ended, it sends nothing', async ($, on) => {
+  const prompts: Sent[] = []
+  const disk = world(on, [], prompts)
+  disk.set(
+    '/w/.orquestrador/flows/rapido.json',
+    JSON.stringify({
+      id: 'rapido',
+      title: 'Rápido da casa',
+      steps: [
+        {
+          id: 'fazer',
+          title: 'Fazer',
+          kind: 'session',
+          maxAttempts: 1,
+          outcomes: { feito: { label: 'Feito', next: 'fim' }, refazer: { label: 'Refazer', next: 'fazer' } },
+        },
+      ],
+    }),
+  )
+  await flow($, { action: 'start', change: 'demo', flow: 'rapido' })
+  await flow($, { action: 'report', step: 'fazer', outcome: 'refazer' })
+  expect(saved(disk).status).toBe('escalated')
+  await press($, 'flow:fazer:tentar-de-novo')
+  expect(saved(disk).status).toBe('running')
+  expect(prompts).toEqual([
+    { text: 'Painel: o dono apertou "Tentar de novo". Próximo passo: fazer (Fazer). Siga o flow.', asUser: false },
+  ])
+  await flow($, { action: 'report', step: 'fazer', outcome: 'refazer' })
+  await press($, 'flow:fazer:encerrar')
+  expect(saved(disk).status).toBe('aborted')
+  expect(prompts).toHaveLength(1)
+})
+
+test('a press the flow refuses sends no message and still says why', async ($, on) => {
+  const toasts: string[] = []
+  const prompts: Sent[] = []
+  const disk = world(on, toasts, prompts)
+  await flow($, { action: 'start', change: 'demo', flow: 'completo' })
+  const ui = await $.ui.mount({ plugin: 'orquestrador', surface: 'desktop', ...PANE })
+  disk.set(STATE, JSON.stringify({ ...saved(disk), current: 'planejar' }))
+  await ui.press({ key: 'flow:grill:fechado' })
+  await ui.unmount()
+  expect(saved(disk).current).toBe('planejar')
+  expect(toasts).toEqual(['Não consegui registrar: the flow of demo is on "planejar" (Planejar OpenSpec), not on "grill". "planejar" is answered by a session (through the flow tool).'])
+  expect(prompts).toEqual([])
 })
 
 test('the flow files are the mod\'s alone, and a project flow overrides a default', async ($, on) => {
