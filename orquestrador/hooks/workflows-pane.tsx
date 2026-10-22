@@ -63,10 +63,24 @@ const METHODS: Record<string, string> = {
 const NONE = '-'
 /** "+ passo aqui" open at the end of a workflow that has no step yet. */
 export const INSERT_END = ':fim'
+/** The focus value that opens the "Nome e descrição" block of the edit screen. */
+export const HEAD_FOCUS = ':nome'
 /** The "+ passo aqui" choice that is no library step. */
 const NEW_STEP = 'novo'
 
 const WHO_COLOR: Record<FlowStepKind, string> = { session: LINK, owner: OWNER, automatic: MOD, loop: MOD }
+/** Who answers, as a pill: background and text colors of the mockup. */
+const WHO_PILL: Record<FlowStepKind, { bg: string; fg: string }> = {
+  session: { bg: '#E3ECFB', fg: '#1E4C9E' },
+  owner: { bg: '#FDEBDD', fg: '#9A3412' },
+  automatic: { bg: '#EDECE8', fg: '#3D3C39' },
+  loop: { bg: '#EDECE8', fg: '#3D3C39' },
+}
+const TAG_BLUE = { bg: '#EEF3FC', fg: '#1E4C9E' }
+const TAG_GRAY = { bg: '#F2F1EC', fg: '#3D3C39' }
+const TAG_AMBER = { bg: '#FDF3E1', fg: '#7A4A00' }
+const RULE = '#E4E2DC'
+const MUTED = '#5F5E5A'
 const WHO_TAG: Record<FlowStepKind, string> = { session: 'sessão', owner: 'você', automatic: 'mod', loop: 'sessões' }
 
 export type WorkflowsElements = {
@@ -178,7 +192,27 @@ export const renderWorkflows = (els: WorkflowsElements, view: WorkflowsView, act
     </Box>
   )
   const noFields = line('Os campos de texto e de escolha ficam no desktop e no terminal.', undefined, true)
-  const tag = (label: string) => <Text dimColor>{`[${label}]`}</Text>
+  /** A pill: a rounded Box with its own background, never the label between brackets. */
+  const pill = (label: string, tone: { bg: string; fg: string }) => (
+    <Box key={`wf-pill:${label}`} borderStyle="round" borderColor={tone.bg} backgroundColor={tone.bg} paddingX={1} flexShrink={0}>
+      <Text size="caption" color={tone.fg} backgroundColor={tone.bg}>
+        {label}
+      </Text>
+    </Box>
+  )
+  const tag = (label: string) => pill(label, TAG_GRAY)
+  /** A hairline under the header, cut to the width of the pane. */
+  const divider = (
+    <Box key="wf-divider" width="100%" height={1} overflow="hidden" minWidth={0}>
+      <Text color={RULE} wrap="truncate">{'─'.repeat(200)}</Text>
+    </Box>
+  )
+  /** A small section label in capitals. */
+  const label = (title: string) => (
+    <Text size="caption" weight="semibold" color={MUTED}>
+      {title.toUpperCase()}
+    </Text>
+  )
 
   const agentModel = (name: string | undefined): string | undefined =>
     name === undefined ? undefined : view.agentList.find(a => a.name === name)?.model
@@ -203,11 +237,13 @@ export const renderWorkflows = (els: WorkflowsElements, view: WorkflowsView, act
   const modelLine = (s: StepLike): string => {
     const fromAgent = s.model === undefined ? agentModel(s.agent) : undefined
     const model = s.model ?? fromAgent
-    const parts = [
-      model === undefined ? 'o da sessão' : `${modelName(model)}${fromAgent === undefined ? '' : ' (do agente)'}`,
-      s.effort === undefined ? undefined : `esforço ${effortName(s.effort)}`,
-    ]
-    return parts.filter((x): x is string => x !== undefined).join(' · ')
+    const parts = [model === undefined ? undefined : modelName(model), s.effort === undefined ? undefined : `esforço ${effortName(s.effort)}`]
+    return parts.filter((x): x is string => x !== undefined).join(', ')
+  }
+  /** The detail row's model: the summary's, or the session's own when nothing sets one. */
+  const modelRow = (s: StepLike): string => {
+    const fromAgent = s.model === undefined ? agentModel(s.agent) : undefined
+    return modelLine(s) === '' ? 'o da sessão' : `${modelLine(s)}${fromAgent === undefined ? '' : ' (do agente)'}`
   }
 
   /** The step's one-line summary, in plain words. */
@@ -224,9 +260,10 @@ export const renderWorkflows = (els: WorkflowsElements, view: WorkflowsView, act
       return `${s.deploy.auto ? 'Automático' : 'Você confirma'} · ${part === '' ? 'sem CI nem rotinas' : part}`
     }
     if (s.kind === 'session' || s.kind === 'loop') {
-      const lead = s.kind === 'loop' ? 'Uma sessão por fase' : undefined
-      const agent = s.agent === undefined ? (lead === undefined ? 'Sessão sem agente' : undefined) : `agente ${s.agent}`
-      return [lead, agent, s.agent === undefined && lead !== undefined ? undefined : modelLine(s)].filter((x): x is string => x !== undefined && x !== '').join(' · ')
+      const lead = s.kind === 'loop' ? 'Uma sessão por fase' : 'Uma sessão faz'
+      if (s.agent === undefined) return `${lead}, sem agente definido`
+      const extra = modelLine(s)
+      return `${lead}, com o agente ${s.agent}${extra === '' ? '' : ` (${extra})`}`
     }
     if (s.kind === 'automatic' && s.command !== undefined) return `O mod vê ${s.command} passar.`
     return s.description ?? who(s)
@@ -256,7 +293,7 @@ export const renderWorkflows = (els: WorkflowsElements, view: WorkflowsView, act
   const detailRows = (s: StepLike, all: StepLike[]): RenderElement[] => {
     const out: RenderElement[] = [row('Quem faz', who(s))]
     out.push(row('Agente', s.agent === undefined ? 'nenhum' : `${s.agent} (${originOf(s.agent)})`))
-    out.push(row('Modelo', modelLine(s)))
+    out.push(row('Modelo', modelRow(s)))
     if (s.command !== undefined) out.push(row('Comando', s.command))
     if (s.merge !== undefined) out.push(row('Merge', `branch ${s.merge.branch} · ${s.merge.method} · automático: ${yes(s.merge.auto)}`))
     if (s.deploy !== undefined) {
@@ -270,11 +307,17 @@ export const renderWorkflows = (els: WorkflowsElements, view: WorkflowsView, act
     return out
   }
 
-  const stepNumber = (s: StepLike, n: number | string, off = false) => (
-    <Box width={4} flexShrink={0}>
-      <Text bold color={off ? undefined : WHO_COLOR[s.kind]} dimColor={off}>{`${n}.`}</Text>
-    </Box>
-  )
+  /** The step's number inside a circle in the color of who answers it. */
+  const stepNumber = (s: StepLike, n: number | string, off = false) => {
+    const bg = off ? RULE : WHO_COLOR[s.kind]
+    return (
+      <Box width={5} flexShrink={0}>
+        <Box width={3} borderStyle="round" borderColor={bg} backgroundColor={bg} alignItems="center" justifyContent="center" flexShrink={0}>
+          <Text weight="bold" color={off ? MUTED : '#FFFFFF'} backgroundColor={bg}>{`${n}`}</Text>
+        </Box>
+      </Box>
+    )
+  }
 
   /** A step of the workflow shown, not edited: number, title, one line, and its rows when opened. */
   const viewStep = (s: StepLike, n: number, all: StepLike[]): RenderElement => {
@@ -284,9 +327,9 @@ export const renderWorkflows = (els: WorkflowsElements, view: WorkflowsView, act
         {stepNumber(s, n)}
         <Box flexDirection="column" flexGrow={1} flexShrink={1} minWidth={0}>
           <Button key={`wf-step:${s.id}`} plain onPress={actions.focus(s.id)}>
-            <Text bold>{`${open ? '▾' : '▸'} ${s.title}`}</Text>
+            <Text weight="semibold">{s.title}</Text>
           </Button>
-          {line(summary(s), undefined, true)}
+          <Text wrap="wrap" color={MUTED} size="footnote">{summary(s)}</Text>
           {open ? <Box flexDirection="column" marginTop={1} rowGap={1} minWidth={0}>{detailRows(s, all)}</Box> : []}
         </Box>
       </Box>
@@ -300,8 +343,8 @@ export const renderWorkflows = (els: WorkflowsElements, view: WorkflowsView, act
   )
 
   const heading = (title: string, extra?: RenderElement) => (
-    <Box flexDirection="row" justifyContent="space-between" columnGap={1} minWidth={0}>
-      <Text bold wrap="wrap">{title}</Text>
+    <Box flexDirection="row" justifyContent="space-between" alignItems="center" columnGap={1} minWidth={0}>
+      <Text size="heading" weight="semibold" wrap="wrap">{title}</Text>
       {extra ?? []}
     </Box>
   )
@@ -455,9 +498,9 @@ export const renderWorkflows = (els: WorkflowsElements, view: WorkflowsView, act
     return box([
       <Box key={`wf-card-head:${s.id}`} flexDirection="row" justifyContent="space-between" columnGap={1} minWidth={0}>
         <Button key={`wf-step:${s.id}`} plain onPress={actions.focus(s.id)}>
-          <Text bold color={WHO_COLOR[s.kind]}>{`▾ ${n}. ${s.title}`}</Text>
+          <Text weight="semibold">{`${n}. ${s.title}`}</Text>
         </Button>
-        {tag(whoShort(s))}
+        {pill(whoShort(s), WHO_PILL[s.kind])}
       </Box>,
       line(who(s), undefined, true),
       ...body,
@@ -540,7 +583,7 @@ export const renderWorkflows = (els: WorkflowsElements, view: WorkflowsView, act
     }
     return box(
       [
-        <Text bold wrap="wrap">{after === undefined ? 'Acrescentar no começo' : `Acrescentar depois de ${after.title}`}</Text>,
+        <Text weight="semibold" wrap="wrap">{after === undefined ? 'Acrescentar no começo' : `Acrescentar depois de ${after.title}`}</Text>,
         ...body,
         buttons(
           <Button key="wf-add" variant="primary" onPress={actions.add}>
@@ -560,6 +603,13 @@ export const renderWorkflows = (els: WorkflowsElements, view: WorkflowsView, act
     const onSteps = d.steps.filter(s => s.on).map(s => s.step as unknown as StepLike)
     const offSteps = d.steps.filter(s => !s.on).map(s => s.step as unknown as StepLike)
     const changes = changesOf(d)
+    // the one "+ passo aqui": where it is open, else after the open step, else at the end
+    const slot =
+      view.insert !== null && (view.insert === INSERT_END || onSteps.some(s => s.id === view.insert))
+        ? view.insert
+        : onSteps.some(s => s.id === view.focus)
+          ? String(view.focus)
+          : INSERT_END
     const insertAt = (id: string, step: StepLike | undefined) => (
       <Box key={`wf-insert-box:${id}`} flexDirection="column" marginTop={1} minWidth={0}>
         {view.insert === id ? insertForm(d, step) : (
@@ -571,7 +621,7 @@ export const renderWorkflows = (els: WorkflowsElements, view: WorkflowsView, act
     )
     return (
       <Box flexDirection="column" minWidth={0}>
-        <Box flexDirection="column" borderStyle="round" borderDimColor paddingX={1} minWidth={0}>
+        <Box flexDirection="column" borderStyle="round" borderColor={RULE} paddingX={1} minWidth={0}>
           {heading(`Editando ${d.title}`)}
           {help('Rascunho: nada é gravado até salvar.')}
           {buttons(
@@ -585,27 +635,36 @@ export const renderWorkflows = (els: WorkflowsElements, view: WorkflowsView, act
           {line(changes.length === 0 ? 'Nenhuma mudança ainda.' : `${changes.length} ${changes.length === 1 ? 'mudança' : 'mudanças'}: ${changes.join('; ')}.`, undefined, changes.length === 0)}
         </Box>
         {d.error === undefined ? [] : box([line(`Não salvei: ${d.error}`, ERROR)], ERROR)}
-        {help(d.base === undefined ? 'Do zero: grava os passos completos.' : `Derivado de ${d.base}: grava só o que muda em relação a ele.`)}
+        {d.base === undefined ? [] : help(`Derivado de ${d.base}: grava só o que muda em relação a ele.`)}
         {d.replacesDefault
           ? box([line(`⚠ ${d.id} é um workflow padrão. Salvar cria .orquestrador/flows/${d.id}.json, que passa a valer no lugar do padrão neste projeto.`, WARN)], WARN)
           : []}
         {help('Changes em andamento seguem com o workflow com que começaram.')}
         {fields
           ? [
-              <Input key="wf-title" label="Nome" submitLabel="aplicar" value={d.title} onInput={actions.head('title')} onSubmit={actions.head('title')} />,
-              <Input
-                key="wf-description"
-                label="Descrição"
-                submitLabel="aplicar"
-                {...(d.description === '' ? {} : { value: d.description })}
-                onInput={actions.head('description')}
-                onSubmit={actions.head('description')}
-              />,
-              help('O nome e a descrição aparecem na lista de workflows.'),
+              <Box key="wf-head-block" flexDirection="column" marginTop={1} minWidth={0}>
+                <Button key="wf-head-toggle" plain onPress={actions.focus(HEAD_FOCUS)}>
+                  <Text weight="semibold">{`${view.focus === HEAD_FOCUS ? '▾' : '›'} Nome e descrição`}</Text>
+                </Button>
+                {view.focus === HEAD_FOCUS
+                  ? [
+                      <Input key="wf-title" label="Nome" submitLabel="aplicar" value={d.title} onInput={actions.head('title')} onSubmit={actions.head('title')} />,
+                      <Input
+                        key="wf-description"
+                        label="Descrição"
+                        submitLabel="aplicar"
+                        {...(d.description === '' ? {} : { value: d.description })}
+                        onInput={actions.head('description')}
+                        onSubmit={actions.head('description')}
+                      />,
+                      help('O nome e a descrição aparecem na lista de workflows.'),
+                    ]
+                  : []}
+              </Box>,
             ]
           : [line(d.title, undefined, false)]}
         <Box flexDirection="column" marginTop={1} minWidth={0}>
-          <Text bold>Passos</Text>
+          {label('Passos')}
           {help('Toque num passo para editar. "+ passo aqui" acrescenta naquele lugar.')}
         </Box>
         {onSteps.length === 0 ? [help('Nenhum passo ainda.'), insertAt(INSERT_END, undefined)] : []}
@@ -620,16 +679,17 @@ export const renderWorkflows = (els: WorkflowsElements, view: WorkflowsView, act
                   {stepNumber(s, i + 1)}
                   <Box flexDirection="row" justifyContent="space-between" flexGrow={1} flexShrink={1} columnGap={1} minWidth={0}>
                     <Button key={`wf-step:${s.id}`} plain onPress={actions.focus(s.id)}>
-                      <Text>{`▸ ${s.title}`}</Text>
+                      <Text weight="semibold">{s.title}</Text>
                     </Button>
-                    {tag(whoShort(s))}
+                    {pill(whoShort(s), WHO_PILL[s.kind])}
                   </Box>
                 </Box>
               )}
-              {insertAt(s.id, s)}
+              {slot === s.id ? insertAt(s.id, s) : []}
             </Box>
           )
         })}
+        {onSteps.length > 0 && slot === INSERT_END ? insertAt(INSERT_END, onSteps[onSteps.length - 1]) : []}
         {offSteps.map(s => (
           <Box key={`wf-off:${s.id}`} flexDirection="row" justifyContent="space-between" columnGap={1} marginTop={1} minWidth={0}>
             <Box flexDirection="row" minWidth={0}>
@@ -667,8 +727,10 @@ export const renderWorkflows = (els: WorkflowsElements, view: WorkflowsView, act
             Editar
           </Button>,
         )}
-        {line(`${chosen.flow.id} · ${chosen.origin}`, undefined, true)}
-        {chosen.flow.description === '' ? [] : [line(chosen.flow.description)]}
+        <Box flexDirection="row" flexWrap="wrap" columnGap={1} marginTop={1} minWidth={0}>
+          {pill(chosen.origin, chosen.flow.base !== undefined ? TAG_BLUE : TAG_GRAY)}
+        </Box>
+        {chosen.flow.description === '' ? [] : [<Text key="wf-desc" wrap="wrap" color={MUTED}>{chosen.flow.description}</Text>]}
         <Box flexDirection="row" flexWrap="wrap" columnGap={2} marginTop={1} minWidth={0}>
           {legend(LINK, 'sessão faz')}
           {legend(OWNER, 'você aprova')}
@@ -684,22 +746,21 @@ export const renderWorkflows = (els: WorkflowsElements, view: WorkflowsView, act
   const card = ({ flow, origin, project, replaces }: WorkflowEntry) => {
     const steps = flow.steps as unknown as StepLike[]
     const tags = [
-      flow.base !== undefined ? `derivado de ${flow.base}` : undefined,
-      steps.some(s => s.merge?.auto === true) ? 'merge automático' : undefined,
-      steps.some(s => s.deploy?.auto === true) ? 'deploy automático' : undefined,
-      project && replaces ? `substitui o padrão ${flow.id}` : undefined,
-    ].filter((x): x is string => x !== undefined)
+      flow.base !== undefined ? { label: `derivado de ${flow.base}`, tone: TAG_BLUE } : undefined,
+      steps.some(s => s.merge?.auto === true) ? { label: 'merge automático', tone: TAG_GRAY } : undefined,
+      steps.some(s => s.deploy?.auto === true) ? { label: 'deploy automático', tone: TAG_GRAY } : undefined,
+      project && replaces ? { label: `substitui o padrão ${flow.id}`, tone: TAG_AMBER } : undefined,
+    ].filter((x): x is { label: string; tone: { bg: string; fg: string } } => x !== undefined)
     return (
-      <Box key={`wf-entry:${flow.id}`} flexDirection="column" borderStyle="round" borderDimColor paddingX={1} minWidth={0}>
+      <Box key={`wf-entry:${flow.id}`} flexDirection="column" borderStyle="round" borderColor={RULE} paddingX={1} minWidth={0}>
         <Box flexDirection="row" justifyContent="space-between" columnGap={1} minWidth={0}>
           <Button key={`wf-open:${flow.id}`} plain onPress={actions.open(flow.id)}>
-            <Text bold color={LINK}>{`${flow.title} ›`}</Text>
+            <Text weight="semibold">{`${flow.title} ›`}</Text>
           </Button>
-          <Text dimColor>{`${steps.length} passos`}</Text>
+          <Text color={MUTED} size="footnote">{`${steps.length} passos`}</Text>
         </Box>
-        {line(`${flow.id} · ${origin}`, undefined, true)}
-        {flow.description === '' ? [] : [line(flow.description)]}
-        {tags.length === 0 ? [] : [<Box flexDirection="row" flexWrap="wrap" columnGap={1} minWidth={0}>{tags.map(t => tag(t))}</Box>]}
+        {flow.description === '' ? [] : [<Text key="wf-desc" wrap="wrap" color={MUTED}>{flow.description}</Text>]}
+        {tags.length === 0 ? [] : [<Box key="wf-tags" flexDirection="row" flexWrap="wrap" columnGap={1} minWidth={0}>{tags.map(t => pill(t.label, t.tone))}</Box>]}
       </Box>
     )
   }
@@ -707,7 +768,7 @@ export const renderWorkflows = (els: WorkflowsElements, view: WorkflowsView, act
   const standard = view.entries.filter(e => !e.project)
   const section = (title: string, children: RenderElement[]) => (
     <Box flexDirection="column" rowGap={1} marginTop={1} minWidth={0}>
-      <Text bold dimColor>{title}</Text>
+      {label(title)}
       {children}
     </Box>
   )
@@ -715,7 +776,8 @@ export const renderWorkflows = (els: WorkflowsElements, view: WorkflowsView, act
   return (
     <Box flexDirection="column" minWidth={0}>
       {notice}
-      <Text bold>Workflows</Text>
+      <Text size="title" weight="semibold">Workflows</Text>
+      {divider}
       {help('Os caminhos que uma change pode seguir neste projeto. Abra um para ver os passos; edite para mudar.')}
       {mine.length === 0 ? [] : [section('Deste projeto', mine.map(card))]}
       {section('Padrões do plugin', [
@@ -750,7 +812,7 @@ export const renderWorkflows = (els: WorkflowsElements, view: WorkflowsView, act
             </Box>,
           ]}
       <Box flexDirection="column" marginTop={1} rowGap={1} minWidth={0}>
-        <Text bold>Novo workflow</Text>
+        <Text weight="semibold">Novo workflow</Text>
         {Input !== undefined && Select !== undefined
           ? [
               <Input

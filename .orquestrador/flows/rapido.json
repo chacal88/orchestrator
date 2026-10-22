@@ -8,6 +8,7 @@
       "title": "Planejar",
       "description": "Uma sessão escreve a proposta e as tarefas da change em changes/<change>/.",
       "kind": "session",
+      "agent": "planejador",
       "outcomes": { "pronto": { "label": "Plano escrito", "next": "validar" } }
     },
     {
@@ -35,6 +36,7 @@
       "title": "Revisão",
       "description": "Revisão de qualidade do que vai ficar público.",
       "kind": "session",
+      "agent": "revisor-codigo",
       "outcomes": {
         "aprovado": { "label": "Aprovado", "next": "checagem" },
         "rejeitado": { "label": "Rejeitado", "next": "executar" }
