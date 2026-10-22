@@ -1,10 +1,10 @@
 ## 1. Formato do workflow
 
-- [ ] 1.1 Tipos: `details`, `agent`, `model`, `effort` no passo; `merge` e `deploy`; workflow derivado (`base`, `remove`, `add`, `override`, `order`) — cx: moderate
-- [ ] 1.2 `parseFlow` aceita e valida os campos novos (agent só em session/loop; merge/deploy coerentes com o kind) — cx: moderate
-- [ ] 1.3 `resolveFlow`: base → remove (religando outcomes) → add (depois de `after`) → override → order → `parseFlow`; erros de ciclo, `executar` removido, `after` inexistente — com testes de cada caso — cx: complex
-- [ ] 1.4 Biblioteca de passos (`revisao-pr`, `merge`, `deploy` + os dos padrões) e `details`/agente nos passos de `completo` e `rapido`, sem mudar ids nem ordem — cx: moderate
-- [ ] 1.5 `loadFlows` resolve os derivados (projeto pode derivar de padrão ou de outro do projeto) e junta os erros — cx: moderate
+- [x] 1.1 Tipos: `details`, `agent`, `model`, `effort` no passo; `merge` e `deploy`; workflow derivado (`base`, `remove`, `add`, `override`, `order`) — cx: moderate
+- [x] 1.2 `parseFlow` aceita e valida os campos novos (agent só em session/loop; merge/deploy coerentes com o kind) — cx: moderate
+- [x] 1.3 `resolveFlow`: base → remove (religando outcomes) → add (depois de `after`) → override → order → `parseFlow`; erros de ciclo, `executar` removido, `after` inexistente — com testes de cada caso — cx: complex
+- [x] 1.4 Biblioteca de passos (`revisao-pr`, `merge`, `deploy` + os dos padrões) e `details`/agente nos passos de `completo` e `rapido`, sem mudar ids nem ordem — cx: moderate
+- [x] 1.5 `loadFlows` resolve os derivados (projeto pode derivar de padrão ou de outro do projeto) e junta os erros — cx: moderate
 
 ## 2. Merge e deploy
 
