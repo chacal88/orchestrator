@@ -1,0 +1,22 @@
+# Entendimento — configurações do projeto
+
+Rodada no chat em 2026-10-22; o dono não discordou de nenhuma recomendação (1–6) e pediu mockup antes do código (7).
+
+1. **Onde.** Seção no topo do painel ⚙️ Workflows: cartão "Este projeto" com o resumo e "Configurar".
+   → C1: o painel ⚙️ abre com o cartão "Este projeto" (idioma, merge, deploy) antes da lista.
+2. **O que entra.** Idioma (caixas e títulos; descrições e textos), merge (automático, branch, método), deploy
+   (automático, esperar o CI, rotinas).
+   → C2: a edição tem os quatro blocos do mockup, cada campo com explicação.
+3. **Relação com os workflows.** Os valores do projeto são o padrão dos passos de merge e deploy de todos os
+   workflows; um passo com valor próprio no workflow vence.
+   → C3: um passo de merge/deploy sem valor próprio usa o do projeto; com valor próprio, o dele; `flow status` e o
+   painel dizem de onde veio.
+4. **Workflow sem merge.** Ligar o auto-merge não acrescenta o passo sozinho: o painel avisa e oferece
+   "Acrescentar merge e deploy".
+   → C4: o bloco "Nos workflows" lista cada workflow (usa o do projeto / valor próprio / sem passo) com a ação.
+5. **Onde grava.** `.orquestrador/config.json`, junto do `language`.
+   → C5: salvar grava só as chaves que mudaram e preserva as outras do arquivo.
+6. **Como salva.** Rascunho com Salvar/Descartar e resumo das mudanças.
+   → C6: nada é gravado até "Salvar"; arquivo inválido não é gravado.
+7. **Mockup.** Aprovado: https://claude.ai/artifact/Kw3TMAVuw8dVWbfK2GemvW
+   → C7: as duas telas seguem o mockup; diferenças só por limite do engine, registradas no evidence.md.
