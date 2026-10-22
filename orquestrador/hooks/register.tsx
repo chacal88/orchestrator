@@ -17,6 +17,7 @@ import type {
   GateSkip,
   GateView,
   JiraIssue,
+  Languages,
   JiraMove,
   JiraTransition,
   OpenSpecView,
@@ -65,6 +66,8 @@ import {
   observeDeploy,
   pendingReview,
   flowView,
+  outcomeLabel,
+  stepTitle,
   ownerPress,
   pressedToast,
   wakePrompt,
@@ -91,6 +94,8 @@ import {
   rejectPlan,
 } from './grill'
 import { bandSummary, parseEvents, stepTimes } from './glance'
+import { CONFIG_PATH, DEFAULT_LANGUAGES, contentRule, parseConfig, uiText } from './i18n'
+import type { UiText } from './i18n'
 import { renderBand, renderPane } from './pane'
 import { WORKFLOWS_PANE, drawWorkflows, toggleWorkflowsPane } from './workflows-pane'
 import { findAgent, loadFlows } from './flow-files'
@@ -370,7 +375,15 @@ const loadSessions = async (
 const readText = async ($: EngineInterface, path: string): Promise<string | undefined> =>
   (await $.fs.exists(path)) ? $.fs.read(path) : undefined
 
-const loadOpenSpec = async ($: EngineInterface, run: OrchestrationRun): Promise<OpenSpecView | undefined> => {
+/** The project's languages from `<repo>/.orquestrador/config.json`, read fresh: an edit shows on the next refresh. */
+const loadConfig = async ($: EngineInterface): Promise<{ languages: Languages; problems: string[] }> =>
+  parseConfig(await readText($, `${await $.session.root()}/${CONFIG_PATH}`).catch(() => undefined))
+
+/** The owner's words now, for a toast raised outside the pane. */
+const textNow = async ($: EngineInterface): Promise<UiText> =>
+  uiText((await loadConfig($).catch(() => ({ languages: DEFAULT_LANGUAGES }))).languages.ui)
+
+const loadOpenSpec = async ($: EngineInterface, run: OrchestrationRun, t: UiText): Promise<OpenSpecView | undefined> => {
   if (run.changePath === undefined) return undefined
   const home = (await $.env.get('HOME')) ?? ''
   const dir = changeDir(run.changePath.replace(/^~(?=\/)/, home), run.coordinatorCwd)
@@ -378,7 +391,7 @@ const loadOpenSpec = async ($: EngineInterface, run: OrchestrationRun): Promise<
     ['tasks.md', 'proposal.md', 'evidence.md'].map(name => readText($, `${dir}/${name}`)),
   )
   if (tasks === undefined && proposal === undefined) return undefined
-  return openSpecView({ tasks, proposal, evidence })
+  return openSpecView({ tasks, proposal, evidence }, t)
 }
 
 /** The module's own memory: it starts over on a reload, which only costs one fresh fetch. */
@@ -394,6 +407,7 @@ const findTool = async ($: EngineInterface, suffix: string): Promise<string | un
 const loadJira = async (
   $: EngineInterface,
   run: OrchestrationRun,
+  t: UiText,
 ): Promise<{ issues: Record<string, JiraIssue>; note: string | undefined }> => {
   const keys = jiraKeys(run)
   if (keys.length === 0) return { issues: {}, note: undefined }
@@ -406,12 +420,12 @@ const loadJira = async (
   const getIssue = await findTool($, '__getJiraIssue')
   const getSites = await findTool($, '__getAccessibleAtlassianResources')
   if (getIssue === undefined || getSites === undefined) {
-    return linkOnly(run.jiraSite, 'Jira: conector Atlassian indisponível nesta sessão; mostrando só as chaves.')
+    return linkOnly(run.jiraSite, t.jira.unavailable)
   }
   const site = firstSite((await callTool($, { tool: getSites })).text)
   const host = run.jiraSite ?? site?.url
   if (host === undefined) {
-    return linkOnly(run.jiraSite, 'Jira: o conector Atlassian está logado, mas a autorização não inclui nenhum site do Jira. Reconecte-o em claude.ai › Configurações › Conectores e marque o site na tela da Atlassian.')
+    return linkOnly(run.jiraSite, t.jira.noSite)
   }
   const cloudId = run.jiraSite ?? site?.cloudId ?? host
   const now = await $.clock.now()
@@ -434,7 +448,7 @@ const loadJira = async (
   )
   return {
     issues: Object.fromEntries(issues.map(issue => [issue.key, issue])),
-    note: failed.length === 0 ? undefined : `Jira: não consegui ler ${failed.join(', ')}.`,
+    note: failed.length === 0 ? undefined : t.jira.couldNotRead(failed.join(', ')),
   }
 }
 
@@ -442,15 +456,16 @@ const loadJira = async (
 const jiraConnection = async (
   $: EngineInterface,
   run: OrchestrationRun,
+  t: UiText,
 ): Promise<{ cloudId: string; getTransitions: string; transition: string | undefined } | { note: string }> => {
   const getTransitions = await findTool($, '__getTransitionsForJiraIssue')
   const getSites = await findTool($, '__getAccessibleAtlassianResources')
   if (getTransitions === undefined || getSites === undefined) {
-    return { note: 'o conector Atlassian não está autenticado nesta sessão (claude.ai › Configurações › Conectores).' }
+    return { note: t.jira.notAuthenticated }
   }
   const site = firstSite((await callTool($, { tool: getSites })).text)
   const cloudId = run.jiraSite ?? site?.cloudId
-  if (cloudId === undefined) return { note: 'a autorização do conector Atlassian não inclui nenhum site do Jira.' }
+  if (cloudId === undefined) return { note: t.jira.noSiteShort }
   return { cloudId, getTransitions, transition: await findTool($, TRANSITION_SUFFIX) }
 }
 
@@ -481,13 +496,14 @@ const loadJiraMoves = async (
   run: OrchestrationRun | undefined,
   state: FlowState | undefined,
   issues: Record<string, JiraIssue>,
+  t: UiText,
 ): Promise<JiraMove[]> => {
   if (run === undefined || state === undefined || (state.status !== 'running' && state.status !== 'done')) return []
   const stepId = state.status === 'done' ? state.flow.steps.at(-1)?.id : state.current
   if (stepId === undefined) return []
   const wanted = wishes(run, state.flow.steps, stepId)
   if (wanted.length === 0) return []
-  const conn = await jiraConnection($, run)
+  const conn = await jiraConnection($, run, t)
   const moves: JiraMove[] = []
   for (const wish of wanted) {
     const issue = issues[wish.key]
@@ -507,16 +523,17 @@ const loadJiraMoves = async (
 const pressJiraMove = async ($: EngineInterface, change: string, key: string, transitionId: string): Promise<void> => {
   const run = await loadRun($, await $.session.root())
   if (run === undefined) return
-  const conn = await jiraConnection($, run)
+  const t = await textNow($)
+  const conn = await jiraConnection($, run, t)
   if ('note' in conn || conn.transition === undefined) {
-    $.ui.toast(`Não movi ${key}: ${'note' in conn ? conn.note : 'o conector não oferece transitionJiraIssue.'}`)
+    $.ui.toast(t.jira.notMoved(key, 'note' in conn ? conn.note : t.jira.noTransitionTool))
     return
   }
-  const issue = (await loadJira($, run)).issues[key]
+  const issue = (await loadJira($, run, t)).issues[key]
   const transitions = issue === undefined ? undefined : await issueTransitions($, conn, issue, true)
-  const hit = transitions?.find(t => t.id === transitionId)
+  const hit = transitions?.find(tr => tr.id === transitionId)
   if (issue === undefined || hit === undefined) {
-    $.ui.toast(`Não movi ${key}: essa transição não está mais disponível. O painel vai se atualizar.`)
+    $.ui.toast(t.jira.notMoved(key, t.jira.goneTransition))
     await refreshQuietly($)
     return
   }
@@ -532,7 +549,7 @@ const pressJiraMove = async ($: EngineInterface, change: string, key: string, tr
       approvedMove = undefined
     })
   if (ran.isError === true || ran.deny !== undefined) {
-    $.ui.toast(`O Jira recusou mover ${key}${ran.text === undefined ? '.' : `: ${ran.text.slice(0, 120)}`}`)
+    $.ui.toast(t.jira.refused(key, ran.text?.slice(0, 120)))
     return
   }
   jiraCache.delete(key)
@@ -545,7 +562,7 @@ const pressJiraMove = async ($: EngineInterface, change: string, key: string, tr
     const event: FlowEvent = { seq: state.seq, at: await $.clock.now(), kind: 'jira-moved', step: state.current, by: 'owner', note }
     await $.fs.write(log, `${prior}${JSON.stringify(event)}\n`)
   }
-  $.ui.toast(`${key} movida para ${hit.to ?? hit.name}.`)
+  $.ui.toast(t.jira.moved(key, hit.to ?? hit.name))
   await refreshQuietly($)
 }
 
@@ -559,6 +576,13 @@ const refresh = async ($: EngineInterface): Promise<void> => {
   const cwd = await $.session.root()
   const base = await baseDir($)
   const { value: ownPlan = [] } = await $.state.get(PLAN)
+  const config = await loadConfig($).catch(error => {
+    problems.push(describeError('config', error))
+    return { languages: DEFAULT_LANGUAGES, problems: [] }
+  })
+  problems.push(...config.problems)
+  const { languages } = config
+  const t = uiText(languages.ui)
 
   const run = await loadRun($, cwd).catch(error => {
     problems.push(describeError('plano', error))
@@ -568,7 +592,7 @@ const refresh = async ($: EngineInterface): Promise<void> => {
   let sessions: { self: SessionCard | undefined; children: SessionCard[] } = { self: undefined, children: [] }
   try {
     if (await canCall($, LIST_SESSIONS)) sessions = await loadSessions($, base, ownPlan)
-    else problems.push('Sessões filhas indisponíveis: o app não expõe a lista de sessões aqui.')
+    else problems.push(t.warning.noSessions)
   } catch (error) {
     problems.push(describeError('sessões', error))
   }
@@ -576,22 +600,22 @@ const refresh = async ($: EngineInterface): Promise<void> => {
   const openspec =
     run === undefined
       ? undefined
-      : await loadOpenSpec($, run).catch(error => {
+      : await loadOpenSpec($, run, t).catch(error => {
           problems.push(describeError('openspec', error))
           return undefined
         })
   const jira =
     run === undefined
       ? { issues: {}, note: undefined }
-      : await loadJira($, run).catch(error => ({ issues: {}, note: describeError('jira', error) }))
+      : await loadJira($, run, t).catch(error => ({ issues: {}, note: describeError('jira', error) }))
 
   const skips = run === undefined ? {} : await loadSkips($, run.change).catch(() => ({}))
-  const flow = await loadFlowView($, run, cwd).catch(error => {
+  const flow = await loadFlowView($, run, cwd, languages).catch(error => {
     problems.push(describeError('flow', error))
     return undefined
   })
   const flowState = flow === undefined ? undefined : await loadFlowState($, flow.change).catch(() => undefined)
-  const jiraMoves = await loadJiraMoves($, run, flowState, jira.issues).catch(error => {
+  const jiraMoves = await loadJiraMoves($, run, flowState, jira.issues, t).catch(error => {
     problems.push(describeError('jira', error))
     return []
   })
@@ -615,6 +639,7 @@ const refresh = async ($: EngineInterface): Promise<void> => {
     flow,
     prep,
     ...(flowTimes === undefined ? {} : { flowTimes }),
+    languages,
     updatedAt: await $.clock.now(),
     warning: problems.length === 0 ? undefined : problems.join(' · '),
   }
@@ -746,7 +771,7 @@ const publishPlan = async ($: EngineInterface, input: Record<string, unknown>): 
   return {
     result:
       `Plan published for ${parsed.change}: ${counts.done} done, ${counts.running} running, ` +
-      `${counts.blocked} blocked, ${counts.pending} pending.`,
+      `${counts.blocked} blocked, ${counts.pending} pending. ${contentRule((await loadConfig($)).languages)}`,
   }
 }
 
@@ -766,7 +791,7 @@ const openSession = async ($: EngineInterface, card: SessionCard, ownId: string 
     const opened = await $.process.run(['open', card.link], { timeoutMs: 5_000 }).catch(() => undefined)
     if (opened?.exitCode === 0) return
   }
-  $.ui.toast(`Não consegui abrir; procure "${card.title}" na barra lateral.`)
+  $.ui.toast((await textNow($)).toast.cannotOpen(card.title))
 }
 
 const PLAN_FAILED = { result: 'Plan not published: the orchestrator panel failed to store it.', isError: true } as const
@@ -1151,11 +1176,11 @@ const handleFlowTool = async ($: EngineInterface, input: Record<string, unknown>
     )
     await saveFlow($, started.state, started.events)
     await refreshQuietly($)
-    return { result: `Started. ${await describeWithPrep($, started.state)}` }
+    return { result: `Started. ${await describeWithPrep($, started.state)} ${contentRule((await loadConfig($)).languages)}` }
   }
   const picked = await pickFlow($, input.change)
   if ('error' in picked) return flowError(picked.error)
-  if (action === 'status') return { result: await describeWithPrep($, picked) }
+  if (action === 'status') return { result: `${await describeWithPrep($, picked)} ${contentRule((await loadConfig($)).languages)}` }
   if (action === 'round' || action === 'mockup') return handlePrepAction($, picked, input)
   if (action === 'close') return closeLoopPhase($, picked, input.phase)
   if (action === 'note') {
@@ -1327,18 +1352,16 @@ const observeFlows = async ($: EngineInterface, command: string, failed: boolean
     if (step.deploy !== undefined) {
       const seen = observeDeploy(state, command, failed, await $.clock.now())
       if (seen === undefined) continue
+      const { languages } = await loadConfig($)
+      const t = uiText(languages.ui).toast
       if ('error' in seen) {
         await logFlowRefusal($, state, step.id, 'detect', seen.error)
-        $.ui.toast(`Flow ${state.change}: ${step.title} não contou o comando — ${seen.error}`)
+        $.ui.toast(t.deployRefused(state.change, stepTitle(step, languages.ui), seen.error))
         continue
       }
       await saveFlow($, seen.state, seen.events)
-      const word = seen.events.some(e => e.outcome === 'falhou')
-        ? 'falhou'
-        : seen.state.current === step.id
-          ? 'parte do deploy vista'
-          : 'deploy concluído'
-      $.ui.toast(`Flow ${state.change}: ${step.title} — ${word}.`)
+      const word = seen.events.some(e => e.outcome === 'falhou') ? 'failed' : seen.state.current === step.id ? 'part' : 'done'
+      $.ui.toast(t.deployProgress(state.change, stepTitle(step, languages.ui), word))
       continue
     }
     const detected = detectedOutcome(step, command, failed)
@@ -1350,14 +1373,17 @@ const observeFlows = async ($: EngineInterface, command: string, failed: boolean
       )
       if ('error' in seen) continue
       await saveFlow($, seen.state, seen.events)
-      $.ui.toast(`Flow ${state.change}: vi o deploy — ${step.outcomes[detected]?.label ?? detected}.`)
+      const { languages } = await loadConfig($)
+      const declared = step.outcomes[detected]
+      $.ui.toast(uiText(languages.ui).toast.deploySeen(state.change, declared === undefined ? detected : outcomeLabel(declared, languages.ui)))
       continue
     }
     const outcome = automaticOutcome(step, command, failed)
     if (outcome === undefined) continue
     if (outcome === 'passou' && step.requiresEvidence && !(await hasEvidence($, state))) {
       await logFlowRefusal($, state, step.id, 'automatic', 'passed, but evidence.md is not recorded')
-      $.ui.toast(`Flow ${state.change}: ${step.title} passou, mas o evidence.md ainda não foi preenchido.`)
+      const { languages } = await loadConfig($)
+      $.ui.toast(uiText(languages.ui).toast.evidenceMissing(state.change, stepTitle(step, languages.ui)))
       continue
     }
     const moved = applyOutcome(state, { step: step.id, outcome, by: 'automatic' }, await $.clock.now())
@@ -1375,26 +1401,28 @@ const pressFlow = async ($: EngineInterface, change: string, step: string, outco
   const state = await loadFlowState($, change)
   if (state === undefined) return
   const running = state.status === 'running' && state.current === step
+  const { languages } = await loadConfig($)
+  const t = uiText(languages.ui)
   if (running && step === RELEASE_STEP && outcome === RELEASE_OUTCOME) {
-    $.ui.toast('A liberação vem do plan mode: aprove o plano de execução no diálogo do app.')
+    $.ui.toast(t.toast.releaseFromPlanMode)
     return
   }
   const at = await $.clock.now()
   const prep = running && step === MOCKUP_STEP ? pressMockup(await loadPrep($, change), outcome, note, at) : undefined
   if (prep !== undefined && 'error' in prep) {
-    $.ui.toast(`Não consegui registrar: ${prep.error}`)
+    $.ui.toast(t.toast.notRecorded(prep.error))
     return
   }
   const noted = note === undefined || note.trim() === '' ? undefined : note.trim()
   const moved = ownerPress(state, step, outcome, at, noted)
   if ('error' in moved) {
-    $.ui.toast(`Não consegui registrar: ${moved.error}`)
+    $.ui.toast(t.toast.notRecorded(moved.error))
     return
   }
   if (prep !== undefined) await savePrep($, state, prep, undefined)
   await saveFlow($, moved.state, moved.events)
   await refreshQuietly($)
-  $.ui.toast(pressedToast(state, moved.state, step, outcome))
+  $.ui.toast(pressedToast(state, moved.state, step, outcome, languages.ui))
   const wake = wakePrompt(state, moved.state, step, outcome, noted)
   if (wake !== undefined) await $.prompt.submit({ text: wake })
 }
@@ -1408,7 +1436,7 @@ const answerGrill = async ($: EngineInterface, change: string, answers: readonly
   if (state === undefined) return
   const done = ownerAnswers(await loadPrep($, change), state, answers, await $.clock.now())
   if ('error' in done) {
-    $.ui.toast(`Não consegui registrar: ${done.error}`)
+    $.ui.toast((await textNow($)).toast.notRecorded(done.error))
     return
   }
   const sent = answers.filter(a => a.answer.trim() !== '')
@@ -1446,12 +1474,17 @@ const togglePane = async ($: EngineInterface): Promise<'opened' | 'waiting' | 'c
 }
 
 /** The flow the panel shows: the published plan's change, else the latest flow of this checkout. */
-const loadFlowView = async ($: EngineInterface, run: OrchestrationRun | undefined, cwd: string): Promise<FlowView | undefined> => {
+const loadFlowView = async (
+  $: EngineInterface,
+  run: OrchestrationRun | undefined,
+  cwd: string,
+  languages: Languages,
+): Promise<FlowView | undefined> => {
   const state =
     run === undefined
       ? (await allFlowStates($)).filter(s => s.coordinatorCwd === cwd).sort((a, b) => b.updatedAt - a.updatedAt)[0]
       : await loadFlowState($, run.change)
-  return state === undefined ? undefined : flowView(state)
+  return state === undefined ? undefined : flowView(state, languages)
 }
 
 const prepFile = async ($: EngineInterface, change: string): Promise<string> =>
@@ -1524,7 +1557,7 @@ const observeRelease = async ($: EngineInterface, input: Record<string, unknown>
     s => s.status === 'running' && s.current === RELEASE_STEP && ownsFlow(s, root),
   )
   if (waiting.length !== 1) {
-    if (waiting.length > 1) $.ui.toast('Vários flows esperam a liberação; aprovação do plano não registrada.')
+    if (waiting.length > 1) $.ui.toast((await textNow($)).toast.severalReleases)
     return
   }
   const state = waiting[0]!
@@ -1580,11 +1613,11 @@ export const register: Register = on => {
     await restoreActivity($).catch(() => undefined)
     await $.command.register({
       name: 'orquestrador',
-      description: 'Abre ou fecha o painel da orquestração: OpenSpec, gates, pendências e tarefas',
+      description: (await textNow($)).command.description,
     })
     await $.command.register({
       name: 'orquestrador-workflows',
-      description: 'Abre ou fecha o painel ⚙️ Workflows: ver e editar os workflows do projeto',
+      description: (await textNow($)).command.workflowsDescription,
     })
     await $.tool.register({
       name: 'plano',
@@ -1613,26 +1646,14 @@ export const register: Register = on => {
 
   on('command.run', { command: 'orquestrador' }, async $ => {
     const done = await togglePane($)
-    return {
-      text:
-        done === 'closed'
-          ? 'Painel do orquestrador fechado.'
-          : done === 'opened'
-            ? 'Painel do orquestrador aberto.'
-            : 'Painel pronto; amplie a janela para vê-lo.',
-    }
+    const t = (await textNow($)).command
+    return { text: done === 'closed' ? t.closed : done === 'opened' ? t.opened : t.waiting }
   })
 
   on('command.run', { command: 'orquestrador-workflows' }, async $ => {
     const done = await toggleWorkflowsPane($)
-    return {
-      text:
-        done === 'closed'
-          ? 'Painel de workflows fechado.'
-          : done === 'opened'
-            ? 'Painel de workflows aberto.'
-            : 'Painel de workflows pronto; amplie a janela para vê-lo.',
-    }
+    const t = (await textNow($)).command
+    return { text: done === 'closed' ? t.workflowsClosed : done === 'opened' ? t.workflowsOpened : t.workflowsWaiting }
   })
 
   on('ui.render', { component: 'Pane', requestId: WORKFLOWS_PANE }, async ($, e) => {
@@ -1659,9 +1680,10 @@ export const register: Register = on => {
     if (summary === undefined) return next(e)
     const { value: paneOpen = false } = await $.state.get(PANE_OPEN)
     const { Box, Text, Button } = $.ui.resolve(e)
+    const lang = view?.languages?.ui
     return renderBand({ Box, Text, Button }, summary, paneOpen, () => {
-      void togglePane($).catch(() => $.ui.toast('Não consegui abrir ou fechar o painel.'))
-    })
+      void togglePane($).catch(() => $.ui.toast(uiText(lang).toast.paneFailed))
+    }, lang)
   })
 
   on('tool.call', async ($, e, next) => {
@@ -1686,7 +1708,7 @@ export const register: Register = on => {
     if (refusal !== undefined) return { deny: `Orchestrator gate: ${refusal}` }
     if (tool === 'AskUserQuestion') {
       const first = (input.questions as { question?: unknown }[] | undefined)?.[0]?.question
-      await setWaiting($, { kind: 'question', text: typeof first === 'string' ? first : 'Pergunta para você' })
+      await setWaiting($, { kind: 'question', text: typeof first === 'string' ? first : (await textNow($)).question })
     }
     const ran = await next(e)
     await observeGates($, tool, input, ran as CallResult & { result?: unknown }).catch(error =>
@@ -1755,6 +1777,7 @@ export const register: Register = on => {
     const Svg = e.surface === 'desktop' ? $.ui.resolve(e).Svg : undefined
     const Input = e.surface === 'mobile' ? undefined : $.ui.resolve(e).Input
     const ownId = view.self?.sessionId
+    const t = uiText(view.languages?.ui).toast
     return renderPane({ Box, Text, Button, Link, Svg, Input }, view, ownPlan, {
       collapsed,
       answered,
@@ -1768,23 +1791,23 @@ export const register: Register = on => {
       skip: (gate: GateView) => () => {
         const change = view.run?.change ?? view.flow?.change
         if (change === undefined) {
-          $.ui.toast('Não consegui registrar o pulo: o painel ainda não carregou a change. Tente de novo em alguns segundos.')
+          $.ui.toast(t.skipNotLoaded)
           return
         }
         void skipGate($, change, gate)
           .then(() => refreshQuietly($))
-          .then(() => $.ui.toast(`Portão ${gate.label} pulado por decisão sua.`))
-          .catch(() => $.ui.toast('Não consegui registrar o pulo do portão.'))
+          .then(() => $.ui.toast(t.skipped(gate.label)))
+          .catch(() => $.ui.toast(t.skipFailed))
       },
       answerFlow: (change, step, outcome) => () => {
-        void pressFlow($, change, step, outcome).catch(() => $.ui.toast('Não consegui registrar sua resposta ao flow.'))
+        void pressFlow($, change, step, outcome).catch(() => $.ui.toast(t.flowFailed))
       },
       noteFlow: (change, step, outcome) => (value: string) => {
         if (value.trim() === '') {
-          $.ui.toast('Escreva o que ajustar antes de enviar.')
+          $.ui.toast(t.adjustEmpty)
           return
         }
-        void pressFlow($, change, step, outcome, value).catch(() => $.ui.toast('Não consegui registrar sua resposta ao flow.'))
+        void pressFlow($, change, step, outcome, value).catch(() => $.ui.toast(t.flowFailed))
       },
       drafts,
       draftAnswer: question => (value: string) => {
@@ -1792,18 +1815,18 @@ export const register: Register = on => {
       },
       answerGrill: (change, answers) => () => {
         if (answers.every(a => a.answer.trim() === '')) {
-          $.ui.toast('Escreva a resposta antes de enviar.')
+          $.ui.toast(t.answerEmpty)
           return
         }
-        void answerGrill($, change, answers).catch(() => $.ui.toast('Não consegui registrar sua resposta ao grill.'))
+        void answerGrill($, change, answers).catch(() => $.ui.toast(t.grillFailed))
       },
       moveJira: (change, key, transitionId) => () => {
-        void pressJiraMove($, change, key, transitionId).catch(() => $.ui.toast(`Não consegui mover ${key} no Jira.`))
+        void pressJiraMove($, change, key, transitionId).catch(() => $.ui.toast(uiText(view.languages?.ui).jira.moveFailed(key)))
       },
       accept: (item: Attention) => () => {
         void update($, ANSWERED, list => [...(list ?? []), item.title].slice(-50))
         void $.prompt.submit({
-          text: `Decisão do dono — "${item.title}": aceito a recomendação (${item.recommendation ?? 'a sua'}). Pode seguir.`,
+          text: uiText(view.languages?.ui).attention.accepted(item.title, item.recommendation),
           asUser: true,
         })
       },

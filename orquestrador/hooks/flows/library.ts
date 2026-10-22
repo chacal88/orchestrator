@@ -9,17 +9,20 @@ type Build = (changes: RawStep) => RawStep
 
 const isRecord = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v)
 
+/** One text per language, as a flow file writes it. */
+const both = (pt: string, en: string) => ({ 'pt-BR': pt, en })
+
 const revisaoPr: Build = () => ({
   id: 'revisao-pr',
-  title: 'Revisão do PR',
-  description: 'O dono revisa e aprova o PR no GitHub.',
+  title: both('Revisão do PR', 'PR review'),
+  description: both('O dono revisa e aprova o PR no GitHub.', 'The owner reviews and approves the PR on GitHub.'),
   kind: 'owner',
   details: {
-    inputs: 'O PR aberto da change, com o CI rodando.',
-    produces: 'O PR aprovado no GitHub.',
-    blocks: 'Sem a aprovação, nada é mergeado.',
+    inputs: both('O PR aberto da change, com o CI rodando.', "The change's open PR, with the CI running."),
+    produces: both('O PR aprovado no GitHub.', 'The PR approved on GitHub.'),
+    blocks: both('Sem a aprovação, nada é mergeado.', 'Without the approval, nothing is merged.'),
   },
-  outcomes: { aprovado: { label: 'PR aprovado', next: NEXT_STEP } },
+  outcomes: { aprovado: { label: both('PR aprovado', 'PR approved'), next: NEXT_STEP } },
 })
 
 /** The owner merges (and the mod sees `gh pr merge`), or with `auto` the coordinator runs it. */
@@ -28,14 +31,23 @@ const merge: Build = changes => {
   const id = typeof changes.id === 'string' ? changes.id : 'merge'
   const shared = {
     id,
-    title: `Merge em ${String(config.branch)}`,
-    description: `O PR da change entra em ${String(config.branch)} por ${String(config.method)}.`,
+    title: both(`Merge em ${String(config.branch)}`, `Merge into ${String(config.branch)}`),
+    description: both(
+      `O PR da change entra em ${String(config.branch)} por ${String(config.method)}.`,
+      `The change's PR goes into ${String(config.branch)} by ${String(config.method)}.`,
+    ),
     agent: 'merge',
     merge: config,
     details: {
-      inputs: 'O PR aprovado no GitHub, o CI verde e os portões finais passados.',
-      produces: `O PR mergeado em ${String(config.branch)}.`,
-      blocks: 'Sem aprovação ou com o CI vermelho, não há merge; nunca com --admin.',
+      inputs: both(
+        'O PR aprovado no GitHub, o CI verde e os portões finais passados.',
+        'The PR approved on GitHub, the CI green and the final gates passed.',
+      ),
+      produces: both(`O PR mergeado em ${String(config.branch)}.`, `The PR merged into ${String(config.branch)}.`),
+      blocks: both(
+        'Sem aprovação ou com o CI vermelho, não há merge; nunca com --admin.',
+        'Without approval or with the CI red, there is no merge; never with --admin.',
+      ),
     },
   }
   return config.auto === true
@@ -43,13 +55,13 @@ const merge: Build = changes => {
         ...shared,
         kind: 'automatic',
         command: 'gh pr merge',
-        outcomes: { passou: { label: 'Mergeado', next: NEXT_STEP }, falhou: { label: 'Falhou', next: id } },
+        outcomes: { passou: { label: both('Mergeado', 'Merged'), next: NEXT_STEP }, falhou: { label: both('Falhou', 'Failed'), next: id } },
       }
     : {
         ...shared,
         kind: 'owner',
         detect: { commands: ['gh pr merge'], outcome: 'feito' },
-        outcomes: { feito: { label: 'Merge feito', next: NEXT_STEP } },
+        outcomes: { feito: { label: both('Merge feito', 'Merge done'), next: NEXT_STEP } },
       }
 }
 
@@ -63,14 +75,20 @@ const deploy: Build = changes => {
   const id = typeof changes.id === 'string' ? changes.id : 'deploy'
   const shared = {
     id,
-    title: 'Deploy',
-    description: 'A change é publicada depois do merge: pelo CI, por rotinas, ou pelos dois.',
+    title: both('Deploy', 'Deploy'),
+    description: both(
+      'A change é publicada depois do merge: pelo CI, por rotinas, ou pelos dois.',
+      'The change is published after the merge: by the CI, by routines, or both.',
+    ),
     agent: 'deploy',
     deploy: config,
     details: {
-      inputs: 'O merge feito.',
-      produces: 'O deploy confirmado: o do CI concluído e cada rotina com saída 0, na ordem.',
-      blocks: 'Uma rotina que falha segura o passo; o dono decide.',
+      inputs: both('O merge feito.', 'The merge done.'),
+      produces: both(
+        'O deploy confirmado: o do CI concluído e cada rotina com saída 0, na ordem.',
+        "The deploy confirmed: the CI's finished and each routine exiting 0, in order.",
+      ),
+      blocks: both('Uma rotina que falha segura o passo; o dono decide.', 'A failing routine holds the step; the owner decides.'),
     },
   }
   return config.auto === true
@@ -78,9 +96,9 @@ const deploy: Build = changes => {
         ...shared,
         kind: 'automatic',
         command: config.ci === false && typeof commands[0] === 'string' ? commands[0] : 'gh run watch',
-        outcomes: { passou: { label: 'Publicado', next: NEXT_STEP }, falhou: { label: 'Falhou', next: id } },
+        outcomes: { passou: { label: both('Publicado', 'Published'), next: NEXT_STEP }, falhou: { label: both('Falhou', 'Failed'), next: id } },
       }
-    : { ...shared, kind: 'owner', outcomes: { publicado: { label: 'Deploy concluído', next: NEXT_STEP } } }
+    : { ...shared, kind: 'owner', outcomes: { publicado: { label: both('Deploy concluído', 'Deploy finished'), next: NEXT_STEP } } }
 }
 
 /** A default flow's step, reusable: its first outcome (the forward one) leads to whatever follows it. */

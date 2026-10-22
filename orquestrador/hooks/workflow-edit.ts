@@ -1,7 +1,10 @@
 import type { FlowDef, FlowDeploy, FlowDetect, FlowMerge, WorkflowDraft, WorkflowDraftStep, WorkflowForms } from '../types'
-import { FLOW_END, PRODUCTION_STEP, ownDetect, resolveProjectFlows } from './flow'
+import { FLOW_END, PRODUCTION_STEP, asWritten, ownDetect, resolveProjectFlows } from './flow'
 import type { FlowSource } from './flow'
 import { LIBRARY, NEXT_STEP, libraryStep } from './flows/library'
+import { localize, parseLocalized } from './i18n'
+import { workflowsText } from './i18n-workflows'
+import type { WorkflowsText } from './i18n-workflows'
 
 type RawStep = Record<string, unknown>
 type Outcomes = Record<string, { label?: string; next: string }>
@@ -23,12 +26,12 @@ export const EMPTY_FORMS: WorkflowForms = { newId: '', newBase: '', stepTitle: '
 export const WORKFLOW_ID = /^[a-z0-9]+(?:-[a-z0-9]+)*$/
 
 /**
- * A flow's steps as the editor holds them: each step's forward outcomes (those that lead to the
+ * A flow's steps as the editor holds them, as a file writes them (every language kept): each step's forward outcomes (those that lead to the
  * step after it, or to the end after the last) lead to "$seguinte", so moving a step moves the path.
  */
 const asDraftSteps = (flow: FlowDef): RawStep[] =>
   flow.steps.map((s, i) => {
-    const step = clone(s) as unknown as RawStep
+    const step = clone(asWritten(s))
     const after = flow.steps[i + 1]?.id ?? FLOW_END
     const outcomes = outcomesOf(step)
     const forward = Object.values(outcomes).filter(o => o.next === after)
@@ -126,13 +129,18 @@ export const addLibraryStep = (draft: WorkflowDraft, use: string, after: string 
 }
 
 /** A new step with its title, who answers it and its agent; an automatic one needs its command. */
-export const addNewStep = (draft: WorkflowDraft, form: WorkflowForms, after: string | null): WorkflowDraft | { error: string } => {
+export const addNewStep = (
+  draft: WorkflowDraft,
+  form: WorkflowForms,
+  after: string | null,
+  t: WorkflowsText = workflowsText(undefined),
+): WorkflowDraft | { error: string } => {
   const title = form.stepTitle.trim()
-  if (title === '') return { error: 'Dê um título ao passo novo.' }
+  if (title === '') return { error: t.editor.stepTitleRequired }
   const command = form.stepCommand.trim()
-  if (form.stepKind === 'automatic' && command === '') return { error: 'Um passo automático precisa do comando cujo código de saída decide.' }
+  if (form.stepKind === 'automatic' && command === '') return { error: t.editor.automaticNeedsCommand }
   const agent = form.stepAgent.trim()
-  if (agent !== '' && form.stepKind !== 'session') return { error: 'Só um passo de sessão leva agente.' }
+  if (agent !== '' && form.stepKind !== 'session') return { error: t.editor.onlySessionAgent }
   const id = uniqueId(draft, slug(title))
   const spec: RawStep = {
     id, title, kind: form.stepKind,
@@ -162,31 +170,29 @@ export const moveStep = (draft: WorkflowDraft, id: string, by: -1 | 1): Workflow
   return { ...draft, steps, error: undefined }
 }
 
-const FIELD_NAMES: Record<string, string> = { agent: 'agente', model: 'modelo', effort: 'esforço', merge: 'merge', deploy: 'deploy' }
-
 /** What the owner changed since the draft was opened, one short phrase each, for the bar at the top. */
-export const changesOf = (draft: WorkflowDraft): string[] => {
+export const changesOf = (draft: WorkflowDraft, t: WorkflowsText = workflowsText(undefined)): string[] => {
   const init = draft.initial
   if (init === undefined) return []
   const out: string[] = []
-  if (draft.title !== init.title) out.push('título')
-  if (draft.description !== init.description) out.push('descrição')
+  if (draft.title !== init.title) out.push(t.editor.title)
+  if (draft.description !== init.description) out.push(t.editor.description)
   const before = new Map(init.steps.map(s => [s.id, s]))
-  const label = (s: WorkflowDraftStep) => String(s.step.title ?? s.step.id)
+  const label = (s: WorkflowDraftStep) => localize(parseLocalized(s.step.title), t.lang) ?? String(s.step.id)
   for (const s of draft.steps) {
     const was = before.get(String(s.step.id))
     if (was === undefined) {
-      if (s.on) out.push(`passo "${label(s)}" acrescentado`)
+      if (s.on) out.push(t.editor.stepAdded(label(s)))
     } else if (was.on !== s.on) {
-      out.push(`passo "${label(s)}" ${s.on ? 'religado' : 'desligado'}`)
+      out.push(s.on ? t.editor.stepOn(label(s)) : t.editor.stepOff(label(s)))
     } else {
       const off = (['agent', 'model', 'effort', 'merge', 'deploy'] as const).filter(k => stable(s.step[k]) !== stable(was.step[k]))
-      if (off.length > 0) out.push(`passo "${label(s)}": ${off.map(k => FIELD_NAMES[k]).join(', ')}`)
+      if (off.length > 0) out.push(t.editor.stepFields(label(s), off.map(k => t.editor.fields[k]).join(', ')))
     }
   }
   const common = (ids: string[]) => ids.filter(id => before.has(id) && draft.steps.some(s => s.step.id === id))
   const now = common(draft.steps.map(s => String(s.step.id)))
-  if (common(init.steps.map(s => s.id)).join() !== now.join()) out.push('ordem dos passos')
+  if (common(init.steps.map(s => s.id)).join() !== now.join()) out.push(t.editor.order)
   return out
 }
 
@@ -279,6 +285,7 @@ const EDITABLE = ['agent', 'model', 'effort', 'merge', 'deploy', 'details'] as c
 export const draftFile = (
   draft: WorkflowDraft,
   resolve: (raw: Record<string, unknown>) => FlowDef | { error: string },
+  t: WorkflowsText = workflowsText(undefined),
 ): { raw: Record<string, unknown>; flow: FlowDef; notice?: string } | { error: string } => {
   const head = { id: draft.id, title: draft.title.trim() || draft.id, description: draft.description }
   const desired = desiredSteps(draft)
@@ -286,7 +293,7 @@ export const draftFile = (
     const raw = { ...head, steps: desired }
     const flow = resolve(raw)
     if ('error' in flow) return flow
-    const drift = driftOf(desired, flow)
+    const drift = driftOf(desired, flow, t)
     return drift === undefined ? { raw, flow } : { error: drift }
   }
   const kept = new Set(draft.steps.filter(s => s.from === 'base' && s.on).map(s => String(s.step.id)))
@@ -313,17 +320,17 @@ export const draftFile = (
           if (own === undefined) dropped.push('detect')
           else {
             changed.detect = own
-            notice = `O passo ${id} tem detect próprio (${own.commands.join(', ')}), gravado no override; as rotinas do deploy entram nele sozinhas.`
+            notice = t.editor.ownDetect(id, own.commands.join(', '))
           }
         }
       }
       if (dropped.length > 0) {
-        return { error: `O passo "${id}" vem do workflow ${draft.base}: dá para trocar ${dropped.join(', ')}, não tirar.` }
+        return { error: t.editor.cannotDrop(id, draft.base, dropped.join(', ')) }
       }
       if (Object.keys(changed).length > 0) override[id] = changed
     } else {
       const after = previous ?? [...kept][0]
-      if (after === undefined) return { error: `Mantenha ligado ao menos um passo de ${draft.base} para acrescentar passos a ele.` }
+      if (after === undefined) return { error: t.editor.keepOne(draft.base) }
       add.push({ after, step: addSpec(s) })
     }
     previous = id
@@ -352,20 +359,22 @@ export const draftFile = (
   const routes = (steps: readonly { id: unknown; outcomes: unknown }[]) =>
     JSON.stringify(steps.map(s => [s.id, Object.entries(s.outcomes as Outcomes).map(([n, o]) => [n, o.next])]))
   if (routes(flow.steps) !== routes(desired as { id: unknown; outcomes: unknown }[])) {
-    return { error: 'O workflow salvo não sairia igual ao rascunho; nada foi gravado.' }
+    return { error: t.editor.notSame }
   }
-  const drift = driftOf(desired, flow)
+  const drift = driftOf(desired, flow, t)
   if (drift !== undefined) return { error: drift }
   return { raw: finalRaw, flow, ...(notice === undefined ? {} : { notice }) }
 }
 
 /** Where the loaded flow would differ from the draft in a field the editor changes; undefined when nowhere. */
-const driftOf = (desired: readonly RawStep[], flow: FlowDef): string | undefined => {
+const driftOf = (desired: readonly RawStep[], flow: FlowDef, t: WorkflowsText): string | undefined => {
   for (const want of desired) {
-    const got = flow.steps.find(s => s.id === want.id) as unknown as RawStep | undefined
+    // compared as a file writes the step, so a field given per language reads the same on both sides
+    const parsed = flow.steps.find(s => s.id === want.id)
+    const got = parsed === undefined ? undefined : asWritten(parsed)
     const off = EDITABLE.filter(key => stable(want[key]) !== stable(got?.[key]))
     if (off.length > 0) {
-      return `O workflow salvo não sairia igual ao rascunho (passo "${String(want.id)}": ${off.join(', ')}); nada foi gravado.`
+      return t.editor.drift(String(want.id), off.join(', '))
     }
   }
   return undefined
@@ -397,10 +406,11 @@ export const resolveCandidate = (
   project: readonly FlowSource[],
   source: string,
   raw: Record<string, unknown>,
+  t: WorkflowsText = workflowsText(undefined),
 ): FlowDef | { error: string } => {
   const others = project.filter(f => f.source !== source && (f.raw as { id?: unknown } | null)?.id !== raw.id)
   const { flows, problems } = resolveProjectFlows(defaults, [...others, { source, raw }])
   const problem = problems.find(p => p.startsWith(`${source}:`))
   if (problem !== undefined) return { error: problem }
-  return flows.find(f => f.id === raw.id) ?? { error: `${source}: não resolveu.` }
+  return flows.find(f => f.id === raw.id) ?? { error: t.editor.unresolved(source) }
 }

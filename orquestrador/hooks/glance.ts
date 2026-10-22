@@ -1,4 +1,5 @@
 import type { FlowEvent, PanelView, StepTime } from '../types'
+import { uiText } from './i18n'
 import { attentionItems } from './model'
 
 /**
@@ -53,9 +54,9 @@ export const bandSummary = (view: PanelView, answered: readonly string[]): BandS
     flow === undefined
       ? undefined
       : flow.status === 'done'
-        ? 'flow concluído'
+        ? uiText(view.languages?.ui).band.flowDone
         : flow.status === 'aborted'
-          ? 'flow encerrado'
+          ? uiText(view.languages?.ui).band.flowAborted
           : flow.current?.title
   const inFlight = (view.run?.waves ?? []).flatMap(w => w.phases).filter(p => p.status === 'running' || p.status === 'blocked').length
   const waiting = attentionItems(view).filter(a => a.kind === 'flow' || !answered.includes(a.title)).length

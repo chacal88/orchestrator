@@ -1,4 +1,6 @@
 import type { EvidenceState, OpenSpecView, TaskItem, TaskSection } from '../types'
+import { uiText } from './i18n'
+import type { UiText } from './i18n'
 
 const SUMMARY_MAX = 420
 
@@ -125,31 +127,35 @@ const lastCheckSummary = (text: string): { pass: string[]; fail: string[] } | un
 }
 
 /** Where evidence.md stands: a stub, a check.sh run (green or failing) or other recorded proof. */
-export const parseEvidence = (text: string | undefined): { state: EvidenceState; summary: string | undefined } => {
-  if (text === undefined) return { state: 'missing', summary: 'evidence.md ainda não existe.' }
+export const parseEvidence = (
+  text: string | undefined,
+  t: UiText = uiText(undefined),
+): { state: EvidenceState; summary: string | undefined } => {
+  if (text === undefined) return { state: 'missing', summary: t.openspec.evidenceMissing }
   const check = lastCheckSummary(text)
   if (check !== undefined) {
     if (check.fail.length > 0) {
       return {
         state: 'failing',
-        summary: `Último check.sh: ${check.fail.length} falha(s) — ${check.fail.slice(0, 4).join(', ')}; ${check.pass.length} ok.`,
+        summary: t.openspec.evidenceFailing(check.fail.length, check.fail.slice(0, 4).join(', '), check.pass.length),
       }
     }
-    return { state: 'green', summary: `Último check.sh verde: ${check.pass.length} verificações passaram.` }
+    return { state: 'green', summary: t.openspec.evidenceGreen(check.pass.length) }
   }
   if (/pre-execution stub|status:\s*stub|not run yet/i.test(text)) {
-    return { state: 'stub', summary: 'Esqueleto: nada verificado ainda, sem resultado do check.sh.' }
+    return { state: 'stub', summary: t.openspec.evidenceStub }
   }
   const sections = text.split('\n').filter(line => /^##\s/.test(line)).length
-  return { state: 'recorded', summary: `${sections} seção(ões) registradas, sem resumo do check.sh.` }
+  return { state: 'recorded', summary: t.openspec.evidenceRecorded(sections) }
 }
 
 export const openSpecView = (
   files: { tasks: string | undefined; proposal: string | undefined; evidence: string | undefined },
+  t: UiText = uiText(undefined),
 ): OpenSpecView => {
   const tasks = files.tasks === undefined ? { sections: [], done: 0, total: 0 } : parseTasks(files.tasks)
   const proposal = files.proposal === undefined ? { title: undefined, summary: undefined } : parseProposal(files.proposal)
-  const evidence = parseEvidence(files.evidence)
+  const evidence = parseEvidence(files.evidence, t)
   return {
     ...tasks,
     proposalTitle: proposal.title,

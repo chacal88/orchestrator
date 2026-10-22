@@ -30,6 +30,8 @@ import { FINAL_SCOPE, MAX_LIVE_SESSIONS, familyCheck, gateViews, isOpenGate, liv
 import { divergence } from './jira'
 import { tasksForPhase } from './openspec'
 import { formatElapsed } from './glance'
+import { uiText } from './i18n'
+import type { Lang } from '../types'
 import type { BandSummary } from './glance'
 import { attentionItems, finishedSessionIds, nowAndNext, phaseCounts, phaseViews, planProgress } from './model'
 import { hiddenFlowChoices, prepDetails } from './prep-pane'
@@ -76,18 +78,6 @@ const STATUS_HEX: Record<PhaseStatus, string> = {
   blocked: '#D14343',
   pending: '#B4B2A9',
 }
-const STATUS_LEGEND: Record<PhaseStatus, string> = {
-  done: 'fechadas',
-  running: 'em voo',
-  blocked: 'bloqueadas',
-  pending: 'pendentes',
-}
-const STATUS_WORD: Record<PhaseStatus, string> = {
-  done: 'fechada',
-  running: 'em voo',
-  blocked: 'bloqueada',
-  pending: 'pendente',
-}
 /** Pills: a soft tint behind a darker word of the same hue. */
 const PILL: Record<PhaseStatus, { bg: string; fg: string }> = {
   running: { bg: '#FAECE7', fg: '#993C1D' },
@@ -104,27 +94,12 @@ const ITEM_STATUS: Record<PlanItem['status'], PhaseStatus> = {
   in_progress: 'running',
   pending: 'pending',
 }
-const ATTENTION_KIND: Record<Attention['kind'], string> = {
-  decision: 'Decisão',
-  permission: 'Permissão',
-  question: 'Pergunta',
-  pr: 'PR para revisar',
-  flow: 'Passo do flow',
-  jira: 'Jira',
-}
 
 const JIRA_HEX: Record<JiraCategory, string> = {
   new: STATUS_HEX.pending,
   indeterminate: STATUS_HEX.running,
   done: STATUS_HEX.done,
   unknown: STATUS_HEX.pending,
-}
-const EVIDENCE_LABEL: Record<EvidenceState, string> = {
-  missing: 'não existe',
-  stub: 'esqueleto',
-  recorded: 'registrada',
-  green: 'check.sh verde',
-  failing: 'check.sh falhou',
 }
 const EVIDENCE_HEX: Record<EvidenceState, string> = {
   missing: STATUS_HEX.blocked,
@@ -136,7 +111,7 @@ const EVIDENCE_HEX: Record<EvidenceState, string> = {
 
 /** A question asking to release a gate: "Aceitar" only messages the coordinator, which cannot skip it. */
 const asksGateSkip = (text: string): boolean =>
-  /\b(pul(ar|e|o)|liberar|libere|dispensar|skip)\b.*\b(port[ãa]o|portões|gates?)\b|\b(port[ãa]o|portões|gates?)\b.*\b(pular|liberar|dispensar|skip)\b/i.test(text)
+  /\b(pul(ar|e|o)|liberar|libere|dispensar|skip(ping)?|release|waive|bypass)\b.*\b(port[ãa]o|portões|gates?)\b|\b(port[ãa]o|portões|gates?)\b.*\b(pular|liberar|dispensar|skip(ped)?|release[ds]?|waive[ds]?|bypass(ed)?)\b/i.test(text)
 
 const GATE_MARK: Record<GateState, string> = { passed: '✓', failed: '✗', pending: '○', stale: '⚠', skipped: '⏭' }
 const GATE_HEX: Record<GateState, string> = {
@@ -146,21 +121,14 @@ const GATE_HEX: Record<GateState, string> = {
   stale: '#E0A030',
   skipped: STATUS_HEX.pending,
 }
-const GATE_WORD: Record<GateState, string> = {
-  passed: 'passou',
-  failed: 'falhou',
-  pending: 'não rodou',
-  stale: 'desatualizado',
-  skipped: 'pulado por você',
-}
 const NO_CHECK: GateCheck = { records: {}, editedAt: undefined }
 
 /** Who moves a step: a script, a session, or the owner's press in the panel. */
 const KIND_ICON: Record<FlowStepKind, string> = { automatic: '⚙', session: '🤖', loop: '🤖', owner: '✋' }
 const STEP_MARK: Record<FlowStepView['state'], string> = { done: '✓', current: '▶', pending: '○', skipped: '⏭' }
 
-const formatTime = (ms: number): string =>
-  new Date(ms).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })
+const formatTime = (ms: number, locale: string): string =>
+  new Date(ms).toLocaleTimeString(locale, { hour: '2-digit', minute: '2-digit' })
 
 const percent = (part: number, total: number): number =>
   total === 0 ? 0 : Math.round((part / total) * 100)
@@ -200,6 +168,7 @@ export const renderPane = (
   actions: PaneActions,
 ): RenderElement => {
   const { Box, Text, Button, Link, Svg } = elements
+  const t = uiText(view.languages?.ui)
   const isOpen = (id: string, byDefault: boolean): boolean => !(actions.collapsed[id] ?? !byDefault)
 
   const bar = (segments: readonly { value: number; hex: string }[], alt: string) => {
@@ -247,7 +216,7 @@ export const renderPane = (
   /** Status as a pill: a soft tint behind a darker word of the same hue. */
   const pill = (status: PhaseStatus) => (
     <Text backgroundColor={PILL[status].bg} color={PILL[status].fg}>
-      {` ${STATUS_WORD[status]} `}
+      {` ${t.status.word[status]} `}
     </Text>
   )
 
@@ -365,7 +334,7 @@ export const renderPane = (
    * "Abrir": a button in every case. The pane draws a `claude://` Link as dead text, so the
    * hooks module opens it: beside this session when the app allows it, else through the app's link.
    */
-  const openControl = (c: SessionCard, label = 'Abrir', scope = ''): RenderElement | undefined =>
+  const openControl = (c: SessionCard, label = t.open, scope = ''): RenderElement | undefined =>
     actions.canOpenBeside(c) || c.link !== undefined ? (
       <Button key={`open:${scope}:${label}:${c.sessionId}`} plain onPress={actions.openBeside(c)}>
         <Text color={LINK}>{`${label} ↗`}</Text>
@@ -383,7 +352,7 @@ export const renderPane = (
     )
 
   const sessionState = (c: SessionCard): string =>
-    c.waiting !== undefined ? 'esperando você' : c.isRunning ? 'trabalhando' : 'ociosa'
+    c.waiting !== undefined ? t.session.waiting : c.isRunning ? t.session.working : t.session.idle
 
   const sessionRows = (c: SessionCard): RenderElement[] => {
     const progress = planProgress(c.plan)
@@ -422,10 +391,10 @@ export const renderPane = (
           {g.evidence !== undefined && <Text dimColor> · {g.evidence}</Text>}
         </Text>,
         <Box flexDirection="row" columnGap={1} flexShrink={0}>
-          <Text color={GATE_HEX[g.state]}>{GATE_WORD[g.state]}</Text>
+          <Text color={GATE_HEX[g.state]}>{t.gate[g.state]}</Text>
           {isOpenGate(g) && (
             <Button key={`arm:${g.skipKey}`} plain dimColor onPress={actions.toggle(`arm:${g.skipKey}`, false)}>
-              {armed ? 'Cancelar' : 'Pular'}
+              {armed ? t.cancel : t.skip}
             </Button>
           )}
         </Box>,
@@ -436,7 +405,7 @@ export const renderPane = (
         line,
         <Box flexDirection="row" paddingLeft={2} minWidth={0}>
           <Button key={`skip:${g.skipKey}`} variant="primary" onPress={actions.skip(g)}>
-            {`Confirmar pulo de ${g.label}`}
+            {t.confirmSkip(g.label)}
           </Button>
         </Box>,
       ]
@@ -448,15 +417,15 @@ export const renderPane = (
     return armed
       ? [
           <Button key={`skip:${g.skipKey}:ask`} variant="primary" onPress={actions.skip(g)}>
-            {`Confirmar pulo de ${g.label}`}
+            {t.confirmSkip(g.label)}
           </Button>,
           <Button key={`arm:${g.skipKey}:ask`} plain dimColor onPress={actions.toggle(`arm:${g.skipKey}`, false)}>
-            Cancelar
+            {t.cancel}
           </Button>,
         ]
       : [
           <Button key={`arm:${g.skipKey}:ask`} variant="primary" onPress={actions.toggle(`arm:${g.skipKey}`, false)}>
-            {`Pular portão ${g.label}`}
+            {t.skipGate(g.label)}
           </Button>,
         ]
   }
@@ -469,14 +438,9 @@ export const renderPane = (
     if (!isOpen(id, false)) return []
     const lines = [
       issue?.title ?? undefined,
-      issue?.status === undefined ? undefined : `Status: ${issue.status}`,
-      issue?.status === undefined
-        ? view.jiraNote ??
-          'Sem status: o painel ainda não leu esta issue do Jira.'
-        : undefined,
-      issue?.url === undefined
-        ? 'Sem link: falta o site do Jira. Reconecte o conector Atlassian (claude.ai › Configurações › Conectores) ou informe jiraSite no plano.'
-        : undefined,
+      issue?.status === undefined ? undefined : t.jira.status(issue.status),
+      issue?.status === undefined ? view.jiraNote ?? t.jira.noStatus : undefined,
+      issue?.url === undefined ? t.jira.noLink : undefined,
     ].filter((line): line is string => line !== undefined)
     return [
       <Box flexDirection="column" borderStyle="round" borderDimColor paddingX={1} minWidth={0}>
@@ -485,7 +449,7 @@ export const renderPane = (
             {line}
           </Text>
         ))}
-        {issue?.url !== undefined && <Link href={issue.url}>{`Abrir ${key} no Jira ↗`}</Link>}
+        {issue?.url !== undefined && <Link href={issue.url}>{t.jira.openIn(key)}</Link>}
       </Box>,
     ]
   }
@@ -505,7 +469,7 @@ export const renderPane = (
   /** Under a title that carries the key: the pressed key's details, then any disagreement with Jira. */
   const jiraBelow = (key: string | undefined, status: PhaseStatus): RenderElement[] => {
     if (key === undefined) return []
-    const mismatch = divergence(status, issues[key])
+    const mismatch = divergence(status, issues[key], t)
     return [
       ...jiraDetails(key),
       ...(mismatch === undefined
@@ -521,7 +485,7 @@ export const renderPane = (
   const jiraRows = (key: string | undefined, status: PhaseStatus): RenderElement[] => {
     if (key === undefined) return []
     const issue = issues[key]
-    const mismatch = divergence(status, issue)
+    const mismatch = divergence(status, issue, t)
     return [
       row(
         <Box flexDirection="row" columnGap={1} flexShrink={1} minWidth={0}>
@@ -561,7 +525,7 @@ export const renderPane = (
                 <Box flexDirection="row" columnGap={1} alignItems="center" flexShrink={1} minWidth={0}>
                   {infoButton('openspec:proposal', spec.proposalSummary)}
                   <Text wrap="truncate-end">
-                    <Text dimColor>Proposta </Text>
+                    <Text dimColor>{t.openspec.proposal}</Text>
                     {spec.proposalTitle ?? 'proposal.md'}
                   </Text>
                 </Box>,
@@ -570,19 +534,19 @@ export const renderPane = (
             ]),
         <Box marginTop={1} />,
         ...(spec.total === 0
-          ? [<Text dimColor>tasks.md sem caixas de seleção</Text>]
+          ? [<Text dimColor>{t.openspec.noCheckboxes}</Text>]
           : [
-              row(`${percent(spec.done, spec.total)}% das tarefas`, `${spec.done} / ${spec.total}`),
+              row(t.openspec.percentTasks(percent(spec.done, spec.total)), `${spec.done} / ${spec.total}`),
               bar(
                 [
                   { value: spec.done, hex: STATUS_HEX.done },
                   { value: spec.total - spec.done, hex: STATUS_HEX.pending },
                 ],
-                `${spec.done} de ${spec.total} tarefas marcadas`,
+                t.openspec.tickedOf(spec.done, spec.total),
               ),
               group(
                 'openspec:sections',
-                'Seções do tasks.md',
+                t.openspec.sections,
                 `${full}/${spec.sections.length}`,
                 true,
                 () =>
@@ -597,16 +561,16 @@ export const renderPane = (
                       `${section.done}/${section.total}`,
                     )
                   }),
-                partial > 0 ? `${full} seções completas, ${partial} em andamento.` : undefined,
+                partial > 0 ? t.openspec.sectionsSummary(full, partial) : undefined,
               ),
             ]),
         <Box marginTop={1} />,
         row(
           <Box flexDirection="row" columnGap={1} alignItems="center" flexShrink={1} minWidth={0}>
-            <Text dimColor>Evidência</Text>
+            <Text dimColor>{t.openspec.evidence}</Text>
             {infoButton('openspec:evidence', spec.evidenceSummary)}
           </Box>,
-          EVIDENCE_LABEL[spec.evidence],
+          t.evidence[spec.evidence],
           EVIDENCE_HEX[spec.evidence],
         ),
         ...summaryFor('openspec:evidence', spec.evidenceSummary),
@@ -625,18 +589,18 @@ export const renderPane = (
       ? undefined
       : card(
         'attention',
-        'Precisa de você',
+        t.attention.title,
         attention.map(item => {
           const canOpen = item.card !== undefined && item.card.sessionId !== view.self?.sessionId
           return (
             <Box flexDirection="column" borderStyle="round" borderColor="warning" paddingX={1} marginBottom={1} minWidth={0}>
-              <Text dimColor>{ATTENTION_KIND[item.kind]}</Text>
+              <Text dimColor>{t.attentionKind[item.kind]}</Text>
               <Text bold wrap="wrap" color="warning">
                 {item.title}
               </Text>
               {item.recommendation !== undefined && (
                 <Text wrap="wrap">
-                  <Text dimColor>Recomendação: </Text>
+                  <Text dimColor>{t.attention.recommendation}</Text>
                   {item.recommendation}
                 </Text>
               )}
@@ -650,12 +614,12 @@ export const renderPane = (
                 {item.skip !== undefined && skipButtons(item.skip)}
                 {item.kind === 'decision' && item.skip === undefined && item.recommendation !== undefined && !asksGateSkip(item.title) && (
                   <Button key={`accept:${item.id}`} variant="primary" onPress={actions.accept(item)}>
-                    Aceitar recomendação
+                    {t.attention.accept}
                   </Button>
                 )}
                 {item.kind === 'decision' && item.skip === undefined && asksGateSkip(item.title) && (
                   <Text dimColor wrap="wrap">
-                    Só o seu pulo libera um portão: use Pular ao lado dele, no card da fase.
+                    {t.attention.onlyYourSkip}
                   </Text>
                 )}
                 {item.flow !== undefined &&
@@ -670,11 +634,11 @@ export const renderPane = (
                   ))}
                 {item.jira !== undefined && (
                   <Button key={`jira-move:${item.jira.key}`} variant="primary" onPress={actions.moveJira(item.jira.change, item.jira.key, item.jira.transitionId)}>
-                    Mover no Jira
+                    {t.jira.move}
                   </Button>
                 )}
-                {item.prUrl !== undefined && <Link href={item.prUrl}>Abrir PR</Link>}
-                {canOpen && item.card !== undefined && openControl(item.card, 'Abrir sessão')}
+                {item.prUrl !== undefined && <Link href={item.prUrl}>{t.openPr}</Link>}
+                {canOpen && item.card !== undefined && openControl(item.card, t.openSession)}
               </Box>
             </Box>
           )
@@ -695,19 +659,19 @@ export const renderPane = (
     const byStatus = (s: PhaseStatus) =>
       phaseViews(run, view.children).flatMap((phases, w) => phases.filter(p => p.status === s).map(p => ({ phase: p, w })))
     const changeIssue = run.jira === undefined ? undefined : issues[run.jira]
-    const changeMismatch = divergence(total > 0 && counts.done === total ? 'done' : 'running', changeIssue)
+    const changeMismatch = divergence(total > 0 && counts.done === total ? 'done' : 'running', changeIssue, t)
     return [
       card(
         'run',
         run.jira === undefined ? run.change : `${run.change} · ${run.jira}`,
         [
-          bar(STATUS_ORDER.map(s => ({ value: counts[s], hex: STATUS_HEX[s] })), `${counts.done} de ${total} fases fechadas`),
+          bar(STATUS_ORDER.map(s => ({ value: counts[s], hex: STATUS_HEX[s] })), t.run.phasesClosed(counts.done, total)),
           <Box flexDirection="row" columnGap={2} flexWrap="wrap">
             {legend.map(s => (
               <Box flexDirection="row">
                 <Text color={STATUS_HEX[s]}>● </Text>
                 <Button key={`legend:${s}`} plain onPress={actions.toggle(`legend:${s}`, false)}>
-                  <Text>{`${counts[s]} ${STATUS_LEGEND[s]}`}</Text>
+                  <Text>{`${counts[s]} ${t.status.legend[s]}`}</Text>
                   <Text dimColor>{isOpen(`legend:${s}`, false) ? ' ⌄' : ' ›'}</Text>
                 </Button>
               </Box>
@@ -722,13 +686,13 @@ export const renderPane = (
                         <Text wrap="truncate-end">
                           {phase.icon ? `${phase.icon} ` : ''}
                           {phase.title}
-                          <Text dimColor>{` · onda ${w + 1}`}</Text>
+                          <Text dimColor>{t.run.wave(w + 1)}</Text>
                         </Text>,
                         phase.card === undefined || phase.card.sessionId === view.self?.sessionId
                           ? phase.card === undefined
                             ? undefined
-                            : 'esta sessão'
-                          : openControl(phase.card, 'Abrir', `legend:${phase.id}`),
+                            : t.session.self
+                          : openControl(phase.card, t.open, `legend:${phase.id}`),
                       ),
                     )}
                   </Box>,
@@ -749,7 +713,7 @@ export const renderPane = (
                       ),
                     ]
                   : []),
-                row(<Text dimColor>Issue da change</Text>, jiraKeyButton(run.jira)),
+                row(<Text dimColor>{t.jira.changeIssue}</Text>, jiraKeyButton(run.jira)),
                 ...jiraDetails(run.jira),
                 ...(changeMismatch === undefined
                   ? []
@@ -761,15 +725,15 @@ export const renderPane = (
               ]),
           row(
             <Text wrap="truncate-end" dimColor>
-              Sessões trabalhando agora
+              {t.run.working}
             </Text>,
-            `${live} de no máximo ${MAX_LIVE_SESSIONS}`,
+            t.run.liveOf(live, MAX_LIVE_SESSIONS),
             live >= MAX_LIVE_SESSIONS ? STATUS_HEX.blocked : undefined,
           ),
           ...(live >= MAX_LIVE_SESSIONS
             ? [
                 <Text dimColor wrap="wrap">
-                  No limite: uma nova fase só começa quando uma sessão terminar o trabalho ou for arquivada, para não pesar o computador.
+                  {t.run.atCeiling}
                 </Text>,
               ]
             : []),
@@ -780,24 +744,24 @@ export const renderPane = (
                   {view.jiraNote}
                 </Text>,
               ]),
-          <Text dimColor>atualizado {view.updatedAt === 0 ? '…' : formatTime(view.updatedAt)}</Text>,
+          <Text dimColor>{t.run.updated(view.updatedAt === 0 ? '…' : formatTime(view.updatedAt, t.locale))}</Text>,
         ],
-        `${counts.done} de ${total} fases`,
+        t.run.phasesOf(counts.done, total),
       ),
     ]
   }
 
   const waves = run === undefined ? [] : phaseViews(run, view.children)
   const { now } = run === undefined ? { now: undefined } : nowAndNext(run)
-  const waveName = (w: number) => `Onda ${w + 1}${run?.waves[w]?.title ? ` · ${run.waves[w]?.title}` : ''}`
+  const waveName = (w: number) => `${t.tasks.waveName(w + 1)}${run?.waves[w]?.title ? ` · ${run.waves[w]?.title}` : ''}`
   const phaseKey = (w: number, phase: PhaseView) => `summary:${w}:${phase.id}`
   /** What the session doing a phase is on now, said so the owner can read it: the step, then how far. */
   const workRows = (c: SessionCard, scope = ''): RenderElement[] => {
     const progress = planProgress(c.plan)
     const tasksId = `tasks:${scope}:${c.sessionId}`
-    const who = c.sessionId === view.self?.sessionId ? 'esta sessão' : sessionState(c)
+    const who = c.sessionId === view.self?.sessionId ? t.session.self : sessionState(c)
     const pr = c.prNumber === undefined ? '' : ` · PR #${c.prNumber}`
-    const details = progress.total === 0 ? `${who}${pr}` : `passos ${progress.done} de ${progress.total} · ${who}${pr}`
+    const details = progress.total === 0 ? `${who}${pr}` : `${t.tasks.steps(progress.done, progress.total)} · ${who}${pr}`
     return [
       ...(progress.current === undefined ? [] : [subtitle(progress.current, '▶ ')]),
       row(
@@ -813,7 +777,7 @@ export const renderPane = (
             <Text dimColor>{isOpen(tasksId, false) ? ' ⌄' : ' ›'}</Text>
           </Button>
         ),
-        c.sessionId === view.self?.sessionId ? undefined : openControl(c, 'Abrir', scope),
+        c.sessionId === view.self?.sessionId ? undefined : openControl(c, t.open, scope),
       ),
       ...(progress.total > 0 && isOpen(tasksId, false) ? planRows(c.plan) : []),
     ]
@@ -825,7 +789,7 @@ export const renderPane = (
     if (tasks.length === 0) return []
     const done = tasks.filter(t => t.done).length
     return [
-      row(<Text dimColor>tasks.md</Text>, `${done} de ${tasks.length}`),
+      row(<Text dimColor>tasks.md</Text>, t.tasks.of(done, tasks.length)),
       ...tasks.map(task =>
         row(
           <Text wrap="truncate-end" dimColor={task.done}>
@@ -850,7 +814,7 @@ export const renderPane = (
           { value: done, hex: STATUS_HEX[phase.status] },
           { value: total - done, hex: STATUS_HEX.pending },
         ],
-        `${done} de ${total}`,
+        t.tasks.of(done, total),
       ),
     ]
   }
@@ -906,7 +870,7 @@ export const renderPane = (
   const phaseLine = (phase: PhaseView, w: number): RenderElement[] => {
     const id = phaseKey(w, phase)
     const open = isOpen(id, false)
-    const waits = phase.status === 'pending' && phase.dependsOn?.length ? `após ${phase.dependsOn.join(', ')}` : undefined
+    const waits = phase.status === 'pending' && phase.dependsOn?.length ? t.tasks.after(phase.dependsOn.join(', ')) : undefined
     return [
       row(
         <Button key={id} plain onPress={actions.toggle(id, false)}>
@@ -918,7 +882,7 @@ export const renderPane = (
         </Button>,
         <Box flexDirection="row" columnGap={1}>
           {phase.jira !== undefined && jiraKeyButton(phase.jira)}
-          <Text dimColor>{waits ?? STATUS_WORD[phase.status]}</Text>
+          <Text dimColor>{waits ?? t.status.word[phase.status]}</Text>
         </Box>,
       ),
       ...jiraBelow(phase.jira, phase.status),
@@ -938,13 +902,13 @@ export const renderPane = (
     return [
       card(
         'tasks',
-        'Tarefas',
+        t.tasks.title,
         [
           ...(now === undefined
             ? []
             : [
                 <Text dimColor wrap="truncate-end">
-                  Agora: {waveName(now)}
+                  {t.tasks.now}{waveName(now)}
                 </Text>,
                 ...(run.waves[now]?.summary === undefined ? [] : [subtitle(run.waves[now]?.summary ?? '')]),
                 ...jiraRows(run.waves[now]?.jira, waveStatus(wavePhases)),
@@ -967,13 +931,13 @@ export const renderPane = (
             ? []
             : [
                 <Box flexDirection="column" marginTop={1} minWidth={0}>
-                  {group('tasks:done', `✓ ${closed.length} concluídas`, '', false, () =>
+                  {group('tasks:done', t.tasks.closed(closed.length), '', false, () =>
                     closed.flatMap(({ phase, w }) => phaseLine(phase, w)),
                   )}
                 </Box>,
               ]),
         ],
-        `${closed.length} de ${all.length} fases`,
+        t.run.phasesOf(closed.length, all.length),
         // only the outer box of the work in progress carries the accent
         active.length > 0 ? STATUS_HEX.running : undefined,
       ),
@@ -1015,20 +979,20 @@ export const renderPane = (
 
   const loopPhases = (): RenderElement[] =>
     waves.flat().length === 0
-      ? [<Text dimColor>Sem plano publicado: as fases aparecem aqui quando a coordenação publicar o plano.</Text>]
+      ? [<Text dimColor>{t.tasks.noPlan}</Text>]
       : waves.flat().flatMap(loopPhase)
 
   const flow = view.flow
   const times = view.flowTimes ?? {}
 
   const stepWord = (step: FlowStepView): { word: string; hex: string } => {
-    if (step.state === 'done') return { word: step.outcomeLabel ?? 'concluída', hex: STATUS_HEX.done }
-    if (step.state === 'skipped') return { word: 'pulada', hex: STATUS_HEX.pending }
-    if (step.state === 'pending') return { word: 'pendente', hex: STATUS_HEX.pending }
-    if (flow?.status === 'escalated') return { word: 'no limite: você decide', hex: STATUS_HEX.blocked }
+    if (step.state === 'done') return { word: step.outcomeLabel ?? t.steps.done, hex: STATUS_HEX.done }
+    if (step.state === 'skipped') return { word: t.steps.skipped, hex: STATUS_HEX.pending }
+    if (step.state === 'pending') return { word: t.steps.pending, hex: STATUS_HEX.pending }
+    if (flow?.status === 'escalated') return { word: t.steps.escalated, hex: STATUS_HEX.blocked }
     return flow?.waitingOn === 'owner'
-      ? { word: 'esperando você', hex: GATE_HEX.stale }
-      : { word: 'em andamento', hex: STATUS_HEX.running }
+      ? { word: t.steps.waiting, hex: GATE_HEX.stale }
+      : { word: t.steps.running, hex: STATUS_HEX.running }
   }
 
   const stepElapsed = (step: FlowStepView): string | undefined => {
@@ -1047,7 +1011,7 @@ export const renderPane = (
       <Text wrap="truncate-end" bold={isCurrent} dimColor={step.state === 'done' || step.state === 'skipped'}>
         <Text color={hex}>{STEP_MARK[step.state]} </Text>
         {`${KIND_ICON[step.kind]} ${step.title}`}
-        {step.attempts > 1 && step.state !== 'pending' && <Text dimColor>{` · tentativa ${step.attempts} de ${step.maxAttempts}`}</Text>}
+        {step.attempts > 1 && step.state !== 'pending' && <Text dimColor>{t.steps.attempt(step.attempts, step.maxAttempts)}</Text>}
       </Text>,
       <Box flexDirection="row" columnGap={1}>
         {elapsed !== undefined && <Text dimColor>{elapsed}</Text>}
@@ -1069,11 +1033,11 @@ export const renderPane = (
       : [
           group(
             'final-gates',
-            'Checagens antes de juntar o código',
+            t.steps.finalGates,
             `${finalGates.filter(g => !isOpenGate(g)).length}/${finalGates.length}`,
             true,
             () => gateRows(finalGates),
-            'Rodam uma vez, com o código de todas as fases já junto; enquanto não passam, o código não é juntado na branch principal.',
+            t.steps.finalGatesSummary,
           ),
         ]
   }
@@ -1095,7 +1059,7 @@ export const renderPane = (
         [
           ...(folded.length === 0
             ? []
-            : [group('gates:done', `✓ ${folded.length} concluídas`, '', false, () => folded.map(stepLine))]),
+            : [group('gates:done', t.tasks.closed(folded.length), '', false, () => folded.map(stepLine))]),
           ...shown.map(step =>
             step.state === 'current' ? (
               <Box flexDirection="column" borderStyle="round" borderDimColor paddingX={1} minWidth={0}>
@@ -1107,7 +1071,7 @@ export const renderPane = (
                 )}
                 {flow.status === 'escalated' && (
                   <Text color="warning" wrap="wrap">
-                    Chegou ao limite de {step.maxAttempts} tentativas: escolha em "Precisa de você" se tenta de novo.
+                    {t.steps.ceiling(step.maxAttempts)}
                   </Text>
                 )}
                 {step.kind === 'loop' && <Box flexDirection="column" marginTop={1} minWidth={0}>{loopPhases()}</Box>}
@@ -1117,14 +1081,14 @@ export const renderPane = (
             ),
           ),
           ...(flow.status === 'done'
-            ? [<Text color={STATUS_HEX.done}>Flow concluído.</Text>]
+            ? [<Text color={STATUS_HEX.done}>{t.steps.flowDone}</Text>]
             : flow.status === 'aborted'
-              ? [<Text color={STATUS_HEX.blocked}>Flow encerrado por você.</Text>]
+              ? [<Text color={STATUS_HEX.blocked}>{t.steps.flowAborted}</Text>]
               : []),
           ...(!hasLoop && anyPhaseGates ? [<Box flexDirection="column" marginTop={1} minWidth={0}>{loopPhases()}</Box>] : []),
           ...finalGateRows(),
           <Text dimColor wrap="wrap">
-            ⚙ automático (um script decide) · 🤖 sessão faz · ✋ você decide no painel
+            {t.steps.legend}
           </Text>,
         ],
         `${flow.flowTitle} · ${folded.length}/${flow.steps.length}`,
@@ -1145,18 +1109,18 @@ export const renderPane = (
   cards.push(
     card(
       'self',
-      'Esta sessão',
+      t.self.title,
       ownPlan.length === 0
-        ? [<Text dimColor>Sem lista de tarefas ainda</Text>]
+        ? [<Text dimColor>{t.self.noList}</Text>]
         : [
-            row(`${percent(own.done, own.total)}% concluído`, `${own.done} / ${own.total} passos`),
+            row(t.self.percentDone(percent(own.done, own.total)), t.self.stepsOf(own.done, own.total)),
             bar(
               [
                 { value: own.done, hex: STATUS_HEX.done },
                 { value: own.current === undefined ? 0 : 1, hex: STATUS_HEX.running },
                 { value: own.total - own.done - (own.current === undefined ? 0 : 1), hex: STATUS_HEX.pending },
               ],
-              `${own.done} de ${own.total} passos`,
+              t.self.stepsOfLong(own.done, own.total),
             ),
             <Box marginTop={1} />,
             ...planRows(ownPlan),
@@ -1175,7 +1139,7 @@ export const renderPane = (
     cards.push(
       card(
         'children',
-        run === undefined ? 'Sessões filhas' : 'Outras sessões',
+        run === undefined ? t.children.title : t.children.others,
         loose.map(c => {
           const progress = planProgress(c.plan)
           return group(
@@ -1188,7 +1152,7 @@ export const renderPane = (
             () => [...sessionRows(c), ...planRows(c.plan)],
           )
         }),
-        `${loose.filter(c => c.isRunning).length} ativas`,
+        t.children.active(loose.filter(c => c.isRunning).length),
       ),
     )
   }
@@ -1216,10 +1180,12 @@ export const renderBand = (
   summary: BandSummary,
   paneOpen: boolean,
   togglePane: () => void,
+  lang?: Lang,
 ): RenderElement => {
+  const t = uiText(lang).band
   const parts = [
-    summary.step === undefined ? undefined : `passo: ${summary.step}`,
-    `${summary.inFlight} ${summary.inFlight === 1 ? 'fase em voo' : 'fases em voo'}`,
+    summary.step === undefined ? undefined : t.step(summary.step),
+    t.inFlight(summary.inFlight),
   ].filter((part): part is string => part !== undefined)
   return (
     <Box flexDirection="row" justifyContent="space-between" columnGap={1} minWidth={0}>
@@ -1227,12 +1193,12 @@ export const renderBand = (
         <Text wrap="truncate-end">
           <Text dimColor>🧭 {parts.join(' · ')}</Text>
           {summary.waiting > 0 && (
-            <Text color="warning">{` · ${summary.waiting} ${summary.waiting === 1 ? 'pendência sua' : 'pendências suas'}`}</Text>
+            <Text color="warning">{` · ${t.waiting(summary.waiting)}`}</Text>
           )}
         </Text>
       </Box>
       <Button key="band:pane" plain dimColor onPress={togglePane}>
-        {paneOpen ? 'Fechar painel' : 'Abrir painel'}
+        {paneOpen ? t.close : t.open}
       </Button>
     </Box>
   )

@@ -10,7 +10,7 @@ import type {
   TextProps,
 } from 'claude-code'
 
-import type { FlowDef, FlowDeploy, FlowMerge, FlowStepKind, WorkflowDraft, WorkflowForms } from '../types'
+import type { FlowDef, FlowDeploy, FlowMerge, FlowStepDetails, FlowStepKind, Lang, Languages, Translations, WorkflowDraft, WorkflowForms } from '../types'
 import { findAgent, listAgents, loadFlows } from './flow-files'
 import type { AgentInfo } from './flow-files'
 import { DEFAULT_FLOWS, defaultFlows } from './flows/index'
@@ -33,6 +33,9 @@ import {
 } from './workflow-edit'
 import type { StepField } from './workflow-edit'
 import type { FlowSource } from './flow'
+import { CONFIG_PATH, DEFAULT_LANGUAGES, localize, parseConfig, parseLocalized } from './i18n'
+import { workflowsText } from './i18n-workflows'
+import type { WorkflowsText } from './i18n-workflows'
 
 export const WORKFLOWS_PANE = 'orquestrador-workflows'
 export const WORKFLOWS_TITLE = '⚙️ Workflows'
@@ -53,12 +56,6 @@ const OWNER = '#C2410C'
 const MOD = '#6B6A66'
 const MODELS = ['claude-opus-5-5', 'claude-sonnet-5-5', 'claude-haiku-5-5', 'claude-fable-5-1']
 const EFFORTS = ['low', 'medium', 'high', 'xhigh', 'max']
-const EFFORT_NAMES: Record<string, string> = { low: 'baixo', medium: 'médio', high: 'alto', xhigh: 'muito alto', max: 'máximo' }
-const METHODS: Record<string, string> = {
-  squash: 'Squash: vira um commit só',
-  merge: 'Merge: guarda todos os commits',
-  rebase: 'Rebase: commits em linha, sem commit de merge',
-}
 /** A Select's "nothing chosen": its options' values must be words. */
 const NONE = '-'
 /** "+ passo aqui" open at the end of a workflow that has no step yet. */
@@ -81,7 +78,6 @@ const TAG_GRAY = { bg: '#F2F1EC', fg: '#3D3C39' }
 const TAG_AMBER = { bg: '#FDF3E1', fg: '#7A4A00' }
 const RULE = '#E4E2DC'
 const MUTED = '#5F5E5A'
-const WHO_TAG: Record<FlowStepKind, string> = { session: 'sessão', owner: 'você', automatic: 'mod', loop: 'sessões' }
 
 export type WorkflowsElements = {
   Box: ElementConstructor<BoxProps>
@@ -114,6 +110,8 @@ export type WorkflowsView = {
   /** Every agent that can be picked, with its description and model. */
   agentList: AgentInfo[]
   narrow: boolean
+  /** The project's languages: `ui` for the pane's words and titles, `content` for descriptions and details; absent, pt-BR. */
+  languages?: Languages
 }
 
 export type WorkflowsActions = {
@@ -137,21 +135,25 @@ export type WorkflowsActions = {
 /** A step as the pane reads it: a flow's, or a draft's raw one. */
 type StepLike = {
   id: string
-  title: string
-  description?: string
+  /** Plain text, or one text per language (a draft's raw step). */
+  title: unknown
+  description?: unknown
+  titles?: Translations
+  descriptions?: Translations
   kind: FlowStepKind
   agent?: string
   model?: string
   effort?: string
   command?: string
   requiresEvidence?: boolean
-  details?: { inputs?: string; produces?: string; blocks?: string }
+  details?: { inputs?: unknown; produces?: unknown; blocks?: unknown }
+  detailsByLang?: Partial<Record<Lang, FlowStepDetails>>
   merge?: FlowMerge
   deploy?: FlowDeploy
   outcomes?: Record<string, { label?: string; next: string }>
 }
 
-const yes = (b: boolean | undefined) => (b === true ? 'sim' : 'não')
+const yesNo = (t: WorkflowsText, b: boolean | undefined) => (b === true ? t.yes : t.no)
 
 /** `claude-opus-5-5` as the owner reads it: Opus 5.5. */
 export const modelName = (model: string): string => {
@@ -160,19 +162,38 @@ export const modelName = (model: string): string => {
   return [name.charAt(0).toUpperCase() + name.slice(1), version.join('.')].filter(x => x !== '').join(' ')
 }
 
-const effortName = (effort: string): string => EFFORT_NAMES[effort] ?? effort
+const effortName = (t: WorkflowsText, effort: string): string => t.effort[effort] ?? effort
+
+/** A flow's title in the ui language; its description in the content language. */
+const flowTitle = (flow: FlowDef, lang: Lang): string => localize(flow.titles, lang) ?? flow.title
+const flowDescription = (flow: FlowDef, lang: Lang): string => localize(flow.descriptions, lang) ?? flow.description
+
+/** A step's title in `lang`: a parsed step's `titles`, or a raw step's `title` written as text or per language. */
+const titleOf = (s: { id?: unknown; title?: unknown; titles?: Translations }, lang: Lang): string =>
+  localize(s.titles ?? parseLocalized(s.title), lang) ?? String(s.id ?? '')
+const descriptionOf = (s: { description?: unknown; descriptions?: Translations }, lang: Lang): string | undefined =>
+  localize(s.descriptions ?? parseLocalized(s.description), lang)
+/** One of the step's details in `lang`: a parsed step's per-language one, else the field as written (text or per language). */
+const detailOf = (s: StepLike, key: keyof FlowStepDetails, lang: Lang): string | undefined =>
+  localize(parseLocalized(s.detailsByLang?.[lang]?.[key] ?? s.details?.[key]), lang)
 
 /** Where a problem line from the loader names its file, shortened, and what is wrong with it in plain words. */
-const problemParts = (problem: string): { file: string; what: string } => {
+const problemParts = (t: WorkflowsText, problem: string): { file: string; what: string } => {
   const at = problem.indexOf(': ')
   const path = at === -1 ? problem : problem.slice(0, at)
   const what = at === -1 ? '' : problem.slice(at + 2)
   const file = path.includes('.orquestrador/flows/') ? path.slice(path.indexOf('.orquestrador/flows/') + '.orquestrador/flows/'.length) : path
-  return { file, what: what === 'not valid JSON.' ? 'o arquivo não é um JSON válido.' : what }
+  return { file, what: what === 'not valid JSON.' ? t.invalidJson : what }
 }
 
 export const renderWorkflows = (els: WorkflowsElements, view: WorkflowsView, actions: WorkflowsActions): RenderElement => {
   const { Box, Text, Button, Input, Select } = els
+  const languages = view.languages ?? DEFAULT_LANGUAGES
+  const ui = languages.ui
+  const content = languages.content
+  const t = workflowsText(ui)
+  const yes = (b: boolean | undefined) => yesNo(t, b)
+  const title = (s: StepLike) => titleOf(s, ui)
   const fields = Input !== undefined && Select !== undefined
 
   const line = (text: string, color?: string, dim?: boolean) => (
@@ -191,7 +212,7 @@ export const renderWorkflows = (els: WorkflowsElements, view: WorkflowsView, act
       {children}
     </Box>
   )
-  const noFields = line('Os campos de texto e de escolha ficam no desktop e no terminal.', undefined, true)
+  const noFields = line(t.noFields, undefined, true)
   /** A pill: a rounded Box with its own background, never the label between brackets. */
   const pill = (label: string, tone: { bg: string; fg: string }) => (
     <Box key={`wf-pill:${label}`} borderStyle="round" borderColor={tone.bg} backgroundColor={tone.bg} paddingX={1} flexShrink={0}>
@@ -218,55 +239,54 @@ export const renderWorkflows = (els: WorkflowsElements, view: WorkflowsView, act
     name === undefined ? undefined : view.agentList.find(a => a.name === name)?.model
   const originOf = (name: string): string => {
     const found = view.agents[name]
-    return found === 'project' ? 'do projeto' : found === 'plugin' ? 'do plugin' : 'sem arquivo'
+    return found === 'project' ? t.agentOrigin.project : found === 'plugin' ? t.agentOrigin.plugin : t.agentOrigin.missing
   }
 
   /** Who answers the step, in the words of the legend. */
   const who = (s: StepLike): string =>
     s.kind === 'session'
-      ? 'Uma sessão, com o agente abaixo'
+      ? t.who.session
       : s.kind === 'owner'
-        ? 'Você aprova ou confirma'
+        ? t.who.owner
         : s.kind === 'loop'
-          ? 'Uma sessão por fase'
+          ? t.who.loop
           : s.merge !== undefined || s.deploy !== undefined
-            ? 'A coordenação, sozinha'
-            : 'O mod confere o comando'
-  const whoShort = (s: StepLike): string => (s.merge !== undefined || s.deploy !== undefined ? (s.kind === 'automatic' ? 'automático' : WHO_TAG[s.kind]) : WHO_TAG[s.kind])
+            ? t.who.coordination
+            : t.who.mod
+  const whoShort = (s: StepLike): string => (s.merge !== undefined || s.deploy !== undefined ? (s.kind === 'automatic' ? t.whoTagAutomatic : t.whoTag[s.kind]) : t.whoTag[s.kind])
 
   const modelLine = (s: StepLike): string => {
     const fromAgent = s.model === undefined ? agentModel(s.agent) : undefined
     const model = s.model ?? fromAgent
-    const parts = [model === undefined ? undefined : modelName(model), s.effort === undefined ? undefined : `esforço ${effortName(s.effort)}`]
+    const parts = [model === undefined ? undefined : modelName(model), s.effort === undefined ? undefined : t.effortOf(effortName(t, s.effort))]
     return parts.filter((x): x is string => x !== undefined).join(', ')
   }
   /** The detail row's model: the summary's, or the session's own when nothing sets one. */
   const modelRow = (s: StepLike): string => {
     const fromAgent = s.model === undefined ? agentModel(s.agent) : undefined
-    return modelLine(s) === '' ? 'o da sessão' : `${modelLine(s)}${fromAgent === undefined ? '' : ' (do agente)'}`
+    return modelLine(s) === '' ? t.sessionDefault : `${modelLine(s)}${fromAgent === undefined ? '' : t.fromAgentSuffix}`
   }
 
   /** The step's one-line summary, in plain words. */
   const summary = (s: StepLike): string => {
     if (s.merge !== undefined) {
       return s.merge.auto
-        ? `Automático · ${s.merge.method} em ${s.merge.branch} · só com PR aprovado e CI verde, nunca com --admin`
-        : `Você faz o merge · ${s.merge.method} em ${s.merge.branch}`
+        ? t.summary.mergeAuto(s.merge.method, s.merge.branch)
+        : t.summary.mergeOwner(s.merge.method, s.merge.branch)
     }
     if (s.deploy !== undefined) {
-      const part = [s.deploy.ci ? 'espera o CI' : undefined, s.deploy.commands.length > 0 ? `roda ${s.deploy.commands.join(', ')}` : undefined]
+      const part = [s.deploy.ci ? t.summary.waitsCi : undefined, s.deploy.commands.length > 0 ? t.summary.runs(s.deploy.commands.join(', ')) : undefined]
         .filter((x): x is string => x !== undefined)
-        .join(' e ')
-      return `${s.deploy.auto ? 'Automático' : 'Você confirma'} · ${part === '' ? 'sem CI nem rotinas' : part}`
+        .join(t.summary.and)
+      return `${s.deploy.auto ? t.summary.deployAuto : t.summary.deployOwner} · ${part === '' ? t.summary.noCiNoRoutines : part}`
     }
     if (s.kind === 'session' || s.kind === 'loop') {
-      const lead = s.kind === 'loop' ? 'Uma sessão por fase' : 'Uma sessão faz'
-      if (s.agent === undefined) return `${lead}, sem agente definido`
-      const extra = modelLine(s)
-      return `${lead}, com o agente ${s.agent}${extra === '' ? '' : ` (${extra})`}`
+      const lead = s.kind === 'loop' ? t.summary.loopLead : t.summary.sessionLead
+      if (s.agent === undefined) return t.summary.noAgent(lead)
+      return t.summary.withAgent(lead, s.agent, modelLine(s))
     }
-    if (s.kind === 'automatic' && s.command !== undefined) return `O mod vê ${s.command} passar.`
-    return s.description ?? who(s)
+    if (s.kind === 'automatic' && s.command !== undefined) return t.summary.modSees(s.command)
+    return descriptionOf(s, content) ?? who(s)
   }
 
   const row = (label: string, value: string) => (
@@ -286,24 +306,27 @@ export const renderWorkflows = (els: WorkflowsElements, view: WorkflowsView, act
     const back = Object.values(s.outcomes ?? {})
       .map(o => all.findIndex(x => x.id === o.next))
       .filter(i => i !== -1 && i < here)
-      .map(i => all[i]!.title)
-    return back.length === 0 ? 'Não volta: o passo só avança.' : `Volta para ${[...new Set(back)].join(' ou ')}.`
+      .map(i => title(all[i]!))
+    return back.length === 0 ? t.noBack : t.backTo([...new Set(back)])
   }
 
   const detailRows = (s: StepLike, all: StepLike[]): RenderElement[] => {
-    const out: RenderElement[] = [row('Quem faz', who(s))]
-    out.push(row('Agente', s.agent === undefined ? 'nenhum' : `${s.agent} (${originOf(s.agent)})`))
-    out.push(row('Modelo', modelRow(s)))
-    if (s.command !== undefined) out.push(row('Comando', s.command))
-    if (s.merge !== undefined) out.push(row('Merge', `branch ${s.merge.branch} · ${s.merge.method} · automático: ${yes(s.merge.auto)}`))
+    const out: RenderElement[] = [row(t.rows.who, who(s))]
+    out.push(row(t.rows.agent, s.agent === undefined ? t.none : `${s.agent} (${originOf(s.agent)})`))
+    out.push(row(t.rows.model, modelRow(s)))
+    if (s.command !== undefined) out.push(row(t.rows.command, s.command))
+    if (s.merge !== undefined) out.push(row(t.rows.merge, t.mergeRow(s.merge.branch, s.merge.method, yes(s.merge.auto))))
     if (s.deploy !== undefined) {
-      out.push(row('Deploy', `CI ${yes(s.deploy.ci)} · rotinas: ${s.deploy.commands.length === 0 ? 'nenhuma' : s.deploy.commands.join(' ; ')} · automático: ${yes(s.deploy.auto)}`))
+      out.push(row(t.rows.deploy, t.deployRow(yes(s.deploy.ci), s.deploy.commands.length === 0 ? t.noneRoutine : s.deploy.commands.join(' ; '), yes(s.deploy.auto))))
     }
-    if (s.details?.inputs !== undefined) out.push(row('Recebe', s.details.inputs))
-    if (s.details?.produces !== undefined) out.push(row('Entrega', s.details.produces))
-    out.push(row('Se rejeitar', rejects(s, all)))
-    if (s.details?.blocks !== undefined) out.push(row('Bloqueia', s.details.blocks))
-    out.push(row('Evidência', s.requiresEvidence === true ? 'exigida' : 'não exigida'))
+    const inputs = detailOf(s, 'inputs', content)
+    const produces = detailOf(s, 'produces', content)
+    const blocks = detailOf(s, 'blocks', content)
+    if (inputs !== undefined) out.push(row(t.rows.inputs, inputs))
+    if (produces !== undefined) out.push(row(t.rows.produces, produces))
+    out.push(row(t.rows.ifRejected, rejects(s, all)))
+    if (blocks !== undefined) out.push(row(t.rows.blocks, blocks))
+    out.push(row(t.rows.evidence, s.requiresEvidence === true ? t.evidenceRequired : t.evidenceNotRequired))
     return out
   }
 
@@ -327,7 +350,7 @@ export const renderWorkflows = (els: WorkflowsElements, view: WorkflowsView, act
         {stepNumber(s, n)}
         <Box flexDirection="column" flexGrow={1} flexShrink={1} minWidth={0}>
           <Button key={`wf-step:${s.id}`} plain onPress={actions.focus(s.id)}>
-            <Text weight="semibold">{s.title}</Text>
+            <Text weight="semibold">{title(s)}</Text>
           </Button>
           <Text wrap="wrap" color={MUTED} size="footnote">{summary(s)}</Text>
           {open ? <Box flexDirection="column" marginTop={1} rowGap={1} minWidth={0}>{detailRows(s, all)}</Box> : []}
@@ -338,7 +361,7 @@ export const renderWorkflows = (els: WorkflowsElements, view: WorkflowsView, act
 
   const back = (
     <Button key="wf-back" plain onPress={actions.back}>
-      <Text color={LINK}>← Workflows</Text>
+      <Text color={LINK}>{t.back}</Text>
     </Button>
   )
 
@@ -358,7 +381,7 @@ export const renderWorkflows = (els: WorkflowsElements, view: WorkflowsView, act
       <Input
         key={key}
         label={label}
-        submitLabel="aplicar"
+        submitLabel={t.apply}
         {...(value === undefined || value === '' ? {} : { value })}
         onInput={apply}
         onSubmit={submit ?? apply}
@@ -368,20 +391,20 @@ export const renderWorkflows = (els: WorkflowsElements, view: WorkflowsView, act
   const agentSelect = (key: string, current: string | undefined, apply: (v: string) => void) => {
     const known = view.agentList.some(a => a.name === current)
     const options = [
-      ...view.agentList.map(a => ({ value: a.name, label: `${a.name} (${a.source === 'project' ? 'do projeto' : 'do plugin'})` })),
-      ...(current === undefined || known ? [] : [{ value: current, label: `${current} (sem arquivo)` }]),
-      { value: NONE, label: 'Nenhum: a sessão segue só o pedido' },
+      ...view.agentList.map(a => ({ value: a.name, label: t.agentOption(a.name, a.source === 'project' ? t.agentOrigin.project : t.agentOrigin.plugin) })),
+      ...(current === undefined || known ? [] : [{ value: current, label: t.agentOption(current, t.agentOrigin.missing) }]),
+      { value: NONE, label: t.noAgentOption },
     ]
     return Select === undefined ? (
       noFields
     ) : (
-      <Select key={key} label="Agente" options={options} value={current ?? NONE} onSelect={v => apply(v === NONE ? '' : v)} />
+      <Select key={key} label={t.agentLabel} options={options} value={current ?? NONE} onSelect={v => apply(v === NONE ? '' : v)} />
     )
   }
   const agentAbout = (name: string | undefined) => {
-    if (name === undefined) return help('Sem agente: a sessão segue só o pedido do passo.')
+    if (name === undefined) return help(t.noAgentHelp)
     const found = view.agentList.find(a => a.name === name)
-    return help(found === undefined ? `Não há arquivo para ${name}: a sessão segue só o pedido.` : found.description)
+    return help(found === undefined ? t.noAgentFile(name) : found.description)
   }
 
   const editCard = (s: StepLike, n: number, opts: { first: boolean; last: boolean }): RenderElement => {
@@ -398,9 +421,9 @@ export const renderWorkflows = (els: WorkflowsElements, view: WorkflowsView, act
       body.push(
         <Select
           key={`wf-model:${s.id}`}
-          label="Modelo"
+          label={t.modelLabel}
           options={[
-            { value: NONE, label: fromAgent === undefined ? 'o da sessão' : `${modelName(fromAgent)} (do agente)` },
+            { value: NONE, label: fromAgent === undefined ? t.sessionDefault : t.fromAgent(modelName(fromAgent)) },
             ...models.map(m => ({ value: m, label: modelName(m) })),
           ]}
           value={s.model ?? NONE}
@@ -408,24 +431,24 @@ export const renderWorkflows = (els: WorkflowsElements, view: WorkflowsView, act
         />,
         <Select
           key={`wf-effort:${s.id}`}
-          label="Esforço"
+          label={t.effortLabel}
           options={[
-            { value: NONE, label: 'o da sessão' },
-            ...[...new Set([...EFFORTS, ...(s.effort === undefined ? [] : [s.effort])])].map(e => ({ value: e, label: effortName(e) })),
+            { value: NONE, label: t.sessionDefault },
+            ...[...new Set([...EFFORTS, ...(s.effort === undefined ? [] : [s.effort])])].map(e => ({ value: e, label: effortName(t, e) })),
           ]}
           value={s.effort ?? NONE}
           onSelect={v => set('effort')(v === NONE ? '' : v)}
         />,
-        help('Vêm do agente escolhido. Mude só se este projeto pedir mais ou menos: o mais forte custa mais.'),
+        help(t.modelHelp),
       )
       if (s.merge !== undefined) {
         body.push(
-          text(`wf-merge-branch:${s.id}`, 'Branch que recebe o PR', s.merge.branch, v => actions.set(s.id, { field: 'merge', value: { branch: v.trim() } })()),
-          help('Trunk-based: main. Com dev e master, use dois passos de merge: um em dev (antes do QA) e um em master (produção).'),
+          text(`wf-merge-branch:${s.id}`, t.merge.branchLabel, s.merge.branch, v => actions.set(s.id, { field: 'merge', value: { branch: v.trim() } })()),
+          help(t.merge.branchHelp),
           <Select
             key={`wf-merge-method:${s.id}`}
-            label="Como juntar"
-            options={Object.entries(METHODS).map(([value, label]) => ({ value, label }))}
+            label={t.merge.methodLabel}
+            options={Object.entries(t.methods).map(([value, label]) => ({ value, label }))}
             value={s.merge.method}
             onSelect={v => actions.set(s.id, { field: 'merge', value: { method: v as FlowMerge['method'] } })()}
           />,
@@ -436,10 +459,10 @@ export const renderWorkflows = (els: WorkflowsElements, view: WorkflowsView, act
       body.push(
         buttons(
           <Button key={`wf-merge-auto:${s.id}`} onPress={actions.set(s.id, { field: 'merge', value: { auto: !s.merge.auto } })}>
-            {`Fazer o merge sozinho: ${yes(s.merge.auto)}`}
+            {t.merge.auto(yes(s.merge.auto))}
           </Button>,
         ),
-        help('A coordenação faz o merge assim que o PR estiver aprovado no GitHub e com o CI verde. Nunca com --admin. Desligado, o merge fica com você.'),
+        help(t.merge.autoHelp),
       )
     }
     if (s.deploy !== undefined) {
@@ -448,18 +471,18 @@ export const renderWorkflows = (els: WorkflowsElements, view: WorkflowsView, act
       body.push(
         buttons(
           <Button key={`wf-deploy-ci:${s.id}`} onPress={actions.set(s.id, { field: 'deploy', value: { ci: !deploy.ci } })}>
-            {`Esperar o CI do deploy: ${yes(deploy.ci)}`}
+            {t.deploy.ci(yes(deploy.ci))}
           </Button>,
         ),
-        help('Espera o deploy que o CI faz depois do merge, antes de seguir.'),
-        line('Rotinas fora do CI (opcional)'),
+        help(t.deploy.ciHelp),
+        line(t.deploy.routines),
       )
       if (fields) {
         deploy.commands.forEach((command, i) => {
           body.push(
             text(
               `wf-routine:${s.id}:${i}`,
-              `Rotina ${i + 1}`,
+              t.deploy.routine(i + 1),
               command,
               v => {
                 if (v.trim() !== '') commands(deploy.commands.map((c, j) => (j === i ? v.trim() : c)))
@@ -468,13 +491,13 @@ export const renderWorkflows = (els: WorkflowsElements, view: WorkflowsView, act
             ),
             buttons(
               <Button key={`wf-routine-del:${s.id}:${i}`} onPress={() => commands(deploy.commands.filter((_, j) => j !== i))}>
-                {`Tirar a rotina ${i + 1}`}
+                {t.deploy.removeRoutine(i + 1)}
               </Button>,
             ),
           )
         })
         if (view.forms.routineFor === s.id) {
-          body.push(text(`wf-routine-new:${s.id}`, 'Nova rotina', undefined, () => {}, v => {
+          body.push(text(`wf-routine-new:${s.id}`, t.deploy.newRoutine, undefined, () => {}, v => {
             if (v.trim() !== '') commands([...deploy.commands, v.trim()])
             actions.form('routineFor')('')
           }))
@@ -483,32 +506,32 @@ export const renderWorkflows = (els: WorkflowsElements, view: WorkflowsView, act
       body.push(
         buttons(
           <Button key={`wf-routine-add:${s.id}`} onPress={() => actions.form('routineFor')(s.id)}>
-            + rotina
+            {t.deploy.addRoutine}
           </Button>,
         ),
-        help('Um comando por campo, rodados nesta ordem depois do merge. Sem nenhum: só espera o CI.'),
+        help(t.deploy.routinesHelp),
         buttons(
           <Button key={`wf-deploy-auto:${s.id}`} onPress={actions.set(s.id, { field: 'deploy', value: { auto: !deploy.auto } })}>
-            {`Fazer o deploy sozinho: ${yes(deploy.auto)}`}
+            {t.deploy.auto(yes(deploy.auto))}
           </Button>,
         ),
-        help('Logo depois do merge, sem esperar você. Desligado, você aperta "Deploy concluído" quando terminar.'),
+        help(t.deploy.autoHelp),
       )
     }
     return box([
       <Box key={`wf-card-head:${s.id}`} flexDirection="row" justifyContent="space-between" columnGap={1} minWidth={0}>
         <Button key={`wf-step:${s.id}`} plain onPress={actions.focus(s.id)}>
-          <Text weight="semibold">{`${n}. ${s.title}`}</Text>
+          <Text weight="semibold">{`${n}. ${title(s)}`}</Text>
         </Button>
         {pill(whoShort(s), WHO_PILL[s.kind])}
       </Box>,
       line(who(s), undefined, true),
       ...body,
       buttons(
-        ...(opts.first ? [] : [<Button key={`wf-up:${s.id}`} onPress={actions.move(s.id, -1)}>Subir</Button>]),
-        ...(opts.last ? [] : [<Button key={`wf-down:${s.id}`} onPress={actions.move(s.id, 1)}>Descer</Button>]),
+        ...(opts.first ? [] : [<Button key={`wf-up:${s.id}`} onPress={actions.move(s.id, -1)}>{t.up}</Button>]),
+        ...(opts.last ? [] : [<Button key={`wf-down:${s.id}`} onPress={actions.move(s.id, 1)}>{t.down}</Button>]),
         <Button key={`wf-toggle:${s.id}`} onPress={actions.toggle(s.id)}>
-          Desligar este passo
+          {t.switchOff}
         </Button>,
       ),
     ])
@@ -521,11 +544,11 @@ export const renderWorkflows = (els: WorkflowsElements, view: WorkflowsView, act
     const chosen = use === NEW_STEP ? undefined : libraryStep(use)
     const about =
       chosen === undefined || typeof chosen === 'string'
-        ? 'Você escolhe o título, quem responde e, se for um passo do mod, o comando.'
-        : String(chosen.description ?? '')
+        ? t.insert.newAbout
+        : (descriptionOf(chosen as { description?: unknown }, content) ?? '')
     const labelOf = (id: string): string => {
       const step = libraryStep(id)
-      return typeof step === 'string' ? id : String(step.title ?? id)
+      return typeof step === 'string' ? id : localize(parseLocalized(step.title), ui) ?? id
     }
     const body: RenderElement[] = []
     if (Select === undefined || Input === undefined) body.push(noFields)
@@ -533,8 +556,8 @@ export const renderWorkflows = (els: WorkflowsElements, view: WorkflowsView, act
       body.push(
         <Select
           key="wf-add-library"
-          label="Passo pronto"
-          options={[...libraryIds.map(id => ({ value: id, label: labelOf(id) })), { value: NEW_STEP, label: 'Um passo novo, do zero' }]}
+          label={t.insert.libraryLabel}
+          options={[...libraryIds.map(id => ({ value: id, label: labelOf(id) })), { value: NEW_STEP, label: t.insert.newStepOption }]}
           value={use}
           onSelect={v => actions.form('libraryUse')(v === NEW_STEP ? '' : v)}
         />,
@@ -544,20 +567,20 @@ export const renderWorkflows = (els: WorkflowsElements, view: WorkflowsView, act
         body.push(
           <Input
             key="wf-step-title"
-            label="Título do passo"
-            submitLabel="ok"
+            label={t.insert.titleLabel}
+            submitLabel={t.ok}
             {...(forms.stepTitle === '' ? {} : { value: forms.stepTitle })}
             onInput={actions.form('stepTitle')}
             onSubmit={actions.form('stepTitle')}
           />,
-          help('Como o passo aparece na lista. O id dele sai do título.'),
+          help(t.insert.titleHelp),
           <Select
             key="wf-step-kind"
-            label="Quem responde"
+            label={t.insert.kindLabel}
             options={[
-              { value: 'session', label: 'Uma sessão faz' },
-              { value: 'owner', label: 'Você aprova ou confirma' },
-              { value: 'automatic', label: 'O mod confere um comando' },
+              { value: 'session', label: t.insert.kinds.session },
+              { value: 'owner', label: t.insert.kinds.owner },
+              { value: 'automatic', label: t.insert.kinds.automatic },
             ]}
             value={forms.stepKind}
             onSelect={actions.form('stepKind')}
@@ -570,27 +593,27 @@ export const renderWorkflows = (els: WorkflowsElements, view: WorkflowsView, act
           body.push(
             <Input
               key="wf-step-command"
-              label="Comando"
-              submitLabel="ok"
+              label={t.insert.commandLabel}
+              submitLabel={t.ok}
               {...(forms.stepCommand === '' ? {} : { value: forms.stepCommand })}
               onInput={actions.form('stepCommand')}
               onSubmit={actions.form('stepCommand')}
             />,
-            help('O mod vê este comando rodar; o código de saída 0 passa o passo.'),
+            help(t.insert.commandHelp),
           )
         }
       }
     }
     return box(
       [
-        <Text weight="semibold" wrap="wrap">{after === undefined ? 'Acrescentar no começo' : `Acrescentar depois de ${after.title}`}</Text>,
+        <Text weight="semibold" wrap="wrap">{after === undefined ? t.insert.atStart : t.insert.after(title(after))}</Text>,
         ...body,
         buttons(
           <Button key="wf-add" variant="primary" onPress={actions.add}>
-            Acrescentar
+            {t.insert.add}
           </Button>,
           <Button key="wf-add-cancel" onPress={actions.insert(String(view.insert))}>
-            Cancelar
+            {t.insert.cancel}
           </Button>,
         ),
       ],
@@ -602,7 +625,7 @@ export const renderWorkflows = (els: WorkflowsElements, view: WorkflowsView, act
     const d = view.draft
     const onSteps = d.steps.filter(s => s.on).map(s => s.step as unknown as StepLike)
     const offSteps = d.steps.filter(s => !s.on).map(s => s.step as unknown as StepLike)
-    const changes = changesOf(d)
+    const changes = changesOf(d, t)
     // the one "+ passo aqui": where it is open, else after the open step, else at the end
     const slot =
       view.insert !== null && (view.insert === INSERT_END || onSteps.some(s => s.id === view.insert))
@@ -614,7 +637,7 @@ export const renderWorkflows = (els: WorkflowsElements, view: WorkflowsView, act
       <Box key={`wf-insert-box:${id}`} flexDirection="column" marginTop={1} minWidth={0}>
         {view.insert === id ? insertForm(d, step) : (
           <Button key={`wf-insert:${id}`} plain onPress={actions.insert(id)}>
-            <Text color={LINK}>+ passo aqui</Text>
+            <Text color={LINK}>{t.insert.here}</Text>
           </Button>
         )}
       </Box>
@@ -622,52 +645,52 @@ export const renderWorkflows = (els: WorkflowsElements, view: WorkflowsView, act
     return (
       <Box flexDirection="column" minWidth={0}>
         <Box flexDirection="column" borderStyle="round" borderColor={RULE} paddingX={1} minWidth={0}>
-          {heading(`Editando ${d.title}`)}
-          {help('Rascunho: nada é gravado até salvar.')}
+          {heading(t.edit.editing(d.title))}
+          {help(t.edit.draftHelp)}
           {buttons(
             <Button key="wf-save" variant="primary" onPress={actions.save}>
-              Salvar
+              {t.edit.save}
             </Button>,
             <Button key="wf-discard" onPress={actions.discard}>
-              Descartar
+              {t.edit.discard}
             </Button>,
           )}
-          {line(changes.length === 0 ? 'Nenhuma mudança ainda.' : `${changes.length} ${changes.length === 1 ? 'mudança' : 'mudanças'}: ${changes.join('; ')}.`, undefined, changes.length === 0)}
+          {line(changes.length === 0 ? t.edit.noChanges : t.edit.changes(changes), undefined, changes.length === 0)}
         </Box>
-        {d.error === undefined ? [] : box([line(`Não salvei: ${d.error}`, ERROR)], ERROR)}
-        {d.base === undefined ? [] : help(`Derivado de ${d.base}: grava só o que muda em relação a ele.`)}
+        {d.error === undefined ? [] : box([line(t.edit.notSaved(d.error), ERROR)], ERROR)}
+        {d.base === undefined ? [] : help(t.edit.derived(d.base))}
         {d.replacesDefault
-          ? box([line(`⚠ ${d.id} é um workflow padrão. Salvar cria .orquestrador/flows/${d.id}.json, que passa a valer no lugar do padrão neste projeto.`, WARN)], WARN)
+          ? box([line(t.edit.replacesDefault(d.id), WARN)], WARN)
           : []}
-        {help('Changes em andamento seguem com o workflow com que começaram.')}
+        {help(t.edit.runningKeep)}
         {fields
           ? [
               <Box key="wf-head-block" flexDirection="column" marginTop={1} minWidth={0}>
                 <Button key="wf-head-toggle" plain onPress={actions.focus(HEAD_FOCUS)}>
-                  <Text weight="semibold">{`${view.focus === HEAD_FOCUS ? '▾' : '›'} Nome e descrição`}</Text>
+                  <Text weight="semibold">{`${view.focus === HEAD_FOCUS ? '▾' : '›'} ${t.edit.nameAndDescription}`}</Text>
                 </Button>
                 {view.focus === HEAD_FOCUS
                   ? [
-                      <Input key="wf-title" label="Nome" submitLabel="aplicar" value={d.title} onInput={actions.head('title')} onSubmit={actions.head('title')} />,
+                      <Input key="wf-title" label={t.edit.nameLabel} submitLabel={t.apply} value={d.title} onInput={actions.head('title')} onSubmit={actions.head('title')} />,
                       <Input
                         key="wf-description"
-                        label="Descrição"
-                        submitLabel="aplicar"
+                        label={t.edit.descriptionLabel}
+                        submitLabel={t.apply}
                         {...(d.description === '' ? {} : { value: d.description })}
                         onInput={actions.head('description')}
                         onSubmit={actions.head('description')}
                       />,
-                      help('O nome e a descrição aparecem na lista de workflows.'),
+                      help(t.edit.headHelp),
                     ]
                   : []}
               </Box>,
             ]
           : [line(d.title, undefined, false)]}
         <Box flexDirection="column" marginTop={1} minWidth={0}>
-          {label('Passos')}
-          {help('Toque num passo para editar. "+ passo aqui" acrescenta naquele lugar.')}
+          {label(t.edit.steps)}
+          {help(t.edit.stepsHelp)}
         </Box>
-        {onSteps.length === 0 ? [help('Nenhum passo ainda.'), insertAt(INSERT_END, undefined)] : []}
+        {onSteps.length === 0 ? [help(t.edit.noSteps), insertAt(INSERT_END, undefined)] : []}
         {onSteps.map((s, i) => {
           const open = view.focus === s.id
           return (
@@ -679,7 +702,7 @@ export const renderWorkflows = (els: WorkflowsElements, view: WorkflowsView, act
                   {stepNumber(s, i + 1)}
                   <Box flexDirection="row" justifyContent="space-between" flexGrow={1} flexShrink={1} columnGap={1} minWidth={0}>
                     <Button key={`wf-step:${s.id}`} plain onPress={actions.focus(s.id)}>
-                      <Text weight="semibold">{s.title}</Text>
+                      <Text weight="semibold">{title(s)}</Text>
                     </Button>
                     {pill(whoShort(s), WHO_PILL[s.kind])}
                   </Box>
@@ -694,10 +717,10 @@ export const renderWorkflows = (els: WorkflowsElements, view: WorkflowsView, act
           <Box key={`wf-off:${s.id}`} flexDirection="row" justifyContent="space-between" columnGap={1} marginTop={1} minWidth={0}>
             <Box flexDirection="row" minWidth={0}>
               {stepNumber(s, '—', true)}
-              <Text strikethrough dimColor wrap="wrap">{s.title}</Text>
+              <Text strikethrough dimColor wrap="wrap">{title(s)}</Text>
             </Box>
             <Button key={`wf-toggle:${s.id}`} plain onPress={actions.toggle(s.id)}>
-              <Text color={LINK}>religar</Text>
+              <Text color={LINK}>{t.edit.switchOn}</Text>
             </Button>
           </Box>
         ))}
@@ -722,19 +745,19 @@ export const renderWorkflows = (els: WorkflowsElements, view: WorkflowsView, act
         {back}
         {notice}
         {heading(
-          chosen.flow.title,
+          flowTitle(chosen.flow, ui),
           <Button key="wf-edit" variant="primary" onPress={actions.edit(chosen.flow.id)}>
-            Editar
+            {t.view.edit}
           </Button>,
         )}
         <Box flexDirection="row" flexWrap="wrap" columnGap={1} marginTop={1} minWidth={0}>
           {pill(chosen.origin, chosen.flow.base !== undefined ? TAG_BLUE : TAG_GRAY)}
         </Box>
-        {chosen.flow.description === '' ? [] : [<Text key="wf-desc" wrap="wrap" color={MUTED}>{chosen.flow.description}</Text>]}
+        {flowDescription(chosen.flow, content) === '' ? [] : [<Text key="wf-desc" wrap="wrap" color={MUTED}>{flowDescription(chosen.flow, content)}</Text>]}
         <Box flexDirection="row" flexWrap="wrap" columnGap={2} marginTop={1} minWidth={0}>
-          {legend(LINK, 'sessão faz')}
-          {legend(OWNER, 'você aprova')}
-          {legend(MOD, 'o mod confere')}
+          {legend(LINK, t.view.legendSession)}
+          {legend(OWNER, t.view.legendOwner)}
+          {legend(MOD, t.view.legendMod)}
         </Box>
         {steps.map((s, i) => viewStep(s, i + 1, steps))}
       </Box>
@@ -746,20 +769,20 @@ export const renderWorkflows = (els: WorkflowsElements, view: WorkflowsView, act
   const card = ({ flow, origin, project, replaces }: WorkflowEntry) => {
     const steps = flow.steps as unknown as StepLike[]
     const tags = [
-      flow.base !== undefined ? { label: `derivado de ${flow.base}`, tone: TAG_BLUE } : undefined,
-      steps.some(s => s.merge?.auto === true) ? { label: 'merge automático', tone: TAG_GRAY } : undefined,
-      steps.some(s => s.deploy?.auto === true) ? { label: 'deploy automático', tone: TAG_GRAY } : undefined,
-      project && replaces ? { label: `substitui o padrão ${flow.id}`, tone: TAG_AMBER } : undefined,
+      flow.base !== undefined ? { label: t.origin.derived(flow.base), tone: TAG_BLUE } : undefined,
+      steps.some(s => s.merge?.auto === true) ? { label: t.list.mergeAuto, tone: TAG_GRAY } : undefined,
+      steps.some(s => s.deploy?.auto === true) ? { label: t.list.deployAuto, tone: TAG_GRAY } : undefined,
+      project && replaces ? { label: t.list.replaces(flow.id), tone: TAG_AMBER } : undefined,
     ].filter((x): x is { label: string; tone: { bg: string; fg: string } } => x !== undefined)
     return (
       <Box key={`wf-entry:${flow.id}`} flexDirection="column" borderStyle="round" borderColor={RULE} paddingX={1} minWidth={0}>
         <Box flexDirection="row" justifyContent="space-between" columnGap={1} minWidth={0}>
           <Button key={`wf-open:${flow.id}`} plain onPress={actions.open(flow.id)}>
-            <Text weight="semibold">{`${flow.title} ›`}</Text>
+            <Text weight="semibold">{`${flowTitle(flow, ui)} ›`}</Text>
           </Button>
-          <Text color={MUTED} size="footnote">{`${steps.length} passos`}</Text>
+          <Text color={MUTED} size="footnote">{t.list.steps(steps.length)}</Text>
         </Box>
-        {flow.description === '' ? [] : [<Text key="wf-desc" wrap="wrap" color={MUTED}>{flow.description}</Text>]}
+        {flowDescription(flow, content) === '' ? [] : [<Text key="wf-desc" wrap="wrap" color={MUTED}>{flowDescription(flow, content)}</Text>]}
         {tags.length === 0 ? [] : [<Box key="wf-tags" flexDirection="row" flexWrap="wrap" columnGap={1} minWidth={0}>{tags.map(t => pill(t.label, t.tone))}</Box>]}
       </Box>
     )
@@ -776,19 +799,19 @@ export const renderWorkflows = (els: WorkflowsElements, view: WorkflowsView, act
   return (
     <Box flexDirection="column" minWidth={0}>
       {notice}
-      <Text size="title" weight="semibold">Workflows</Text>
+      <Text size="title" weight="semibold">{t.list.title}</Text>
       {divider}
-      {help('Os caminhos que uma change pode seguir neste projeto. Abra um para ver os passos; edite para mudar.')}
-      {mine.length === 0 ? [] : [section('Deste projeto', mine.map(card))]}
-      {section('Padrões do plugin', [
+      {help(t.list.intro)}
+      {mine.length === 0 ? [] : [section(t.list.mine, mine.map(card))]}
+      {section(t.list.standard, [
         ...standard.map(card),
         ...view.retired.map(r => (
           <Box key={`wf-retired:${r.flow.id}`} flexDirection="column" borderStyle="round" borderDimColor paddingX={1} minWidth={0}>
             <Box flexDirection="row" justifyContent="space-between" columnGap={1} minWidth={0}>
-              <Text bold dimColor>{r.flow.title}</Text>
-              <Text dimColor>fora de uso</Text>
+              <Text bold dimColor>{flowTitle(r.flow, ui)}</Text>
+              <Text dimColor>{t.list.retired}</Text>
             </Box>
-            {help(`Este projeto usa o seu ${r.by.title} no lugar deste.`)}
+            {help(t.list.retiredHelp(flowTitle(r.by, ui)))}
           </Box>
         )),
       ])}
@@ -799,46 +822,46 @@ export const renderWorkflows = (els: WorkflowsElements, view: WorkflowsView, act
               {box(
                 [
                   <Text bold color={ERROR} wrap="wrap">
-                    {view.problems.length === 1 ? '1 arquivo com erro, ignorado' : `${view.problems.length} arquivos com erro, ignorados`}
+                    {t.list.problems(view.problems.length)}
                   </Text>,
                   ...view.problems.map(p => {
-                    const { file, what } = problemParts(p)
+                    const { file, what } = problemParts(t, p)
                     return line(`${file} — ${what}`, ERROR)
                   }),
-                  help('Corrija ou apague o arquivo em .orquestrador/flows/; até lá o mod não o usa.'),
+                  help(t.list.problemsHelp),
                 ],
                 ERROR,
               )}
             </Box>,
           ]}
       <Box flexDirection="column" marginTop={1} rowGap={1} minWidth={0}>
-        <Text weight="semibold">Novo workflow</Text>
+        <Text weight="semibold">{t.list.newTitle}</Text>
         {Input !== undefined && Select !== undefined
           ? [
               <Input
                 key="wf-new-name"
-                label="Nome"
-                placeholder="ex.: Dev e master"
-                submitLabel="ok"
+                label={t.list.nameLabel}
+                placeholder={t.list.namePlaceholder}
+                submitLabel={t.ok}
                 {...(view.forms.newId === '' ? {} : { value: view.forms.newId })}
                 onInput={actions.form('newId')}
                 onSubmit={actions.form('newId')}
               />,
-              help(`Como ele aparece na lista. O id do arquivo sai do nome${view.forms.newId.trim() === '' ? '' : ` (${slug(view.forms.newId)})`}.`),
+              help(t.list.nameHelp(view.forms.newId.trim() === '' ? undefined : slug(view.forms.newId))),
               <Select
                 key="wf-new-base"
-                label="Começar de"
+                label={t.list.baseLabel}
                 options={[
-                  ...view.entries.map(e => ({ value: e.flow.id, label: `${e.flow.title} — copia os ${e.flow.steps.length} passos` })),
-                  { value: NONE, label: 'Do zero — nenhum passo' },
+                  ...view.entries.map(e => ({ value: e.flow.id, label: t.list.baseOption(flowTitle(e.flow, ui), e.flow.steps.length) })),
+                  { value: NONE, label: t.list.scratchOption },
                 ]}
                 value={view.forms.newBase === '' ? NONE : view.forms.newBase}
                 onSelect={v => actions.form('newBase')(v === NONE ? '' : v)}
               />,
-              help('Partindo de um existente, ele guarda só o que você mudar.'),
+              help(t.list.baseHelp),
               buttons(
                 <Button key="wf-new" variant="primary" onPress={actions.create}>
-                  Criar e editar
+                  {t.list.create}
                 </Button>,
               ),
             ]
@@ -859,8 +882,18 @@ export async function toggleWorkflowsPane($: EngineInterface): Promise<'opened' 
 
 const defaultsById = (): Record<string, FlowDef> => Object.fromEntries(defaultFlows().map(f => [f.id, f]))
 
-const originOf = (flow: FlowDef, project: boolean): string =>
-  flow.base !== undefined ? `derivado de ${flow.base}` : project ? 'do projeto' : 'padrão'
+const originOf = (t: WorkflowsText, flow: FlowDef, project: boolean): string =>
+  flow.base !== undefined ? t.origin.derived(flow.base) : project ? t.origin.project : t.origin.standard
+
+/** The project's languages from `<repo>/.orquestrador/config.json`, read fresh; no file or a bad one, pt-BR. */
+async function loadLanguages($: EngineInterface): Promise<Languages> {
+  try {
+    const path = `${await $.session.root()}/${CONFIG_PATH}`
+    return parseConfig((await $.fs.exists(path)) ? await $.fs.read(path) : undefined).languages
+  } catch {
+    return DEFAULT_LANGUAGES
+  }
+}
 
 /** The ⚙️ pane drawn: its view read from the disk and the state, its presses bound to `$`. */
 export async function drawWorkflows(
@@ -869,6 +902,8 @@ export async function drawWorkflows(
   columns: number,
 ): Promise<RenderElement> {
   const loaded = await loadFlows($)
+  const languages = await loadLanguages($)
+  const t = workflowsText(languages.ui)
   const [selected, focus, insert, draft, forms, notice] = await Promise.all([
     $.state.get(SELECTED),
     $.state.get(FOCUS),
@@ -880,7 +915,7 @@ export async function drawWorkflows(
   const defaults = defaultsById()
   const entries = Object.values(loaded.flows).map(flow => ({
     flow,
-    origin: originOf(flow, loaded.projectIds.has(flow.id)),
+    origin: originOf(t, flow, loaded.projectIds.has(flow.id)),
     project: loaded.projectIds.has(flow.id),
     replaces: defaults[flow.id] !== undefined,
   }))
@@ -909,27 +944,28 @@ export async function drawWorkflows(
     agents,
     agentList: await listAgents($),
     narrow: columns < NARROW_COLUMNS,
+    languages,
   }
 
-  const fail = (what: string) => () => $.ui.toast(`Não consegui ${what}.`)
+  const fail = (what: keyof WorkflowsText['failed']) => () => $.ui.toast(t.couldNot(t.failed[what]))
   const editDraft = (fn: (d: WorkflowDraft) => WorkflowDraft | { error: string }) => {
     void update($, DRAFT, d => {
       if (d == null) return d ?? null
       const next = fn(d)
       return 'steps' in next ? next : { ...d, error: next.error }
-    }).catch(fail('mudar o rascunho'))
+    }).catch(fail('draft'))
   }
   const forms$ = view.forms
 
   return renderWorkflows(els, view, {
     open: id => () => {
-      void Promise.all([$.state.set(SELECTED, id), $.state.set(FOCUS, null), $.state.set(INSERT, null), $.state.set(NOTICE, null)]).catch(fail('abrir o workflow'))
+      void Promise.all([$.state.set(SELECTED, id), $.state.set(FOCUS, null), $.state.set(INSERT, null), $.state.set(NOTICE, null)]).catch(fail('open'))
     },
     back: () => {
-      void Promise.all([$.state.set(SELECTED, null), $.state.set(FOCUS, null)]).catch(fail('voltar'))
+      void Promise.all([$.state.set(SELECTED, null), $.state.set(FOCUS, null)]).catch(fail('back'))
     },
     focus: step => () => {
-      void update($, FOCUS, f => (f === step ? null : step)).catch(fail('abrir o passo'))
+      void update($, FOCUS, f => (f === step ? null : step)).catch(fail('step'))
     },
     edit: id => () => {
       const flow = loaded.flows[id]
@@ -937,32 +973,32 @@ export async function drawWorkflows(
       const project = loaded.projectIds.has(id)
       const base = !project ? flow : flow.base === undefined ? undefined : flow.base === id ? defaults[id] : loaded.flows[flow.base]
       if (project && flow.base !== undefined && base === undefined) {
-        $.ui.toast(`Não achei o workflow base ${flow.base}.`)
+        $.ui.toast(t.toast.noBase(flow.base))
         return
       }
       const source = project ? loaded.files.find(f => idOf(f.raw) === id)?.source : undefined
       const d = { ...draftOf(flow, base, defaults[id] !== undefined), ...(source === undefined ? {} : { source }) }
-      void Promise.all([$.state.set(DRAFT, d), $.state.set(FOCUS, null), $.state.set(INSERT, null), $.state.set(NOTICE, null)]).catch(fail('abrir a edição'))
+      void Promise.all([$.state.set(DRAFT, d), $.state.set(FOCUS, null), $.state.set(INSERT, null), $.state.set(NOTICE, null)]).catch(fail('edit'))
     },
     form: field => value => {
-      void update($, FORMS, f => ({ ...EMPTY_FORMS, ...(f ?? {}), [field]: value })).catch(fail('guardar o campo'))
+      void update($, FORMS, f => ({ ...EMPTY_FORMS, ...(f ?? {}), [field]: value })).catch(fail('field'))
     },
     create: () => {
       const name = forms$.newId.trim()
       const id = slug(name)
       if (name === '' || !WORKFLOW_ID.test(id)) {
-        $.ui.toast('Dê um nome ao workflow novo (ex.: Dev e master); o id do arquivo sai dele.')
+        $.ui.toast(t.toast.nameNew)
         return
       }
       if (loaded.flows[id] !== undefined) {
-        $.ui.toast(`Já existe o workflow ${id}: abra-o e use "Editar".`)
+        $.ui.toast(t.toast.exists(id))
         return
       }
       const base = forms$.newBase === '' ? undefined : loaded.flows[forms$.newBase]
       void takenBy($, loaded.files, loaded.dir, id)
         .then(taken => {
           if (taken !== undefined) {
-            $.ui.toast(`Já existe ${taken} com o id ou o nome ${id}; nada foi criado. Corrija ou apague esse arquivo, ou use outro nome.`)
+            $.ui.toast(t.toast.taken(taken, id))
             return
           }
           return Promise.all([
@@ -973,23 +1009,23 @@ export async function drawWorkflows(
             $.state.set(NOTICE, null),
           ])
         })
-        .catch(fail('criar o workflow'))
+        .catch(fail('create'))
     },
     head: field => value => editDraft(d => ({ ...d, [field]: value })),
     toggle: step => () => editDraft(d => toggleStep(d, step)),
     move: (step, by) => () => editDraft(d => moveStep(d, step, by)),
     set: (step, change) => () => editDraft(d => setStepField(d, step, change)),
     insert: after => () => {
-      void update($, INSERT, i => (i === after ? null : after)).catch(fail('abrir o acréscimo de passo'))
+      void update($, INSERT, i => (i === after ? null : after)).catch(fail('insert'))
     },
     add: () => {
       const d = view.draft
       const at = view.insert
       if (d === null || at === null) return
       const after = at === INSERT_END ? null : at
-      const added = forms$.libraryUse === '' ? addNewStep(d, forms$, after) : addLibraryStep(d, forms$.libraryUse, after)
+      const added = forms$.libraryUse === '' ? addNewStep(d, forms$, after, t) : addLibraryStep(d, forms$.libraryUse, after)
       if (!('steps' in added)) {
-        void $.state.set(DRAFT, { ...d, error: added.error }).catch(fail('acrescentar o passo'))
+        void $.state.set(DRAFT, { ...d, error: added.error }).catch(fail('add'))
         return
       }
       const known = new Set(d.steps.map(s => String(s.step.id)))
@@ -999,13 +1035,13 @@ export async function drawWorkflows(
         $.state.set(FORMS, { ...forms$, stepTitle: '', stepAgent: '', stepCommand: '', libraryUse: '' }),
         $.state.set(INSERT, null),
         $.state.set(FOCUS, fresh === undefined ? null : String(fresh.step.id)),
-      ]).catch(fail('acrescentar o passo'))
+      ]).catch(fail('add'))
     },
     save: () => {
-      void saveDraft($).catch(fail('salvar o workflow'))
+      void saveDraft($, t).catch(fail('save'))
     },
     discard: () => {
-      void Promise.all([$.state.set(DRAFT, null), $.state.set(FOCUS, null), $.state.set(INSERT, null)]).catch(fail('descartar o rascunho'))
+      void Promise.all([$.state.set(DRAFT, null), $.state.set(FOCUS, null), $.state.set(INSERT, null)]).catch(fail('discard'))
     },
   })
 }
@@ -1014,7 +1050,7 @@ export async function drawWorkflows(
  * "Salvar": the draft resolved as the mod would load it; with an error nothing is written and the
  * error stays on the draft. Only this press writes a workflow file.
  */
-async function saveDraft($: EngineInterface): Promise<void> {
+async function saveDraft($: EngineInterface, t: WorkflowsText): Promise<void> {
   const { value: draft } = await $.state.get(DRAFT)
   if (draft == null) return
   const { files, dir } = await loadFlows($)
@@ -1025,11 +1061,11 @@ async function saveDraft($: EngineInterface): Promise<void> {
   if (draft.source === undefined) {
     const taken = await takenBy($, files, dir, draft.id)
     if (taken !== undefined) {
-      await refuse(`já existe ${taken} com o id ou o nome ${draft.id}; nada foi gravado. Corrija ou apague esse arquivo, ou use outro id.`)
+      await refuse(t.saved.taken(taken, draft.id))
       return
     }
   }
-  const result = draftFile(draft, raw => resolveCandidate(DEFAULT_FLOWS, files, target, raw))
+  const result = draftFile(draft, raw => resolveCandidate(DEFAULT_FLOWS, files, target, raw, t), t)
   if ('error' in result) {
     await refuse(result.error)
     return
@@ -1037,7 +1073,7 @@ async function saveDraft($: EngineInterface): Promise<void> {
   const broken = brokenDependents(DEFAULT_FLOWS, files, target, result.raw)
   if (broken.length > 0) {
     const named = broken.map(p => p.split(`${dir}/`).join('.orquestrador/flows/'))
-    await refuse(`os workflows que derivam de ${draft.id} deixariam de resolver; nada foi gravado. ${named.join(' ')}`)
+    await refuse(t.saved.broken(draft.id, named.join(' ')))
     return
   }
   await $.fs.write(target, `${JSON.stringify(result.raw, null, 2)}\n`)
@@ -1048,9 +1084,9 @@ async function saveDraft($: EngineInterface): Promise<void> {
   await $.state.set(
     NOTICE,
     (draft.replacesDefault
-      ? `Salvo em ${relative(target)}. O workflow padrão ${draft.id} segue no mod, mas este projeto passa a usar o seu no lugar dele.`
-      : `Salvo em ${relative(target)}.`) +
-      ' Changes em andamento seguem com o workflow com que começaram.' +
+      ? t.saved.replacing(relative(target), draft.id)
+      : t.saved.at(relative(target))) +
+      t.saved.runningKeep +
       (result.notice === undefined ? '' : ` ${result.notice}`),
   )
 }
