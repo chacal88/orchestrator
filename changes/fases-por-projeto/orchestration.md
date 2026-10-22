@@ -1,7 +1,7 @@
 # Orquestração — fases-por-projeto
 
 Coordenação: sessão `🧭 fases-por-projeto: coordenação`, branch `claude/orchestrator-phases-automation-f69f0d`.
-Flow `rapido` (plugin). Estado: `revisao-codigo` (2ª vez). Fases 6 e 7 fechadas e juntadas (242 testes, tsc 0). Segunda rodada dos revisores de segurança e qualidade em andamento.
+Flow `rapido` (plugin). Estado: `executar` escalado ao dono (3 tentativas). Fases 1–8 fechadas (246 testes). 3ª revisão: qualidade e arquitetura aprovaram; segurança reprovou (merge escondido depois de um merge legível; git como inerte). Correção proposta: seção 9.
 
 | Onda | Fase | Ícone | Tarefas | Sessão | Branch | Estado | Próximo passo |
 | ---- | ---- | ----- | ------- | ------ | ------ | ------ | ------------- |

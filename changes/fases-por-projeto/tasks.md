@@ -52,3 +52,8 @@
 
 - [x] 8.1 Guarda de merge falha fechada: quando o texto bruto tem `gh` e `merge` como palavras e o mod não extrai a chamada (wrapper como `xargs`, `find -exec`, `timeout`, `nice`, `env -u`, `sudo -u`, `command -p`; script por heredoc ou pipe para um shell; executável dinâmico `$G`/`"$(command -v gh)"`), recusa dizendo que não consegue ver o merge; `echo`/`printf`/`cat`/`git commit` citando o comando seguem livres; testes de cada forma — cx: moderate
 - [x] 8.2 Deploy do dono com CI e rotinas: depois de "Deploy do CI concluído", restando só rotinas, o dono tem o botão "Deploy concluído"; teste — cx: simple
+
+## 9. Correções da 3ª revisão
+
+- [ ] 9.1 Merge escondido avaliado por comando: um comando que não é `gh` lido nem inerte e cita `gh` e `merge` é recusado mesmo com outro merge legível na mesma linha (`gh pr merge 6 --squash && xargs gh pr merge --admin`); teste — cx: simple
+- [ ] 9.2 `git` sai dos inertes: `git -c alias.*=!…`, `git rebase --exec`/`-x`, `git filter-branch --*-filter`/`--exec` e `git bisect run` com `gh` e `merge` são recusados; `git commit/log/diff/status/add/push` seguem livres; teste — cx: simple
