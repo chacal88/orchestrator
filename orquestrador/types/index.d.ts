@@ -474,6 +474,8 @@ export type WorkflowDraft = {
   source?: string
   /** Why the last "Salvar" wrote nothing. */
   error?: string
+  /** The draft as it was opened (title, description and each step), for the summary of what changed. */
+  initial?: { title: string; description: string; steps: { id: string; step: Record<string, unknown>; on: boolean }[] }
 }
 
 /** The "Novo workflow" and "Acrescentar passo" fields, as the owner fills them. */
@@ -484,6 +486,10 @@ export type WorkflowForms = {
   stepKind: 'session' | 'owner' | 'automatic'
   stepAgent: string
   stepCommand: string
+  /** "+ passo aqui": the library step chosen ("" for a new one). */
+  libraryUse: string
+  /** The deploy step whose "+ rotina" field is open. */
+  routineFor: string
 }
 
 declare module 'claude-code' {
@@ -508,6 +514,8 @@ declare module 'claude-code' {
       wfSelected: string | null
       /** Workflows panel: the step whose details are open (an added step goes after it). */
       wfFocus: string | null
+      /** Workflows panel: where "+ passo aqui" is open: a step id (add after it) or ":fim" (add at the end). */
+      wfInsert: string | null
       /** Workflows panel: the edit in progress, until saved or discarded. */
       wfDraft: WorkflowDraft | null
       wfForms: WorkflowForms
