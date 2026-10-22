@@ -106,6 +106,9 @@ export const parseFlow = (raw: unknown, source: string, project: ProjectSettings
         return fail(`step "${stepId}": an automatic step has exactly the outcomes passou and falhou.`)
       }
     }
+    if ((s.agent === CODE_REVIEW_AGENT || stepId === CODE_REVIEW_STEP) && outcomes.aprovado === undefined) {
+      return fail(`step "${stepId}": a code review step declares the outcome aprovado, which the merge waits on.`)
+    }
     if (s.when !== undefined && s.when !== 'visual') return fail(`step "${stepId}": \`when\` may only be "visual".`)
     if (s.over !== undefined && s.over !== 'tasks') return fail(`step "${stepId}": \`over\` may only be "tasks".`)
     if (kind === 'loop' && outcomes[LOOP_DONE] === undefined) {
@@ -826,7 +829,7 @@ export const CODE_REVIEW_STEP = 'revisao-codigo'
 /**
  * The code review step before the flow's next merge that has no "aprovado" since the flow last
  * entered it (entering a step forgets its record and every later one, so a turn back to run again
- * clears it). A review that does not apply to the change is not waited on. A finished or aborted
+ * clears it). A flow whose merges are all behind it waits on none. A review that does not apply to the change is not waited on. A finished or aborted
  * flow waits on none.
  */
 export const pendingCodeReview = (state: FlowState): FlowStep | undefined => {
@@ -834,6 +837,8 @@ export const pendingCodeReview = (state: FlowState): FlowStep | undefined => {
   const steps = state.flow.steps
   const at = Math.max(0, indexOf(state.flow, state.current))
   const merge = steps.findIndex((s, i) => i >= at && s.merge !== undefined)
+  // every merge of the flow is behind it: the review is not waited on any more
+  if (merge === -1 && steps.some(s => s.merge !== undefined)) return undefined
   return steps
     .slice(0, merge === -1 ? steps.length : merge)
     .find(
@@ -1054,7 +1059,7 @@ const describeStepBody = (state: FlowState, step: FlowStep, where: string, outco
   if (step.merge?.auto === true && step.agent === WORKFLOW_MERGE_AGENT) {
     return (
       `${where}. Merge the change's PR into ${step.merge.branch} yourself, by ${step.merge.method}, on the workflow's ` +
-      "own approval: the flow's code review approved, the final gates passed and the CI green if the PR has checks; " +
+      "own approval: the flow's code review approved (declared by the coordination, which reports \"aprovado\" on the review step), the final gates passed and the CI green if the PR has checks; " +
       'GitHub approval is not required. Check with `gh pr view <pr> --json mergeable,statusCheckRollup`; if anything is ' +
       'missing, do not merge — tell the coordination. Then run ' +
       `\`gh pr merge <pr> --${step.merge.method}\` alone, never with --admin; the mod reads its exit code ` +
@@ -1099,7 +1104,7 @@ const describeStepBody = (state: FlowState, step: FlowStep, where: string, outco
         (step.merge === undefined
           ? ''
           : step.agent === WORKFLOW_MERGE_AGENT
-            ? ` The merge into ${step.merge.branch} by ${step.merge.method} waits on the workflow's approval (the flow's code review approved), not on GitHub; never with --admin.`
+            ? ` The merge into ${step.merge.branch} by ${step.merge.method} waits on the workflow's approval (the flow's code review approved, declared by the coordination), not on GitHub; never with --admin.`
             : ` The owner merges into ${step.merge.branch} by ${step.merge.method}; never with --admin.`)
       )
   }

@@ -18,3 +18,13 @@ Portões rodados depois da última edição: tipos (saída 0), validação (`Val
 **2.2** `README.md`: os dois agentes de merge (seção do merge, biblioteca de passos e lista de agentes) e a seção "Publicação automática (este repositório)"; versão 0.10.0 → 0.11.0 em `orquestrador/.claude-plugin/plugin.json`.
 
 Portões rodados depois da última edição: tipos (saída 0), validação (`Validation passed`), testes (saída 0; 352 passando).
+
+## Fase 3 — Correções da revisão (3.1–3.3)
+
+**3.1** `hooks/model.ts` (`changePrs`): além dos passos de id `pr`/`merge`, lê a nota do passo cujo agente é `abre-pr` ou `publicador`. Teste de harness `tests/merge-scope-harness.test.ts` ("the repository's own rapido flow…"): o `rapido.json` do repositório parado no `merge`, PR #801 citado no `publicar`, head `claude/release-notes` (sem o nome da change nem branch de fase): recusado sem revisão e com `rejeitado`, liberado com `aprovado`, PR alheio livre. A cópia do JSON foi para `tests/rapido-repo-flow.ts` (uma só, usada por `rapido-repo.test.ts` e pelo harness); o `rapido.json` não mudou.
+
+**3.2** Testes em `tests/merge-deploy.test.ts` (`pendingCodeReview`): flow sem revisão; revisão `when: visual` em change não visual (e visual); revisão reconhecida só pelo agente; flow depois do merge. Isso achou um defeito: com todos os merges já atrás, a revisão ainda era esperada; `pendingCodeReview` (`hooks/flow.ts`) agora não espera nada nesse caso. `parseFlow` recusa passo de revisão de código (agente `revisor-codigo` ou id `revisao-codigo`) sem o outcome `aprovado` (teste na mesma suíte; fixture de `flow-resolve.test.ts` ajustada). README cita a exigência e o reconhecimento do PR pela nota do passo que o abre.
+
+**3.3** `hooks/i18n-workflows.ts`: `merge.autoHelp(agent)` diz a aprovação conforme o agente (workflow, GitHub ou agente do projeto); `approval(agent)` só promete GitHub para `merge`/sem agente, e para outro agente diz que a aprovação segue o agente escolhido; o texto do workflow diz que a coordenação declara o `aprovado`. `describeFlow` (`hooks/flow.ts`) idem; `workflows-pane.tsx` usa `autoHelp(s.agent)`. Testes: `workflows-pane.test.ts` (textos por agente, pt-BR e en; "declarada pela coordenação") e `merge-deploy.test.ts` (describeFlow).
+
+Portões rodados depois da última edição: tipos (saída 0), validação (`Validation passed`), testes (saída 0; 356 passando).

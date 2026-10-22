@@ -80,12 +80,21 @@ const pt = {
     branchHelp: 'Trunk-based: main. Com dev e master, use dois passos de merge: um em dev (antes do QA) e um em master (produção).',
     methodLabel: 'Como juntar',
     auto: (on: string) => `Fazer o merge sozinho: ${on}`,
-    autoHelp: 'A coordenação faz o merge assim que o PR estiver aprovado no GitHub e com o CI verde. Nunca com --admin. Desligado, o merge fica com você.',
+    autoHelp: (agent: string | undefined): string =>
+      `A coordenação faz o merge assim que ${
+        agent === 'merge-pelo-workflow'
+          ? 'o workflow aprovou (a revisão de código do flow) e o CI está verde, se houver'
+          : agent === undefined || agent === 'merge'
+            ? 'o PR estiver aprovado no GitHub e com o CI verde'
+            : 'o agente escolhido considerar o PR pronto'
+      }. Nunca com --admin. Desligado, o merge fica com você.`,
     approvalRow: 'Aprovação do merge',
     approval: (agent: string | undefined): string =>
       agent === 'merge-pelo-workflow'
-        ? 'Aprovação do workflow: a revisão de código do flow aprovada, os portões finais passados e o CI verde se houver; não exige aprovação no GitHub.'
-        : 'Aprovação no GitHub e CI verde: o PR precisa estar aprovado no GitHub e com as checagens verdes.',
+        ? 'Aprovação do workflow: a revisão de código do flow aprovada (declarada pela coordenação, que reporta "aprovado"), os portões finais passados e o CI verde se houver; não exige aprovação no GitHub.'
+        : agent === undefined || agent === 'merge'
+          ? 'Aprovação no GitHub e CI verde: o PR precisa estar aprovado no GitHub e com as checagens verdes.'
+          : 'A aprovação segue o agente escolhido: confira no arquivo dele o que exige antes de mergear.',
   },
   deploy: {
     ci: (on: string) => `Esperar o CI do deploy: ${on}`,
@@ -441,12 +450,21 @@ const en: WorkflowsText = {
     branchHelp: 'Trunk-based: main. With dev and master, use two merge steps: one into dev (before QA) and one into master (production).',
     methodLabel: 'How to merge',
     auto: on => `Merge on its own: ${on}`,
-    autoHelp: 'The coordinator merges as soon as the PR is approved on GitHub and the CI is green. Never with --admin. Off, the merge is yours.',
+    autoHelp: agent =>
+      `The coordinator merges as soon as ${
+        agent === 'merge-pelo-workflow'
+          ? "the workflow approved (the flow's code review) and the CI is green, if there is one"
+          : agent === undefined || agent === 'merge'
+            ? 'the PR is approved on GitHub and the CI is green'
+            : 'the chosen agent finds the PR ready'
+      }. Never with --admin. Off, the merge is yours.`,
     approvalRow: 'Merge approval',
     approval: agent =>
       agent === 'merge-pelo-workflow'
-        ? "The workflow's approval: the flow's code review approved, the final gates passed and the CI green if there is one; no GitHub approval needed."
-        : 'GitHub approval and green CI: the PR must be approved on GitHub with its checks green.',
+        ? "The workflow's approval: the flow's code review approved (declared by the coordination, which reports \"aprovado\"), the final gates passed and the CI green if there is one; no GitHub approval needed."
+        : agent === undefined || agent === 'merge'
+          ? 'GitHub approval and green CI: the PR must be approved on GitHub with its checks green.'
+          : "The approval follows the chosen agent: check its file for what it requires before merging.",
   },
   deploy: {
     ci: on => `Wait for the deploy CI: ${on}`,

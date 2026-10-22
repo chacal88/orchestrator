@@ -531,7 +531,7 @@ export const renderWorkflows = (els: WorkflowsElements, view: WorkflowsView, act
             {t.merge.auto(yes(s.merge.auto))}
           </Button>,
         ),
-        help(t.merge.autoHelp),
+        help(t.merge.autoHelp(s.agent)),
       )
     }
     if (s.deploy !== undefined) {

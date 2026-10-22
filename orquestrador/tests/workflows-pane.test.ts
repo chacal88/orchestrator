@@ -6,6 +6,7 @@ import { parseFlow, resolveFlow } from '../hooks/flow'
 import { DEFAULT_FLOWS } from '../hooks/flows/index'
 import { changesOf, draftFile, draftOf, moveStep, setStepField, toggleStep } from '../hooks/workflow-edit'
 import { listAgents } from '../hooks/flow-files'
+import { workflowsText } from '../hooks/i18n-workflows'
 
 type On = Parameters<TestBody>[1]
 type Surface = 'desktop' | 'terminal' | 'mobile'
@@ -852,5 +853,19 @@ test('a merge step with the merge-pelo-workflow agent says the workflow approves
   expect(await ui.find(text(/^merge-pelo-workflow \(do plugin\)$/))).toBeDefined()
   expect(await ui.find(text(/^Aprovação do workflow: a revisão de código do flow aprovada/))).toBeDefined()
   expect(await ui.find(text(/^Aprovação no GitHub e CI verde/))).toBeUndefined()
+  expect(await ui.find(text(/declarada pela coordenação/))).toBeDefined()
   await ui.unmount()
+})
+
+test('the merge texts follow the agent: workflow, GitHub, and an unknown project agent promises neither', () => {
+  const pt = workflowsText('pt-BR')
+  const en = workflowsText('en')
+  for (const t of [pt, en]) {
+    expect(t.merge.autoHelp('merge-pelo-workflow')).not.toMatch(/GitHub/)
+    expect(t.merge.autoHelp('merge')).toMatch(/GitHub/)
+    expect(t.merge.autoHelp(undefined)).toMatch(/GitHub/)
+    expect(t.merge.autoHelp('meu-merge')).not.toMatch(/GitHub/)
+    expect(t.merge.approval('meu-merge')).not.toMatch(/GitHub/)
+    expect(t.merge.approval('merge-pelo-workflow')).toMatch(/aprovado/)
+  }
 })

@@ -11,6 +11,7 @@ import {
   observeDeploy,
   ownerPress,
   pendingCodeReview,
+  parseFlow,
   pendingReview,
   resolveFlow,
   startFlow,
@@ -345,6 +346,52 @@ describe('pendingCodeReview', () => {
     expect(pendingCodeReview({ ...noRecord, status: 'done' })).toBeUndefined()
   })
 
+  const reviewFlow = (steps: Record<string, unknown>[]) =>
+    ok(
+      parseFlow(
+        {
+          id: 'x',
+          title: 'X',
+          steps: [
+            ...steps,
+            { id: 'merge', title: 'Merge', kind: 'owner', merge: { branch: 'main' }, outcomes: { feito: { next: 'end' } } },
+            { id: 'end', title: 'End', kind: 'owner', outcomes: { feito: { next: 'fim' } } },
+          ],
+        },
+        'x.json',
+      ),
+    )
+  const runStep = { id: 'executar', title: 'Run', kind: 'session', outcomes: { pronto: { next: 'review' } } }
+  const reviewStep = (extra: Record<string, unknown>) => ({
+    title: 'Review', kind: 'session', outcomes: { aprovado: { next: 'merge' }, rejeitado: { next: 'executar' } }, ...extra,
+  })
+
+  test('variants: no review step, a visual-only review, a review known by its agent alone, and a flow past the merge', () => {
+    const none = reviewFlow([{ ...runStep, outcomes: { pronto: { next: 'merge' } } }])
+    expect(pendingCodeReview({ ...parked(none, 'merge'), records: {} })).toBeUndefined()
+
+    const visual = reviewFlow([runStep, reviewStep({ id: 'review', agent: 'revisor-codigo', when: 'visual' })])
+    const bare = { ...parked(visual, 'merge'), records: {} }
+    expect(pendingCodeReview({ ...bare, traits: { ...bare.traits, visual: false } })).toBeUndefined()
+    expect(pendingCodeReview({ ...bare, traits: { ...bare.traits, visual: true } })?.id).toBe('review')
+
+    const byAgent = reviewFlow([runStep, reviewStep({ id: 'review', agent: 'revisor-codigo' })])
+    expect(pendingCodeReview({ ...parked(byAgent, 'merge'), records: {} })?.id).toBe('review')
+    const approved = { ...parked(byAgent, 'merge'), records: { review: { outcome: 'aprovado', by: 'session' as const, at: 2 } } }
+    expect(pendingCodeReview(approved)).toBeUndefined()
+
+    // a flow already past the merge waits on no review
+    expect(pendingCodeReview({ ...parked(byAgent, 'end'), records: {} })).toBeUndefined()
+  })
+
+  test('parseFlow refuses a code review step without the outcome aprovado, by agent or by id', () => {
+    const bad = (extra: Record<string, unknown>) =>
+      err(parseFlow({ id: 'x', title: 'X', steps: [{ title: 'R', kind: 'session', outcomes: { ok: { next: 'fim' } }, ...extra }] }, 'x.json'))
+    expect(bad({ id: 'review', agent: 'revisor-codigo' })).toMatch(/code review step declares the outcome aprovado/)
+    expect(bad({ id: 'revisao-codigo' })).toMatch(/code review step declares the outcome aprovado/)
+    expect(bad({ id: 'other', agent: 'planejador' })).toBe('')
+  })
+
   test('a rejection turns the flow back to run, and the record is gone until the review is approved again', () => {
     const review = parked(flow, 'revisao-codigo')
     const back = ok(applyOutcome(review, { step: 'revisao-codigo', outcome: 'rejeitado', by: 'session' }, 2))
@@ -366,5 +413,8 @@ describe('the merge agents', () => {
     expect(describeFlow(parked(workflow, 'merge'))).toContain('approved on GitHub and its CI is green')
     const byOwner = { ...withAgent, steps: withAgent.steps.map(s => (s.id === 'merge' ? { ...s, merge: { ...s.merge!, auto: false }, kind: 'owner' as const } : s)) }
     expect(describeFlow(parked(byOwner, 'merge'))).toContain("waits on the workflow's approval")
+    // who declares the review's approval
+    expect(text).toContain('declared by the coordination')
+    expect(describeFlow(parked(byOwner, 'merge'))).toContain('declared by the coordination')
   })
 })

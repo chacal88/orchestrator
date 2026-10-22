@@ -36,7 +36,7 @@ describe('parseFlow: describing a step', () => {
   const parse = (s: Record<string, unknown>) => parseFlow({ id: 'x', title: 'X', steps: [s] }, 'x.json')
 
   test('details, agent, model and effort are kept', () => {
-    const flow = ok(parse(step({ details: { inputs: 'O diff', blocks: 'Rejeitado volta' }, agent: 'revisor-codigo', model: 'claude-opus-5-5', effort: 'high' })))
+    const flow = ok(parse(step({ details: { inputs: 'O diff', blocks: 'Rejeitado volta' }, outcomes: { aprovado: 'fim' }, agent: 'revisor-codigo', model: 'claude-opus-5-5', effort: 'high' })))
     expect(flow.steps[0]).toMatchObject({
       details: { inputs: 'O diff', blocks: 'Rejeitado volta' },
       agent: 'revisor-codigo',
