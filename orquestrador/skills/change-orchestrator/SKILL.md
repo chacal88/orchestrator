@@ -83,8 +83,12 @@ diagnóstico pronto ao dono.
 2. **Teto: no máximo 3 sessões de fase vivas na máquina**, contando todas as
    coordenações (`list_sessions` sem filtro). O mod recusa o 4º `start_session`; o
    resto é seu: fase pesada (bancada, suíte inteira, `turbo --force`) conta como 2; duas
-   coordenações dividem o teto; máquina quente → 1 fase por vez. Vaga só abre quando
-   uma fase fecha.
+   coordenações dividem o teto; máquina quente → 1 fase por vez. Para o mod, "viva" é
+   sessão iniciada por esta coordenação, fora da pasta dela, não arquivada e com trabalho:
+   rodando agora, esperando o dono ou com tarefa aberta na lista. Não conta a sessão cuja
+   fase fechou (ou está `done` no plano), cuja change teve o flow concluído ou encerrado,
+   cujo PR foi mergeado ou fechado, nem a parada sem tarefa aberta. A recusa diz por que
+   cada sessão contada conta; vaga abre quando uma delas termina o trabalho ou é arquivada.
 3. **Disparar.** Uma sessão por fase da onda corrente, sempre em worktree própria
    (`use_worktree: true`), para duas fases nunca escreverem nos mesmos arquivos (o mod lê a
    atividade e os gates de cada fase pelo id da sessão, então uma fase na pasta da coordenação
@@ -127,6 +131,13 @@ diagnóstico pronto ao dono.
    depois dele (junte com `&&`). Para pedir ao dono que libere um portão, use
    `ownerQuestions` com `gate: {phase, gate}` (`phase: "final"` para os `finalGates`): o
    painel oferece o pulo na própria pergunta, e "Aceitar" nunca pula portão.
+   Os `finalGates` seguram só o `gh pr merge` do PR da própria change, e só enquanto o
+   flow dela roda até o passo antes de `arquivar`. É da change o PR ligado a uma sessão de
+   fase, citado no `pr?` de uma `ownerQuestion` ou na nota do `report` do passo `pr` (cite
+   `#N` ali), ou cuja branch é de uma sessão de fase ou leva o id da change; PR cuja branch o
+   `gh` não consegue ler conta como da change. PR de outro assunto, o PR do arquivamento e
+   qualquer merge depois do flow concluído ou encerrado não passam pelos portões finais.
+   O `openspec archive` não desatualiza portão: mover a pasta da change não é editar código.
 5. **Fechar fase:** confira a afirmação (diff, teste barato) e chame `flow close
    {phase}`. O mod confere portões, tarefas marcadas e trabalho commitado, e arquiva a
    sessão; se recusar, peça à sessão o que falta (`send_message`). Quando todas fecham,
@@ -168,7 +179,7 @@ passo do dono? O `ScheduleWakeup` longo está agendado?
 
 1. **Revisão de código** (sessão) → `flow report revisao-codigo aprovado|rejeitado`.
 2. **Checagem** (automático) → `scripts/check.sh` numa sessão, com `evidence.md`
-   preenchido. **PR** (sessão) → `flow report pr aberto`.
+   preenchido. **PR** (sessão) → `flow report pr aberto` com `note` citando o PR (`#N`).
 3. **Em QA** (dono): botões **"QA aprovou"** / **"QA pediu ajustes"**. Se souber o que
    o QA pediu, deixe com `flow note` antes do clique. Ajustes devolvem o flow às fases:
    acrescente as tarefas novas ao `tasks.md` e volte ao § 4.
@@ -195,7 +206,7 @@ nunca peça "posso continuar?". Os passos do dono se respondem no painel, não n
 
 - O flow manda: nada de passo fora da ordem, nada de responder pelo dono ou pelo mod.
 - Relate fielmente: fase sem evidência fica aberta, nunca "feita".
-- Teto ≤ 3 sessões de fase vivas na máquina; fase fechada = sessão arquivada pelo mod.
+- Teto ≤ 3 sessões de fase vivas (com trabalho) na máquina; fase fechada = sessão arquivada pelo mod.
 - Nunca arquive a coordenadora com fase em voo, nem sessão que o usuário abriu fora do
   ledger (reporte como órfã).
 - Não duplique trabalho de uma sessão filha; respeite o CLAUDE.md e as regras do projeto.

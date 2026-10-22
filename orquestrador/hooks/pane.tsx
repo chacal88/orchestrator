@@ -33,7 +33,7 @@ import { formatElapsed } from './glance'
 import { uiText } from './i18n'
 import type { Lang } from '../types'
 import type { BandSummary } from './glance'
-import { attentionItems, nowAndNext, phaseCounts, phaseViews, planProgress } from './model'
+import { attentionItems, finishedSessionIds, nowAndNext, phaseCounts, phaseViews, planProgress } from './model'
 import { hiddenFlowChoices, prepDetails } from './prep-pane'
 
 export type PaneElements = {
@@ -652,7 +652,9 @@ export const renderPane = (
     if (run === undefined) return []
     const counts = phaseCounts(run)
     const total = STATUS_ORDER.reduce((sum, s) => sum + counts[s], 0)
-    const live = liveSessions(view.children, view.self?.sessionId, view.self?.cwd).length
+    const flow = view.flow?.change === run.change ? { status: view.flow.status } : undefined
+    const finished = finishedSessionIds([{ run, flow }], view.children)
+    const live = liveSessions(view.children, view.self?.sessionId, view.self?.cwd, finished).length
     const legend = STATUS_ORDER.filter(s => counts[s] > 0)
     const byStatus = (s: PhaseStatus) =>
       phaseViews(run, view.children).flatMap((phases, w) => phases.filter(p => p.status === s).map(p => ({ phase: p, w })))

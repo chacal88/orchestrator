@@ -171,7 +171,8 @@ const pt = {
     wave: (n: number) => ` · onda ${n}`,
     working: 'Sessões trabalhando agora',
     liveOf: (live: number, max: number) => `${live} de no máximo ${max}`,
-    atCeiling: 'No limite: uma nova fase só começa quando uma sessão for arquivada, para não pesar o computador.',
+    atCeiling:
+      'No limite: uma nova fase só começa quando uma sessão terminar o trabalho ou for arquivada, para não pesar o computador.',
     updated: (at: string) => `atualizado ${at}`,
     phasesOf: (done: number, total: number) => `${done} de ${total} fases`,
   },
@@ -371,7 +372,7 @@ const en: UiText = {
     wave: n => ` · wave ${n}`,
     working: 'Sessions working now',
     liveOf: (live, max) => `${live} of at most ${max}`,
-    atCeiling: 'At the ceiling: a new phase starts only once a session is archived, to spare the computer.',
+    atCeiling: 'At the ceiling: a new phase starts only once a session finishes its work or is archived, to spare the computer.',
     updated: at => `updated ${at}`,
     phasesOf: (done, total) => `${done} of ${total} phases`,
   },

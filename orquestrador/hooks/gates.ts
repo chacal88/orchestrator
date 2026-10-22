@@ -1,4 +1,4 @@
-import type { GateAttempt, GateCheck, GateRecord, GateSkip, GateState, GateView, Phase } from '../types'
+import type { FlowState, GateAttempt, GateCheck, GateRecord, GateSkip, GateState, GateView, Phase, PlanItem, Waiting } from '../types'
 
 /** The most phase sessions alive at once: more of them slows the owner's machine down. */
 export const MAX_LIVE_SESSIONS = 3
@@ -314,19 +314,96 @@ export const phaseRefusal = (
       `only they can skip a gate, from the panel — publish an ownerQuestion with \`gate: {phase: "${phase.id}", gate}\` ` +
       'so the panel offers the skip itself.'
 
+/** What the ceiling reads of a session: the app's row, plus its activity file when there is one. */
+type CeilingRow = {
+  sessionId: string
+  startedBy: string | undefined
+  isArchived: boolean
+  cwd?: string
+  isRunning?: boolean
+  prState?: string | undefined
+  waiting?: Waiting | undefined
+  plan?: readonly PlanItem[]
+}
+
 /**
- * Phase sessions still alive: started by this session and not archived. A session in the
- * coordinator's own folder is a side chat or fork the owner opened, not a phase: phases
- * always run in a worktree of their own.
+ * Why a phase session still weighs on the owner's machine, or undefined when it does not. It
+ * counts only with live work: running now, waiting on the owner, or with open tasks in its list.
+ * With its phase or flow finished, or its PR merged or closed, it is done whatever it shows.
  */
-export const liveSessions = <T extends { startedBy: string | undefined; isArchived: boolean; cwd?: string }>(
+export const aliveReason = (row: CeilingRow, finished: ReadonlySet<string> = new Set()): string | undefined => {
+  if (finished.has(row.sessionId)) return undefined
+  const pr = row.prState?.toUpperCase()
+  if (pr === 'MERGED' || pr === 'CLOSED') return undefined
+  if (row.isRunning === true) return 'running now'
+  if (row.waiting !== undefined) return `waiting on the owner (${row.waiting.kind})`
+  const open = (row.plan ?? []).filter(item => item.status !== 'completed').length
+  return open > 0 ? `${open} open task${open === 1 ? '' : 's'} in its list` : undefined
+}
+
+/**
+ * Phase sessions still alive, each with why it counts: started by this session, not archived,
+ * and with live work (see `aliveReason`). A session in the coordinator's own folder is a side
+ * chat or fork the owner opened, not a phase: phases always run in a worktree of their own.
+ */
+export const liveSessions = <T extends CeilingRow>(
   rows: readonly T[],
   selfId: string | undefined,
   selfCwd?: string,
-): T[] =>
+  finished?: ReadonlySet<string>,
+): { session: T; why: string }[] =>
   selfId === undefined
     ? []
-    : rows.filter(row => row.startedBy === selfId && !row.isArchived && (selfCwd === undefined || row.cwd !== selfCwd))
+    : rows.flatMap(row => {
+        if (row.startedBy !== selfId || row.isArchived || (selfCwd !== undefined && row.cwd === selfCwd)) return []
+        const why = aliveReason(row, finished)
+        return why === undefined ? [] : [{ session: row, why }]
+      })
 
 export const GH_MERGE = /\bgh\s+pr\s+merge\b/
+export const ARCHIVE_COMMAND = /\bopenspec(\.js)?\s+archive\b/
 export const PROTECTED_DIR = '/.claude/orquestrador/'
+
+/**
+ * Whether a change's final gates still hold back a merge: while its flow runs, up to the step
+ * before the archive. The change's PR merges between `pr` and `producao` (QA tests the PR, the
+ * deploy ships the merge); from the archive on, the only PR left moves the change folder. A
+ * finished or aborted flow gates nothing.
+ */
+export const mergeWindow = (state: Pick<FlowState, 'status' | 'current' | 'flow'>): boolean => {
+  if (state.status === 'done' || state.status === 'aborted') return false
+  const steps = state.flow.steps
+  const archive = steps.findIndex(s => s.cleanup || (s.command !== undefined && ARCHIVE_COMMAND.test(s.command)))
+  const at = steps.findIndex(s => s.id === state.current)
+  return archive === -1 || at === -1 || at < archive
+}
+
+/** `gh pr merge` flags that take a value, so the value is not read as the PR. */
+const MERGE_VALUE_FLAGS = new Set(['-b', '--body', '-F', '--body-file', '-t', '--subject', '-A', '--author-email', '--match-head-commit', '-R', '--repo'])
+
+/** The PR a `gh pr merge` names (a number, URL or branch); undefined for the current branch's. */
+export const mergeSelector = (command: string): string | undefined => {
+  const args = executedText(command).match(/\bgh\s+pr\s+merge\b([^;&|\n]*)/)?.[1] ?? ''
+  const words = args.trim().split(/\s+/).filter(w => w !== '')
+  for (let i = 0; i < words.length; i++) {
+    const word = words[i]!
+    if (!word.startsWith('-')) return word
+    if (MERGE_VALUE_FLAGS.has(word)) i += 1
+  }
+  return undefined
+}
+
+export type MergeTarget = { number: number | undefined; branch: string | undefined }
+
+export const mergeTarget = (selector: string | undefined): MergeTarget => {
+  const number = selector?.match(/^#?(\d+)$/)?.[1] ?? selector?.match(/\/pull\/(\d+)/)?.[1]
+  return number === undefined ? { number: undefined, branch: selector } : { number: Number(number), branch: undefined }
+}
+
+/** PR numbers a note cites: `#801` or `…/pull/801`. */
+export const citedPrs = (text: string | undefined): number[] =>
+  [...(text ?? '').matchAll(/(?:#|\/pull\/)(\d+)\b/g)].map(m => Number(m[1]))
+
+/** A head branch is the change's when a phase session works on it or its name carries the change id. */
+export const isChangeBranch = (branch: string, change: string, branches: ReadonlySet<string>): boolean =>
+  branches.has(branch) || branch.toLowerCase().includes(change.toLowerCase())

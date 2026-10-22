@@ -1,6 +1,6 @@
 # Evidência: idioma por projeto
 
-- Gate testes: `claude plugin test orquestrador` (binário 2.1.304 do app) na raiz do repo, 166 pass, 0 fail, saída 0 (após juntar a main com o 0.7.6).
+- Gate testes: `claude plugin test orquestrador` (binário 2.1.304 do app) na raiz do repo, 175 pass, 0 fail, saída 0 (após juntar a main com o 0.7.7).
   Os 10 testes novos ficam em `orquestrador/tests/language.test.ts`.
 - Gate lint/tipos: `tsc` 5.6.3 sobre hooks, types e tests com os tipos do engine, sem erros.
 - `claude plugin validate orquestrador`: Validation passed.
