@@ -69,3 +69,14 @@ Mockup aprovado pelo dono em 2026-10-22: https://claude.ai/artifact/9MWU1UatsPeX
 - [x] 10.5 "+ passo aqui" entre passos: acrescenta naquele lugar, da biblioteca (com a explicação do escolhido) ou passo novo (título, quem responde, agente, comando); rotinas do deploy como lista de campos com "+ rotina" — cx: moderate
 - [x] 10.6 Testes de harness das três telas (desktop, terminal e largura estreita), e os testes 4.x/7.x do painel seguem passando — cx: moderate
 - [x] 10.7 Testes da revisão: `moveStep` passando por um passo desligado, `changesOf` depois de ligar/desligar/reordenar/trocar agente, `listAgents` com `.md` sem frontmatter (aparece sem descrição) e arquivo que não é agente (some) — cx: simple
+
+## 11. Painel mais fiel ao mockup (2ª conferência do dono, prints em 2026-10-22)
+
+- [ ] 11.1 Etiquetas como pílula (Box com `backgroundColor`, `borderStyle: "round"`, `paddingX`), nunca entre colchetes: "substitui o padrão", "derivado de X", "merge automático", "deploy automático", e quem responde ("sessão", "você", "mod") — cx: simple
+- [ ] 11.2 Títulos com peso: "Workflows" e o nome do workflow `size: "heading"` + `weight: "semibold"`; nome de cada cartão e de cada passo `weight: "semibold"`; seções ("Deste projeto", "Padrões do plugin", "Passos") como rótulo pequeno em caixa alta — cx: simple
+- [ ] 11.3 Número do passo dentro de um círculo colorido (Box redondo com fundo da cor de quem responde), sem o "▸" antes do título; a linha de resumo embaixo do título, em cinza — cx: simple
+- [ ] 11.4 Cartão da lista: nome + "›" à esquerda e "N passos" à direita, descrição, etiquetas; sem a linha "id · origem" (a origem vira etiqueta) — cx: simple
+- [ ] 11.5 Edição: um só "+ passo aqui", depois do passo aberto (ou no fim, sem passo aberto), não entre todos; tirar a linha "Do zero: grava os passos completos"; Nome e Descrição do workflow num bloco recolhido "Nome e descrição" — cx: simple
+- [ ] 11.6 Resumo do passo sem jargão: "Uma sessão faz, com o agente X (modelo Y)" ou "Uma sessão faz, sem agente definido"; nunca "o da sessão" — cx: simple
+- [ ] 11.7 `.orquestrador/flows/rapido.json` deste repo: `agent` nos passos de sessão que ainda não têm (`planejar` → planejador, `revisao-codigo` → revisor-codigo) — cx: simple
+- [ ] 11.8 Testes atualizados (etiquetas sem colchetes, um só "+ passo aqui", resumo do passo) e os três portões — cx: simple
