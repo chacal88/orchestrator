@@ -107,6 +107,9 @@ export type FlowMerge = { branch: string; method: 'squash' | 'merge' | 'rebase';
 /** ci: the merge's CI deploys and the step waits for it; commands: routines run after the merge, in order. */
 export type FlowDeploy = { ci: boolean; commands: string[]; auto: boolean }
 
+/** How far a deploy step got: the CI's deploy confirmed, and the routines seen passing, in order. */
+export type FlowDeployProgress = { ci: boolean; commands: string[] }
+
 /** Commands whose success answers a step, and the outcome they give it; logged with actor "detect". */
 export type FlowDetect = { commands: string[]; outcome: string }
 
@@ -158,6 +161,8 @@ export type FlowState = {
   reopened?: FlowReopen
   /** A note a session left for the owner step that waits; it joins the owner's answer when pressed. */
   pendingNote?: string
+  /** deploy: what each deploy step already saw done, by step id; kept while the step retries itself. */
+  progress?: Record<string, FlowDeployProgress>
   seq: number
   startedAt: number
   updatedAt: number
@@ -189,6 +194,8 @@ export type FlowEvent = {
     | 'session-archived'
     | 'noted'
     | 'cleanup'
+    /** A deploy step saw the CI's deploy confirmed or one of its routines pass. */
+    | 'progress'
     /** The owner moved a Jira issue from the panel. */
     | 'jira-moved'
   step: string
