@@ -104,20 +104,37 @@ export async function projectRoot($: EngineInterface): Promise<{ root: string; g
  */
 export type Activation = { level: ActivationLevel | undefined; invalid: boolean; tampered: boolean }
 
-/** The level the panel itself wrote for each repository, by the main checkout's path: in the mod's own state, which no tool of the model writes. */
-const RECORD = { plugin: 'orquestrador', key: 'activationRecord' } as const
+/** The mod's own folder of records (gates, runs, flows): the one `touchesGateFiles` refuses the model to write. */
+export async function registryDir($: EngineInterface): Promise<string> {
+  return `${(await $.env.get('HOME')) ?? '~'}/.claude/orquestrador`
+}
+
+type Records = Record<string, { level: ActivationLevel; at: number }>
+
+/**
+ * The level the panel itself wrote for each repository, by the main checkout's path, in `activation.json` of the
+ * registry folder: on disk, so a restart of the app (which empties the session's state) does not lose it, and in a
+ * folder no tool of the model may write. Absent is empty; a file that cannot be read or parsed throws (fail closed).
+ */
+async function readRecords($: EngineInterface): Promise<Records> {
+  const path = `${await registryDir($)}/activation.json`
+  if (!(await $.fs.exists(path))) return {}
+  const parsed: unknown = JSON.parse(await $.fs.read(path))
+  if (!isRecord(parsed)) throw new Error('activation.json is not an object')
+  return parsed as Records
+}
 
 async function recordedLevel($: EngineInterface, root: string): Promise<ActivationLevel | undefined> {
-  const { value } = await $.state.get(RECORD)
-  const level = value?.[root]
-  return LEVELS.find(l => l === level)
+  const entry: unknown = (await readRecords($))[root]
+  return LEVELS.find(l => isRecord(entry) && l === entry.level)
 }
 
 /** Remembers the level the panel wrote for `root` (`null`: the panel took the activation back). */
 export async function recordLevel($: EngineInterface, root: string, level: ActivationLevel | null): Promise<void> {
-  const { value } = await $.state.get(RECORD)
-  const { [root]: _old, ...others } = value ?? {}
-  await $.state.set(RECORD, level === null ? others : { ...others, [root]: level })
+  const records = await readRecords($).catch((): Records => ({})) // a broken record is the panel's to replace
+  const { [root]: _old, ...others } = records
+  const next = level === null ? others : { ...others, [root]: { level, at: Date.now() } }
+  await $.fs.write(`${await registryDir($)}/activation.json`, `${JSON.stringify(next, null, 2)}\n`)
 }
 
 /** The file's text; `undefined` only when it is absent. A read that fails throws: it is not "absent". */

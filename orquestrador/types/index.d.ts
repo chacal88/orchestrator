@@ -576,8 +576,6 @@ declare module 'claude-code' {
       /** What the owner has typed so far in the grill's answer fields, by question text. */
       grillDrafts: Record<string, string>
       reminded: { count: number; last: string } | null
-      /** The activation level the panel wrote for each repository (by main checkout path); no tool of the model writes the mod's state. */
-      activationRecord: Record<string, ActivationLevel>
       running: { root: string; at: number; running: boolean }
       /** Workflows panel: the workflow open in the panel, by id. */
       wfSelected: string | null

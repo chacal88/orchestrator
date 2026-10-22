@@ -98,7 +98,7 @@ import { bandSummary, parseEvents, stepTimes } from './glance'
 import { DEFAULT_LANGUAGES, contentRule, uiText } from './i18n'
 import type { UiText } from './i18n'
 import { renderBand, renderPane } from './pane'
-import { readActivation } from './activation'
+import { readActivation, registryDir } from './activation'
 import { WORKFLOWS_PANE, drawWorkflows, toggleWorkflowsPane } from './workflows-pane'
 import { findAgent, loadConfig as loadProjectConfig, loadFlows } from './flow-files'
 import { firstSite, issueUrl, jiraKeys, moveFor, parseIssue, parseTransitions, wishes } from './jira'
@@ -264,8 +264,7 @@ type CallResult = { text?: string; deny?: string; isError?: boolean }
 const callTool = ($: EngineInterface, input: Record<string, unknown>): Promise<CallResult> =>
   $.tool.call(input as never) as Promise<CallResult>
 
-const baseDir = async ($: EngineInterface): Promise<string> =>
-  `${(await $.env.get('HOME')) ?? '~'}/.claude/orquestrador`
+const baseDir = async ($: EngineInterface): Promise<string> => registryDir($)
 
 const readJson = async <T,>($: EngineInterface, path: string): Promise<T | undefined> => {
   try {

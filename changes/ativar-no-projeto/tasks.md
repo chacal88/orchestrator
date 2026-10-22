@@ -28,4 +28,4 @@
 
 ## 6. Correção da 3ª revisão
 
-- [ ] 6.1 O registro do nível gravado pelo painel sobrevive a reinício: fica num arquivo da pasta de registros do mod (a mesma que já é protegida), por raiz do repositório, e é lido de lá; o hook `SessionStart` e o comportamento dizem o mesmo nível. Testes: estado limpo + registro em disco + arquivo com "lembrar" vale "lembrar" sem aviso; marca apagada depois de um reinício vale "barrar" com aviso — cx: simple
+- [x] 6.1 O registro do nível gravado pelo painel sobrevive a reinício: fica num arquivo da pasta de registros do mod (a mesma que já é protegida), por raiz do repositório, e é lido de lá; o hook `SessionStart` e o comportamento dizem o mesmo nível. Testes: estado limpo + registro em disco + arquivo com "lembrar" vale "lembrar" sem aviso; marca apagada depois de um reinício vale "barrar" com aviso — cx: simple

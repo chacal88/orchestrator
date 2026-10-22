@@ -82,3 +82,9 @@ Portões depois da última edição: tipos, validação e testes com saída 0 ca
 Onde fica o estado: no `$.state` do mod; nenhuma ferramenta do modelo o grava (ele não é um arquivo do projeto). Restos: o modelo ainda pode apagar/mudar a marca, mas isso só endurece (vale "barrar").
 
 Portões depois da última edição: tipos, validação e testes com saída 0 cada; 345 testes passando.
+
+## Fase 6 — Correção da 3ª revisão (6.1)
+
+**6.1** `activation.ts`: o registro do nível do painel deixou o `$.state` (esvaziado por reinício do app) e vive em `activation.json` na pasta de registros do mod (a que `touchesGateFiles` protege; `registryDir`, agora também usada por `baseDir` em `register.tsx`). Formato: `{ "<raiz do repositório principal>": { "level": "lembrar", "at": <ms> } }`, um por raiz. `writeActivation`/`recordLevel` gravam; desativar tira só a entrada da raiz; `readActivation` lê do arquivo (ausente = vazio; ilegível = erro, falha fechado). Tipo de estado `activationRecord` removido. Testes: registro em disco + estado limpo + "lembrar" vale "lembrar" sem `tampered`; marca apagada depois do "reinício" vale "barrar" com `tampered`; desativar preserva outras raízes; os testes antigos passaram a gravar o registro em disco.
+
+Portões depois da última edição: tipos, validação e testes com saída 0 cada.

@@ -115,6 +115,7 @@ const world = (on: On): World => {
 const engineOf = (w: World): never =>
   ({
     session: { root: async () => w.root },
+    env: { get: async () => '/h' },
     state: {
       get: async (k: { key: string }) => ({ value: w.kept.get(k.key) }),
       set: async (k: { key: string }, v: unknown) => void w.kept.set(k.key, v),
@@ -152,11 +153,13 @@ const withFlow = (w: World, status: 'running' | 'done' = 'running') => {
   w.disk.set(`${BASE}/flows/demo.json`, JSON.stringify({ ...state, status }))
   w.now += 60_000 // time passes: the mod's short memory of "is a flow running" has run out
 }
+const RECORDS = `${BASE}/activation.json`
+const record = (w: World, level: 'barrar' | 'lembrar', root = w.root) => w.disk.set(RECORDS, JSON.stringify({ [root]: { level, at: 1 } }))
 const mark = (w: World, level: string) => w.disk.set(MARK, JSON.stringify({ env: { ORQUESTRADOR: level } }))
 /** The level as the panel wrote it: the file and the mod's record of it. */
 const panelMark = (w: World, level: 'barrar' | 'lembrar') => {
   mark(w, level)
-  w.kept.set('activationRecord', { [w.root]: level })
+  record(w, level)
 }
 const bash = ($: Engine, command: string) => $.tool.call({ tool: 'Bash', command } as never) as Promise<Reply>
 const BAND = {
@@ -262,7 +265,7 @@ test('"barrar" refuses what leaves the flow; "lembrar" warns and lets it go', as
   expect(w.toasts.join(' ')).toMatch(/--admin/)
 
   // any other word is no mark (the panel's record is gone with it)
-  w.kept.delete('activationRecord')
+  w.disk.delete(RECORDS)
   mark(w, 'talvez')
   expect((await bash($, 'gh pr merge 5 --squash --admin')).deny).toBeUndefined()
   expect(w.toasts).toHaveLength(1)
@@ -438,7 +441,7 @@ test('a clone with no mark does not scan the flows on every call, and a failed s
   expect((await bash($, 'gh pr merge 5 --squash --admin')).deny).toBeUndefined()
   // no mark, flow directory unreadable, a flow already known to run here: fails closed
   w.disk.delete(MARK)
-  w.kept.delete('activationRecord')
+  w.disk.delete(RECORDS)
   w.now += 60_000
   expect((await bash($, 'gh pr merge 5 --squash --admin')).deny).toMatch(/--admin/)
   // nothing known to run: the failed scan leaves the clone quiet
@@ -460,7 +463,7 @@ test('a "lembrar" mark written by hand, with a flow running, keeps refusing: onl
   expect((await readActivation(engineOf(w))).tampered).toBe(false)
 
   // a record for another level than the mark: the mark is not what the panel wrote
-  w.kept.set('activationRecord', { '/w': 'barrar' })
+  record(w, 'barrar')
   expect((await bash($, 'gh pr merge 5 --squash --admin')).deny).toMatch(/--admin/)
 })
 
@@ -564,16 +567,17 @@ test('the exclude comes first: if it cannot be written, the settings are not cre
 
 test('nothing is rewritten when nothing changes, and a missing .claude/ is no obstacle', async ($, on) => {
   const w = world(on)
+  const marks = () => w.writes.filter(p => p === MARK) // the panel's record file is written beside it
   expect(await writeActivation(engineOf(w), 'barrar')).toEqual({ ok: true })
-  expect(w.writes).toEqual([MARK])
+  expect(marks()).toEqual([MARK])
   expect(await writeActivation(engineOf(w), 'barrar')).toEqual({ ok: true })
-  expect(w.writes).toEqual([MARK])
+  expect(marks()).toEqual([MARK])
   expect(await writeActivation(engineOf(w), 'lembrar')).toEqual({ ok: true })
-  expect(w.writes).toEqual([MARK, MARK])
+  expect(marks()).toEqual([MARK, MARK])
   // deactivating what is not there writes nothing
   w.disk.clear()
   expect(await writeActivation(engineOf(w), null)).toEqual({ ok: true })
-  expect(w.writes).toEqual([MARK, MARK])
+  expect(marks()).toEqual([MARK, MARK])
 })
 
 test('the main panel warns of an activation changed outside it; switching level clears the "lembrar" count', async ($, on) => {
@@ -595,4 +599,24 @@ test('the main panel warns of an activation changed outside it; switching level 
   ui = await open()
   expect(await ui.find({ text: /A ativação foi mudada fora do painel/ } as never)).toBeUndefined()
   await ui.unmount()
+})
+
+test('the panel\'s record is a file in the registry folder, one entry per repository root, and survives a restart', async ($, on) => {
+  const w = world(on)
+  withRun(w)
+  expect(await writeActivation(engineOf(w), 'lembrar')).toEqual({ ok: true })
+  expect(JSON.parse(w.disk.get(RECORDS) ?? '')).toEqual({ '/w': { level: 'lembrar', at: expect.any(Number) } })
+  // a restart empties the session's state; the record on disk still backs the "lembrar"
+  w.kept.clear()
+  expect(await readActivation(engineOf(w))).toEqual({ level: 'lembrar', invalid: false, tampered: false })
+  expect((await bash($, 'gh pr merge 5 --squash --admin')).deny).toBeUndefined()
+  // the mark erased after the restart: "barrar" with the warning
+  w.disk.delete(MARK)
+  expect(await readActivation(engineOf(w))).toEqual({ level: 'barrar', invalid: false, tampered: true })
+  expect((await bash($, 'gh pr merge 5 --squash --admin')).deny).toMatch(/--admin/)
+  // deactivating takes only this root's entry
+  w.disk.set(RECORDS, JSON.stringify({ '/w': { level: 'lembrar', at: 1 }, '/other': { level: 'barrar', at: 1 } }))
+  mark(w, 'lembrar')
+  expect(await writeActivation(engineOf(w), null)).toEqual({ ok: true })
+  expect(Object.keys(JSON.parse(w.disk.get(RECORDS) ?? ''))).toEqual(['/other'])
 })
