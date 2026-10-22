@@ -83,12 +83,50 @@ export type FlowStep = {
   cleanup: boolean
   /** The Jira state this step implies for the change's issue: a target, or false for none; absent, the default of the step id. */
   jira?: JiraTarget | false
+  /** What the step reads, what it hands on and what it holds back (pt-BR), for the owner and the session. */
+  details?: FlowStepDetails
+  /** session or loop (or a merge/deploy step, which a session carries out): the specialist agent that runs it. */
+  agent?: string
+  /** The model suggested for the session that runs the step. */
+  model?: string
+  /** The effort suggested for the session that runs the step. */
+  effort?: FlowEffort
+  /** The step merges the change's PR. */
+  merge?: FlowMerge
+  /** The step deploys the change after the merge. */
+  deploy?: FlowDeploy
 }
+
+export type FlowStepDetails = { inputs?: string; produces?: string; blocks?: string }
+
+export type FlowEffort = 'low' | 'medium' | 'high' | 'xhigh' | 'max'
+
+/** auto: the coordinator merges by itself (an automatic step); otherwise the owner merges (an owner step). */
+export type FlowMerge = { branch: string; method: 'squash' | 'merge' | 'rebase'; auto: boolean }
+
+/** ci: the merge's CI deploys and the step waits for it; commands: routines run after the merge, in order. */
+export type FlowDeploy = { ci: boolean; commands: string[]; auto: boolean }
 
 /** Commands whose success answers a step, and the outcome they give it; logged with actor "detect". */
 export type FlowDetect = { commands: string[]; outcome: string }
 
-export type FlowDef = { id: string; title: string; description: string; steps: FlowStep[] }
+/** base: the flow a derived project flow was resolved from. */
+export type FlowDef = { id: string; title: string; description: string; steps: FlowStep[]; base?: string }
+
+/** A step added to a derived flow: a library id, `{ use: <library id>, ...changes }`, or a whole step. */
+export type FlowAdd = { after: string; step: string | Record<string, unknown> }
+
+/** A project flow written as changes to another: `.orquestrador/flows/<id>.json` with `base` instead of `steps`. */
+export type FlowDerived = {
+  id: string
+  title?: string
+  description?: string
+  base: string
+  remove?: string[]
+  add?: FlowAdd[]
+  override?: Record<string, Record<string, unknown>>
+  order?: string[]
+}
 
 /** mod: the mod closing a loop; detect: the mod seeing a step's detect command succeed. */
 export type FlowActor = 'session' | 'automatic' | 'owner' | 'mod' | 'detect'

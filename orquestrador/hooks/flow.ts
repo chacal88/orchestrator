@@ -2,15 +2,20 @@ import type {
   FlowActor,
   FlowChoice,
   FlowDef,
+  FlowDeploy,
   FlowDetect,
+  FlowEffort,
   FlowEvent,
+  FlowMerge,
   FlowOutcome,
   FlowState,
   FlowStep,
+  FlowStepDetails,
   FlowStepKind,
   FlowStepView,
   FlowView,
 } from '../types'
+import { libraryStep, NEXT_STEP, overlay } from './flows/library'
 import { executedText, masksExitCode } from './gates'
 import { MOCKUP_STEP } from './grill'
 import { parseJiraTarget } from './jira'
@@ -91,6 +96,8 @@ export const parseFlow = (raw: unknown, source: string): FlowDef | { error: stri
     if (typeof detect === 'string') return fail(`step "${stepId}": ${detect}`)
     const jira = parseJiraTarget(s.jira)
     if (typeof jira === 'string') return fail(`step "${stepId}": ${jira}`)
+    const extras = parseExtras(s, kind)
+    if (typeof extras === 'string') return fail(`step "${stepId}": ${extras}`)
     steps.push({
       id: stepId,
       title: stepTitle,
@@ -105,6 +112,7 @@ export const parseFlow = (raw: unknown, source: string): FlowDef | { error: stri
       detect,
       cleanup: s.cleanup === true,
       ...(jira === undefined ? {} : { jira }),
+      ...extras,
     })
   }
   const ids = new Set(steps.map(s => s.id))
@@ -136,11 +144,237 @@ const parseDetect = (raw: unknown, outcomes: Record<string, FlowOutcome>): FlowD
   return { commands, outcome }
 }
 
+const DETAIL_KEYS = ['inputs', 'produces', 'blocks'] as const
+const EFFORTS: readonly string[] = ['low', 'medium', 'high', 'xhigh', 'max']
+const MERGE_METHODS: readonly string[] = ['squash', 'merge', 'rebase']
+
+type StepExtras = Pick<FlowStep, 'details' | 'agent' | 'model' | 'effort' | 'merge' | 'deploy'>
+
+/**
+ * The fields that describe a step and who runs it: `details`, `agent`, `model`, `effort`, and the
+ * `merge` or `deploy` it carries out. An agent runs a session, a loop's phases, or a merge or deploy
+ * the coordinator carries out; a merge or deploy is the owner's, or automatic with `auto`.
+ */
+const parseExtras = (s: Record<string, unknown>, kind: FlowStepKind): StepExtras | string => {
+  const out: StepExtras = {}
+  if (s.details !== undefined) {
+    if (!isRecord(s.details)) return '`details` is an object with inputs, produces and blocks.'
+    const unknown = Object.keys(s.details).filter(k => !(DETAIL_KEYS as readonly string[]).includes(k))
+    if (unknown.length > 0) return `\`details\` takes only inputs, produces and blocks, not ${unknown.join(', ')}.`
+    const details: FlowStepDetails = {}
+    for (const key of DETAIL_KEYS) {
+      if (s.details[key] === undefined) continue
+      const value = text(s.details[key])
+      if (value === undefined) return `\`details.${key}\` must be text.`
+      details[key] = value
+    }
+    out.details = details
+  }
+  for (const key of ['agent', 'model'] as const) {
+    if (s[key] === undefined) continue
+    const value = text(s[key])
+    if (value === undefined) return `\`${key}\` must be a name.`
+    out[key] = value
+  }
+  if (s.effort !== undefined) {
+    if (typeof s.effort !== 'string' || !EFFORTS.includes(s.effort)) return `\`effort\` must be one of ${EFFORTS.join(', ')}.`
+    out.effort = s.effort as FlowEffort
+  }
+  if (s.merge !== undefined) {
+    const merge = parseMerge(s.merge)
+    if (typeof merge === 'string') return merge
+    out.merge = merge
+  }
+  if (s.deploy !== undefined) {
+    const deploy = parseDeploy(s.deploy)
+    if (typeof deploy === 'string') return deploy
+    out.deploy = deploy
+  }
+  if (out.merge !== undefined && out.deploy !== undefined) return 'a step merges or deploys, not both.'
+  const runs = out.merge !== undefined ? 'merge' : out.deploy !== undefined ? 'deploy' : undefined
+  const auto = (out.merge ?? out.deploy)?.auto
+  if (runs !== undefined && kind !== (auto ? 'automatic' : 'owner')) {
+    return `a ${runs} step with \`auto: ${auto}\` is ${auto ? 'automatic' : 'an owner step'}, not ${kind}.`
+  }
+  if (out.agent !== undefined && kind !== 'session' && kind !== 'loop' && runs === undefined) {
+    return '`agent` goes only on a session or loop step, or on a merge or deploy step.'
+  }
+  return out
+}
+
+const flag = (v: unknown, name: string, fallback: boolean): boolean | string =>
+  v === undefined ? fallback : typeof v === 'boolean' ? v : `\`${name}\` must be true or false.`
+
+/** `merge`: the target branch, the method (squash unless said) and whether the coordinator merges by itself. */
+const parseMerge = (raw: unknown): FlowMerge | string => {
+  if (!isRecord(raw)) return '`merge` is an object with branch, method and auto.'
+  const branch = text(raw.branch)
+  if (branch === undefined) return '`merge.branch` names the branch the PR merges into.'
+  const method = raw.method === undefined ? 'squash' : raw.method
+  if (typeof method !== 'string' || !MERGE_METHODS.includes(method)) return `\`merge.method\` must be one of ${MERGE_METHODS.join(', ')}.`
+  const auto = flag(raw.auto, 'merge.auto', false)
+  if (typeof auto === 'string') return auto
+  return { branch, method: method as FlowMerge['method'], auto }
+}
+
+/** `deploy`: the CI's deploy waited on, routines run after the merge, or both; and whether it runs by itself. */
+const parseDeploy = (raw: unknown): FlowDeploy | string => {
+  if (!isRecord(raw)) return '`deploy` is an object with ci, commands and auto.'
+  const ci = flag(raw.ci, 'deploy.ci', false)
+  if (typeof ci === 'string') return ci
+  const auto = flag(raw.auto, 'deploy.auto', false)
+  if (typeof auto === 'string') return auto
+  const list = raw.commands === undefined ? [] : typeof raw.commands === 'string' ? [raw.commands] : raw.commands
+  if (!Array.isArray(list) || list.some(c => text(c) === undefined)) return '`deploy.commands` is a list of commands.'
+  const commands = list.map(c => text(c) as string)
+  if (!ci && commands.length === 0) return '`deploy` needs `ci: true`, `commands`, or both.'
+  return { ci, commands, auto }
+}
+
 /** The flows on offer: the mod's defaults, each replaced by a project's flow of the same id. */
 export const mergeFlows = (defaults: readonly FlowDef[], project: readonly FlowDef[]): Record<string, FlowDef> => {
   const all: Record<string, FlowDef> = {}
   for (const flow of [...defaults, ...project]) all[flow.id] = flow
   return all
+}
+
+/** A flow file as read: its raw JSON and where it came from. */
+export type FlowSource = { source: string; raw: unknown }
+
+type RawStep = Record<string, unknown> & { id: string; outcomes: Record<string, { next: string }> }
+
+/** A value's own text list: undefined is empty, anything but a list of names is refused. */
+const names = (v: unknown): string[] | undefined =>
+  v === undefined ? [] : Array.isArray(v) && v.every(x => text(x) !== undefined) ? v.map(x => text(x) as string) : undefined
+
+/**
+ * A flow file whole: one with `steps` goes straight to parseFlow; one with `base` is resolved from
+ * its base (found by `find`, which may itself be derived), then `remove` (each outcome that led to a
+ * removed step leads where that step's first outcome led, through every removed one), `add` (the
+ * step enters after `after`, whose forward outcome now leads to it, and it leads where that one
+ * led), `override` (fields laid over a step, never its id or kind) and `order`, and the result goes
+ * through parseFlow like any other.
+ */
+export const resolveFlow = (
+  raw: unknown,
+  source: string,
+  find: (id: string, from: string) => FlowSource | undefined,
+  chain: readonly { id: string; source: string }[] = [],
+): FlowDef | { error: string } => {
+  if (!isRecord(raw) || raw.base === undefined) return parseFlow(raw, source)
+  const fail = (why: string) => ({ error: `${source}: ${why}` })
+  const id = text(raw.id)
+  if (id === undefined) return fail('`id` is required.')
+  if (raw.steps !== undefined) return fail('a flow has `base` or `steps`, not both.')
+  const baseId = text(raw.base)
+  if (baseId === undefined) return fail('`base` names the flow this one derives from.')
+  const path = [...chain, { id, source }]
+  const found = find(baseId, id)
+  if (found === undefined) return fail(`base "${baseId}" is no flow of the mod or of the project.`)
+  if (path.some(p => p.source === found.source)) {
+    return fail(`\`base\` goes round in a circle: ${[...path.map(p => p.id), baseId].join(' → ')}.`)
+  }
+  const base = resolveFlow(found.raw, found.source, find, path)
+  if ('error' in base) return fail(`base "${baseId}" does not resolve: ${base.error}`)
+  let steps = JSON.parse(JSON.stringify(base.steps)) as RawStep[]
+  const at = (sid: string) => steps.findIndex(s => s.id === sid)
+
+  const remove = names(raw.remove)
+  if (remove === undefined) return fail('`remove` is a list of step ids.')
+  for (const sid of remove) {
+    const step = steps[at(sid)]
+    if (step === undefined) return fail(`\`remove\`: "${sid}" is no step of ${baseId}.`)
+    if (step.kind === 'loop') return fail(`\`remove\`: "${sid}" runs the change's phases; it cannot be removed.`)
+  }
+  const gone = new Set(remove)
+  const through = (target: string, seen: readonly string[]): string | undefined => {
+    if (!gone.has(target)) return target
+    if (seen.includes(target)) return undefined
+    const first = Object.values(steps[at(target)]!.outcomes)[0]!.next
+    return through(first, [...seen, target])
+  }
+  const kept = steps.filter(s => !gone.has(s.id))
+  for (const step of kept) {
+    for (const [name, o] of Object.entries(step.outcomes)) {
+      const next = through(o.next, [])
+      if (next === undefined) return fail(`\`remove\`: step "${step.id}", outcome "${name}" leads only through removed steps.`)
+      o.next = next
+    }
+  }
+  steps = kept
+
+  if (raw.add !== undefined && !Array.isArray(raw.add)) return fail('`add` is a list of { after, step }.')
+  for (const [i, a] of ((raw.add ?? []) as unknown[]).entries()) {
+    const where = `add ${i + 1}`
+    if (!isRecord(a)) return fail(`${where} is not an object.`)
+    const after = text(a.after)
+    const anchor = after === undefined ? undefined : steps[at(after)]
+    if (anchor === undefined) return fail(`${where}: \`after\` "${after ?? ''}" is no step of the flow.`)
+    const step = libraryStep(a.step)
+    if (typeof step === 'string') return fail(`${where}: ${step}`)
+    const sid = text(step.id)
+    if (sid === undefined) return fail(`${where}: the step needs an \`id\`.`)
+    if (at(sid) !== -1) return fail(`${where}: step id "${sid}" is already in the flow.`)
+    const from = at(anchor.id)
+    const forward = Object.values(anchor.outcomes).find(o => o.next === FLOW_END || at(o.next) > from)
+    if (forward === undefined) return fail(`${where}: step "${anchor.id}" has no outcome that goes forward.`)
+    const outcomes = isRecord(step.outcomes) ? step.outcomes : {}
+    for (const o of Object.values(outcomes)) {
+      if (isRecord(o) && o.next === NEXT_STEP) o.next = forward.next
+    }
+    for (const [name, o] of Object.entries(outcomes)) if (o === NEXT_STEP) outcomes[name] = forward.next
+    forward.next = sid
+    steps.splice(from + 1, 0, { ...step, id: sid } as RawStep)
+  }
+
+  if (raw.override !== undefined && !isRecord(raw.override)) return fail('`override` maps step ids to the fields that change.')
+  for (const [sid, changes] of Object.entries(raw.override ?? {})) {
+    const i = at(sid)
+    if (i === -1) return fail(`\`override\`: "${sid}" is no step of the flow.`)
+    if (!isRecord(changes)) return fail(`\`override\` of "${sid}" is an object of fields.`)
+    for (const key of ['id', 'kind'] as const) {
+      if (changes[key] !== undefined && changes[key] !== steps[i]![key]) return fail(`\`override\` of "${sid}" cannot change its \`${key}\`.`)
+    }
+    steps[i] = overlay(steps[i], changes) as RawStep
+  }
+
+  const order = raw.order === undefined ? undefined : names(raw.order)
+  if (raw.order !== undefined) {
+    const ids = steps.map(s => s.id)
+    if (order === undefined || order.length !== ids.length || new Set(order).size !== ids.length || order.some(o => !ids.includes(o))) {
+      return fail(`\`order\` names every step of the flow once: ${ids.join(', ')}.`)
+    }
+    steps = order.map(o => steps[at(o)]!)
+  }
+
+  const parsed = parseFlow(
+    { id, title: text(raw.title) ?? base.title, description: text(raw.description) ?? base.description, steps },
+    source,
+  )
+  return 'error' in parsed ? parsed : { ...parsed, base: baseId }
+}
+
+/**
+ * A project's flow files resolved: a derived one finds its base among the project's other flows
+ * first, then the mod's defaults; a project flow deriving from its own id derives from the default.
+ */
+export const resolveProjectFlows = (
+  defaults: readonly FlowSource[],
+  project: readonly FlowSource[],
+): { flows: FlowDef[]; problems: string[] } => {
+  const byId = (files: readonly FlowSource[]) =>
+    Object.fromEntries(files.flatMap(f => (isRecord(f.raw) && text(f.raw.id) !== undefined ? [[text(f.raw.id) as string, f]] : [])))
+  const mine = byId(project)
+  const theirs = byId(defaults)
+  const find = (id: string, from: string) => (id === from ? undefined : mine[id]) ?? theirs[id]
+  const flows: FlowDef[] = []
+  const problems: string[] = []
+  for (const file of project) {
+    const resolved = resolveFlow(file.raw, file.source, find)
+    if ('error' in resolved) problems.push(resolved.error)
+    else flows.push(resolved)
+  }
+  return { flows, problems }
 }
 
 export type Moved = { state: FlowState; events: FlowEvent[] }
