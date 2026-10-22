@@ -438,7 +438,8 @@ export const resolveFlow = (
     const after = text(a.after)
     const anchor = after === undefined ? undefined : steps[at(after)]
     if (anchor === undefined) return fail(`${where}: \`after\` "${after ?? ''}" is no step of the flow.`)
-    const step = libraryStep(a.step, project)
+    // a copy: the "$seguinte" below is filled in on the step, never on the file's own object, which resolves again the same
+    const step = libraryStep(JSON.parse(JSON.stringify(a.step ?? null)) as unknown, project)
     if (typeof step === 'string') return fail(`${where}: ${step}`)
     const sid = text(step.id)
     if (sid === undefined) return fail(`${where}: the step needs an \`id\`.`)
