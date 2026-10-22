@@ -245,20 +245,21 @@ Testes novos:
 - `tests/merge-deploy.test.ts`: 7.1 (×2), 7.2 e 7.3. O teste da fase 2 "only routines, owner's" deixou de exigir `ownerChoices` vazio.
 - `tests/workflows-pane.test.ts`: 7.4 (×2), 7.5 e 7.6 (×2).
 
-Portões (depois da última edição):
+Portões de cada fase, depois da última edição dela (a 6 e a 7 rodaram em branches separadas; o resultado das duas
+juntas está no § Testes do topo):
 
 ```
-$ npx -y -p typescript@5.6.3 tsc -p <scratchpad>/tc/tsconfig.json   # tipos do engine 2.1.308, opções do § Tipos, hooks + types + tests
+# fase 6 (claude/fpp-merge-seguro-e21dc5)
+$ npx -y -p typescript@5.6.3 tsc -p <scratchpad>/tc/tsconfig.json
 exit 0
-
 $ PATH=".../2.1.308/a93ded4b1b47/claude.app/Contents/MacOS:$PATH" \claude plugin test orquestrador
  233 pass
  0 fail
 Ran 233 tests across 22 files.
 
+# fase 7 (claude/fpp-deploy-painel-837674)
 $ npx -y -p typescript@5.6.3 tsc -p <scratchpad>/tc/tsconfig.json
 exit 0
-
 $ PATH=".../2.1.308/a93ded4b1b47/claude.app/Contents/MacOS:$PATH" \claude plugin test orquestrador
  229 pass
  0 fail
