@@ -10,13 +10,14 @@ const PANE = {
 } as const
 
 const ME = { sessionId: 'local_me', cwd: '/w', title: 'coordenador' }
-const child = (name: string, archived = false) => ({
+const child = (name: string, archived = false, isRunning = true) => ({
   sessionId: `local_${name}`,
   cwd: `/w/.claude/worktrees/${name}`,
   title: `🛠 ${name}`,
   name,
   startedBy: ME.sessionId,
   isArchived: archived,
+  isRunning,
 })
 
 type World = { disk: Map<string, string>; mtimes: Map<string, number>; family: Record<string, unknown>[]; calls: string[]; now: number }
@@ -135,7 +136,7 @@ test('the fourth live phase session is refused; archived ones do not count', asy
   expect(((await $.tool.call(start as never)) as { deny?: string }).deny).toBeUndefined()
   w.family = [child('a'), child('b'), child('d')]
   const refused = (await $.tool.call(start as never)) as { deny?: string }
-  expect(refused.deny).toMatch(/3 phase sessions are alive \(a, b, d\); the ceiling is 3/)
+  expect(refused.deny).toMatch(/3 phase sessions are alive: a \(running now\), b \(running now\), d \(running now\); the ceiling is 3/)
 })
 
 test('the model cannot write the gate files; gh pr merge waits for the final gates', async ($, on) => {

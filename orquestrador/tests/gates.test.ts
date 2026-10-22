@@ -1,7 +1,13 @@
 import { describe, expect, test } from 'claude-code/testing'
 
 import {
+  aliveReason,
+  citedPrs,
   classifyBash,
+  isChangeBranch,
+  mergeSelector,
+  mergeTarget,
+  mergeWindow,
   familyCheck,
   gateState,
   gateViews,
@@ -189,16 +195,52 @@ describe('plan gates', () => {
 
 test('live phase sessions are the ones this session started and did not archive', () => {
   const rows = [
-    { startedBy: 'me', isArchived: false },
-    { startedBy: 'me', isArchived: true },
-    { startedBy: 'other', isArchived: false },
+    { sessionId: 'a', startedBy: 'me', isArchived: false, isRunning: true },
+    { sessionId: 'b', startedBy: 'me', isArchived: true, isRunning: true },
+    { sessionId: 'c', startedBy: 'other', isArchived: false, isRunning: true },
   ]
   expect(liveSessions(rows, 'me')).toHaveLength(1)
   expect(liveSessions(rows, undefined)).toHaveLength(0)
   const withChat = [
-    { startedBy: 'me', isArchived: false, cwd: '/w/.claude/worktrees/api' },
-    { startedBy: 'me', isArchived: false, cwd: '/w' },
+    { sessionId: 'a', startedBy: 'me', isArchived: false, isRunning: true, cwd: '/w/.claude/worktrees/api' },
+    { sessionId: 'b', startedBy: 'me', isArchived: false, isRunning: true, cwd: '/w' },
   ]
   // a side chat in the coordinator's own folder is not a phase session
   expect(liveSessions(withChat, 'me', '/w')).toHaveLength(1)
+})
+
+test('a session counts against the ceiling only with live work, and says why', () => {
+  const base = { sessionId: 's', startedBy: 'me', isArchived: false }
+  expect(aliveReason({ ...base, isRunning: true })).toBe('running now')
+  expect(aliveReason({ ...base, waiting: { kind: 'question', text: 'x', since: 1 } })).toBe('waiting on the owner (question)')
+  expect(aliveReason({ ...base, plan: [{ content: 'a', status: 'completed' }, { content: 'b', status: 'pending' }] })).toBe(
+    '1 open task in its list',
+  )
+  expect(aliveReason({ ...base, plan: [{ content: 'a', status: 'completed' }] })).toBeUndefined()
+  expect(aliveReason({ ...base, isRunning: true, prState: 'MERGED' })).toBeUndefined()
+  expect(aliveReason({ ...base, isRunning: true, prState: 'closed' })).toBeUndefined()
+  expect(aliveReason({ ...base, isRunning: true }, new Set(['s']))).toBeUndefined()
+})
+
+test('the merge window closes at the archive step and when the flow ends', () => {
+  const flow = { steps: [{ id: 'pr' }, { id: 'qa' }, { id: 'arquivar', command: 'openspec archive', cleanup: true }] } as never
+  expect(mergeWindow({ status: 'running', current: 'pr', flow })).toBe(true)
+  expect(mergeWindow({ status: 'escalated', current: 'qa', flow })).toBe(true)
+  expect(mergeWindow({ status: 'running', current: 'arquivar', flow })).toBe(false)
+  expect(mergeWindow({ status: 'done', current: 'pr', flow })).toBe(false)
+  expect(mergeWindow({ status: 'aborted', current: 'pr', flow })).toBe(false)
+})
+
+test('the PR a gh pr merge names: number, URL, branch or the current branch', () => {
+  expect(mergeTarget(mergeSelector('gh pr merge 805 --squash'))).toEqual({ number: 805, branch: undefined })
+  expect(mergeTarget(mergeSelector('gh pr merge --squash --subject "fix: x" https://github.com/o/r/pull/12'))).toEqual({
+    number: 12,
+    branch: undefined,
+  })
+  expect(mergeTarget(mergeSelector('gh pr merge -R o/r feat/demo -d'))).toEqual({ number: undefined, branch: 'feat/demo' })
+  expect(mergeSelector('gh pr merge --squash --delete-branch && git pull')).toBeUndefined()
+  expect(citedPrs('PR aberto: #801 (https://github.com/o/r/pull/802)')).toEqual([801, 802])
+  expect(isChangeBranch('claude/Demo-x1', 'demo', new Set())).toBe(true)
+  expect(isChangeBranch('docs/feed', 'demo', new Set(['docs/feed']))).toBe(true)
+  expect(isChangeBranch('docs/feed', 'demo', new Set())).toBe(false)
 })
