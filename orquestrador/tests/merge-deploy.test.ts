@@ -233,6 +233,18 @@ describe('deploy', () => {
     expect(err(ownerPress(withCi, 'deploy', 'publicado', at))).toMatch(/moves on by itself once the mod saw the whole deploy/)
   })
 
+  test('8.2 once the CI is confirmed and only routines are left, the owner gets "Deploy concluído" too', () => {
+    let state = parked(trunk({ branch: 'main' }, { ci: true, commands: ['npm run migrate:prod', 'npm run seed:prod'] }), 'deploy')
+    state = ok(ownerPress(state, 'deploy', DEPLOY_CI_OUTCOME, at)).state
+    expect(state.current).toBe('deploy')
+    expect(flowView(state).ownerChoices).toEqual([{ outcome: 'publicado', label: 'Deploy concluído' }])
+    expect(describeFlow(state)).toContain('The owner may also press "Deploy concluído" once they ran the routines.')
+    expect(err(applyOutcome(state, { step: 'deploy', outcome: 'publicado', by: 'session' }, at))).toMatch(/only the owner/)
+    const pressed = ok(ownerPress(state, 'deploy', 'publicado', at))
+    expect(pressed.state.current).toBe('producao')
+    expect(pressed.state.records.deploy).toMatchObject({ outcome: 'publicado', by: 'owner' })
+  })
+
   test('7.3 a failing gh run --exit-status fails the deploy only while it waits on the CI', () => {
     const watch = 'gh run watch 123 --exit-status'
     // ci: false — the CI is none of the deploy's, automatic or the owner's

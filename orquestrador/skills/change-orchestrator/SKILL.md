@@ -210,7 +210,9 @@ passo do dono? O `ScheduleWakeup` longo está agendado?
      (`gh -R dono/repo pr merge`), `gh api …/pulls/<n>/merge` (qualquer método), `gh api graphql`
      com `mergePullRequest`; entre aspas, depois de `\` + quebra de linha, dentro de
      `bash -c`/`sh -c`/`eval` ou de `$(…)`. Um merge com `$VAR` ou `$(…)` nos argumentos é
-     recusado: o mod não vê o que a variável carrega; escreva o PR e as flags por extenso. Se
+     recusado: o mod não vê o que a variável carrega; escreva o PR e as flags por extenso. Um
+     `gh` com merge que o mod não consegue ler (atrás de `xargs`, `timeout`, `sudo -u`, num script
+     por heredoc ou pipe para um shell, ou com o nome numa variável) também é recusado. Se
      faltar aprovação ou CI, ou uma rotina de deploy falhar, não repita em laço: avise o dono com
      o diagnóstico e espere a decisão dele.
    - Merge e deploy automáticos não levam `flow report`: o mod avança pelo código de saída.

@@ -498,7 +498,8 @@ const SHELLS = /(^|\/)(ba|z|da|k)?sh$/
  */
 export const commandsRun = (command: string, depth = 0): Word[][] => {
   if (depth > 4) return []
-  const code = command.replace(/<<-?\s*(['"]?)(\w+)\1[^\n]*\n[\s\S]*?\n\s*\2\b/g, '<<heredoc')
+  // the body goes, the rest of the opening line stays: `cat <<'EOF' | bash` still pipes into a shell
+  const code = command.replace(/<<-?\s*(['"]?)(\w+)\1([^\n]*)\n[\s\S]*?\n\s*\2\b/g, '<<heredoc$3')
   const { commands, nested } = splitWords(code)
   const out: Word[][] = []
   for (const words of commands) {
@@ -572,6 +573,30 @@ const mergeCall = (words: readonly Word[]): MergeCall | undefined => {
 /** The PR merges a command runs, in any of the forms `commandsRun` reaches. */
 export const mergeCalls = (command: string): MergeCall[] =>
   commandsRun(command).flatMap(words => mergeCall(words) ?? [])
+
+/** Programs that only print, read or move around what they are given: a merge in their arguments does not run. */
+const INERT = new Set([
+  'echo', 'printf', 'cat', 'grep', 'egrep', 'rg', 'git', 'head', 'tail', 'less', 'jq', 'wc', 'sort', 'uniq', 'diff',
+  'cd', 'ls', 'pwd', 'true', 'false', 'test', '[', 'mkdir', 'touch', 'cp', 'mv', 'tee',
+])
+
+/**
+ * A command line that names `gh` and a merge the mod cannot read as one: the `gh` runs behind
+ * another program (`xargs`, `find -exec`, `timeout`, `nice`, `sudo -u`, `env -u`…), from a script
+ * a shell reads on stdin (a heredoc or a pipe into `bash`), or under a name a variable holds
+ * (`$G pr merge`). Its text when it is that, so the guard fails closed; undefined when every
+ * command is a `gh` the mod reads or a program that only prints.
+ */
+export const opaqueMerge = (command: string): string | undefined => {
+  if (!/\bgh\b/.test(command) || !/merge/i.test(command) || mergeCalls(command).length > 0) return undefined
+  const hidden = commandsRun(command).find(words => {
+    const head = words[0]
+    if (head === undefined) return false
+    const name = head.text.split('/').pop() ?? ''
+    return head.dynamic || (name !== 'gh' && !INERT.has(name))
+  })
+  return hidden?.map(w => w.text).join(' ').replace(/\s+/g, ' ').slice(0, 80)
+}
 
 /** The PR a `gh pr merge` names (a number, URL or branch); undefined for the current branch's. */
 export const mergeSelector = (command: string): string | undefined => mergeCalls(command)[0]?.selector

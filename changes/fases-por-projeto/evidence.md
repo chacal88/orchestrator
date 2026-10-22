@@ -265,3 +265,19 @@ $ PATH=".../2.1.308/a93ded4b1b47/claude.app/Contents/MacOS:$PATH" \claude plugin
  0 fail
 Ran 229 tests across 21 files.
 ```
+
+## Fase 8 — Correções da 2ª revisão (8.1, 8.2), feitas pela coordenação
+
+- 8.1 `opaqueMerge` (`gates.ts`): quando o texto tem `gh` e `merge` e `mergeCalls` não acha a chamada, o guarda
+  procura um comando que não seja `gh` nem um programa que só imprime ou lê (`echo`, `printf`, `cat`, `grep`, `git`,
+  `cd`, `ls`…), ou cujo executável venha de variável; achando, `refuseMerge` recusa (falha fechada) dizendo que não
+  consegue ver o merge. Cobre `xargs`, `find -exec`, `timeout`, `nice`, `env -u`, `sudo -u`, `command -p`, heredoc
+  para `bash`, `echo … | sh`, `cat <<EOF | bash`, `$G pr merge` e `"$(command -v gh)" pr merge`. O `commandsRun`
+  passou a manter o resto da linha que abre um heredoc (antes, `cat <<'EOF' | bash` perdia o `| bash`). Seguem
+  livres `gh pr view … mergeable`, `cd && gh pr checks`, `grep "gh pr merge"` e um `git commit` com heredoc.
+  Skill § 6 cita a recusa. Testes em `tests/merge-safe.test.ts` (3).
+- 8.2 `ownerConfirms` aceita "Deploy concluído" do dono quando o deploy não espera mais o CI: sem CI desde o
+  início, ou com o CI já confirmado e só rotinas restando. Teste em `tests/merge-deploy.test.ts`.
+- Fora do alcance, como antes: alias do usuário, script em arquivo (`bash merge.sh`) e `bash -c "$X"` com o
+  conteúdo inteiro numa variável; `git merge` + `git push` direto na branch protegida fica com a proteção de
+  branch do GitHub, que precisa de "include administrators" ligado para valer também para admins.

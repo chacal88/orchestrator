@@ -50,5 +50,5 @@
 
 ## 8. Correções da 2ª revisão
 
-- [ ] 8.1 Guarda de merge falha fechada: quando o texto bruto tem `gh` e `merge` como palavras e o mod não extrai a chamada (wrapper como `xargs`, `find -exec`, `timeout`, `nice`, `env -u`, `sudo -u`, `command -p`; script por heredoc ou pipe para um shell; executável dinâmico `$G`/`"$(command -v gh)"`), recusa dizendo que não consegue ver o merge; `echo`/`printf`/`cat`/`git commit` citando o comando seguem livres; testes de cada forma — cx: moderate
-- [ ] 8.2 Deploy do dono com CI e rotinas: depois de "Deploy do CI concluído", restando só rotinas, o dono tem o botão "Deploy concluído"; teste — cx: simple
+- [x] 8.1 Guarda de merge falha fechada: quando o texto bruto tem `gh` e `merge` como palavras e o mod não extrai a chamada (wrapper como `xargs`, `find -exec`, `timeout`, `nice`, `env -u`, `sudo -u`, `command -p`; script por heredoc ou pipe para um shell; executável dinâmico `$G`/`"$(command -v gh)"`), recusa dizendo que não consegue ver o merge; `echo`/`printf`/`cat`/`git commit` citando o comando seguem livres; testes de cada forma — cx: moderate
+- [x] 8.2 Deploy do dono com CI e rotinas: depois de "Deploy do CI concluído", restando só rotinas, o dono tem o botão "Deploy concluído"; teste — cx: simple

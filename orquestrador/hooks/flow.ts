@@ -566,7 +566,7 @@ export const applyOutcome = (
   if (asked.outcomes[report.outcome] === undefined) {
     return { error: `step "${asked.id}" has no outcome "${report.outcome}"; it declares ${Object.keys(asked.outcomes).join(', ')}.` }
   }
-  if (asked.deploy !== undefined && report.outcome !== 'falhou' && !ownerConfirms(asked, report.by, report.outcome)) {
+  if (asked.deploy !== undefined && report.outcome !== 'falhou' && !ownerConfirms(state, asked, report.by, report.outcome)) {
     return {
       error:
         `step "${asked.id}" (${asked.title}) moves on by itself once the mod saw the whole deploy: ` +
@@ -627,11 +627,16 @@ const deployWaits = (state: FlowState, step: FlowStep): string => {
 }
 
 /**
- * An owner's deploy of routines alone: the owner may confirm it whole with the step's forward
- * outcome ("Deploy concluído"), having run the routines where the mod did not see them.
+ * An owner's deploy with only routines left (none from the start, or the CI's already confirmed):
+ * the owner may confirm it whole with the step's forward outcome ("Deploy concluído"), having run
+ * the routines where the mod did not see them.
  */
-const ownerConfirms = (step: FlowStep, by: FlowActor, outcome: string): boolean =>
-  step.kind === 'owner' && step.deploy?.ci === false && by === 'owner' && outcome === Object.keys(step.outcomes)[0]
+const ownerConfirms = (state: FlowState, step: FlowStep, by: FlowActor, outcome: string): boolean =>
+  step.kind === 'owner' &&
+  step.deploy !== undefined &&
+  !deployPending(state, step).ci &&
+  by === 'owner' &&
+  outcome === Object.keys(step.outcomes)[0]
 
 /** One more thing the deploy saw done; with nothing left, the step moves on. */
 const tick = (state: FlowState, step: FlowStep, done: FlowDeployProgress, by: FlowActor, note: string, at: number): Moved => {
@@ -851,7 +856,7 @@ export const flowView = (state: FlowState): FlowView => {
       : step?.deploy !== undefined
         ? deployPending(state, step).ci
           ? [{ outcome: DEPLOY_CI_OUTCOME, label: DEPLOY_CI_LABEL }]
-          : ownerConfirms(step, 'owner', Object.keys(step.outcomes)[0]!)
+          : ownerConfirms(state, step, 'owner', Object.keys(step.outcomes)[0]!)
             ? Object.entries(step.outcomes).slice(0, 1).map(([outcome, o]) => ({ outcome, label: o.label }))
             : []
         : step?.kind === 'owner'
@@ -947,7 +952,7 @@ const describeDeploy = (state: FlowState, step: FlowStep, where: string): string
       : ''
   const fails = step.kind === 'automatic' ? `a failure → ${step.outcomes.falhou?.next}` : 'a failure holds the step'
   const [forward, first] = Object.entries(step.outcomes)[0]!
-  const confirm = ownerConfirms(step, 'owner', forward) ? ` The owner may also press "${first.label}" once they ran the routines.` : ''
+  const confirm = ownerConfirms(state, step, 'owner', forward) ? ` The owner may also press "${first.label}" once they ran the routines.` : ''
   return (
     `${who}${ci}${routines} The mod ticks each part it sees pass (a hidden exit code does not count) and moves on ` +
     `(→ ${first.next}) once all are done; ${fails}.${confirm} It cannot be reported.`

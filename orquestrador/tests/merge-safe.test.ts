@@ -5,7 +5,7 @@ import type { FlowState, OrchestrationRun } from '../types'
 import { parseFlow, startFlow } from '../hooks/flow'
 import { findAgent } from '../hooks/flow-files'
 import { defaultFlows } from '../hooks/flows/index'
-import { mergeCalls, mergeSelector } from '../hooks/gates'
+import { mergeCalls, mergeSelector, opaqueMerge } from '../hooks/gates'
 
 type On = Parameters<TestBody>[1]
 type Reply = { result?: unknown; isError?: boolean; deny?: string }
@@ -160,6 +160,45 @@ test('a gh api call that merges nothing passes', async ($, on) => {
   expect(await merge($, 'gh api repos/o/r/pulls/801/files')).toBeUndefined()
   expect(await merge($, "gh api graphql -f query='{ repository(owner: \"o\", name: \"r\") { mergeCommitAllowed } }'")).toBeUndefined()
   expect(await merge($, 'gh api repos/o/r/branches/main/protection')).toBeUndefined()
+})
+
+// 8.1 — a merge the mod cannot read is refused, not let through
+
+const OPAQUE = /runs a `gh` merge the mod cannot read/
+
+test('a gh merge behind another program is refused: the guard fails closed', async ($, on) => {
+  orchestrated(world(on), undefined)
+  for (const command of [
+    'echo 805 | xargs gh pr merge --admin',
+    'find . -maxdepth 0 -exec gh pr merge 805 --admin \\;',
+    'timeout 30 gh pr merge 805 --admin',
+    'nice gh pr merge 805 --admin',
+    'env -u X gh pr merge 805 --admin',
+    'sudo -u root gh pr merge 805 --admin',
+    'command -p gh pr merge 805 --admin',
+  ]) expect(await merge($, command)).toMatch(OPAQUE)
+})
+
+test('a gh merge from a script on stdin or under a variable name is refused', async ($, on) => {
+  orchestrated(world(on), undefined)
+  for (const command of [
+    "bash <<'EOF'\ngh pr merge 805 --admin\nEOF",
+    "echo 'gh pr merge 805 --admin' | sh",
+    "cat <<'EOF' | bash\ngh pr merge 805 --admin\nEOF",
+    'G=gh; $G pr merge 805 --admin',
+    '"$(command -v gh)" pr merge 805 --admin',
+  ]) expect(await merge($, command)).toMatch(OPAQUE)
+})
+
+test('a gh call that only reads, and text that only mentions a merge, still pass', async ($, on) => {
+  orchestrated(world(on), undefined)
+  expect(await merge($, 'gh pr view 805 --json mergeable,mergeStateStatus')).toBeUndefined()
+  expect(await merge($, 'cd /w && gh pr checks 805 && git log --oneline -1')).toBeUndefined()
+  expect(await merge($, 'grep -n "gh pr merge" README.md')).toBeUndefined()
+  expect(await merge($, "git commit -m \"$(cat <<'EOF'\ndocs: gh pr merge needs the review\nEOF\n)\"")).toBeUndefined()
+  // outside an orchestrated checkout nothing is held back
+  expect(opaqueMerge('timeout 30 gh pr merge 805')).toBe('timeout 30 gh pr merge 805')
+  expect(opaqueMerge('gh pr view 805 --json mergeable')).toBeUndefined()
 })
 
 test('the merge calls a command line runs, and the PR each names', () => {

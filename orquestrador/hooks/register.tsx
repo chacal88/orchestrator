@@ -40,6 +40,7 @@ import {
   liveSessions,
   isChangeBranch,
   mergeCalls,
+  opaqueMerge,
   mergeTarget,
   mergeWindow,
   classifyBash,
@@ -893,16 +894,26 @@ const mergesChangePr = async (
  * archive, also waits for the flow's PR review before that merge and for the final gates; a
  * finished or aborted flow holds back nothing but those two. Every form `mergeCalls` reads counts:
  * `gh pr merge` with or without flags before `pr`, `gh api …/pulls/<n>/merge`, GraphQL's
- * `mergePullRequest`, quoted, continued, or inside `bash -c`/`sh -c`/`eval`.
+ * `mergePullRequest`, quoted, continued, or inside `bash -c`/`sh -c`/`eval`. A line that names `gh`
+ * and a merge the mod cannot read as one (`opaqueMerge`) is refused: the guard fails closed.
  */
 const refuseMerge = async ($: EngineInterface, command: string): Promise<string | undefined> => {
   const calls = mergeCalls(command)
-  if (calls.length === 0) return undefined
+  const opaque = calls.length === 0 ? opaqueMerge(command) : undefined
+  if (calls.length === 0 && opaque === undefined) return undefined
   const root = await $.session.root()
   const run = await loadRun($, root)
   if (run === undefined) return undefined
   const held: string[] = []
   const reasons: string[] = []
+  if (opaque !== undefined) {
+    held.push('opaque')
+    reasons.push(
+      `\`${opaque}\` runs a \`gh\` merge the mod cannot read (behind another program, from a script on stdin, or ` +
+        'under a name a variable holds), so it cannot check the review, the gates or `--admin`. Run `gh pr merge` ' +
+        'itself, with the PR and the flags written out.',
+    )
+  }
   if (calls.some(c => c.admin)) {
     held.push('--admin')
     reasons.push('`--admin` skips the branch protection (GitHub approval and green CI); merge without it, never around them.')
