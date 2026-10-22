@@ -17,7 +17,7 @@ const stable = (v: unknown): string =>
   ) ?? 'undefined'
 const outcomesOf = (step: RawStep): Outcomes => (step.outcomes ?? {}) as Outcomes
 
-export const EMPTY_FORMS: WorkflowForms = { newId: '', newBase: '', stepTitle: '', stepKind: 'session', stepAgent: '', stepCommand: '' }
+export const EMPTY_FORMS: WorkflowForms = { newId: '', newBase: '', stepTitle: '', stepKind: 'session', stepAgent: '', stepCommand: '', libraryUse: '', routineFor: '' }
 
 /** A workflow id the owner types: lowercase words joined by hyphens. */
 export const WORKFLOW_ID = /^[a-z0-9]+(?:-[a-z0-9]+)*$/
@@ -43,6 +43,17 @@ const libraryUse = (step: RawStep): string | undefined =>
 
 /** A draft to edit `flow`. `base` is the flow it derives from (resolved), absent for a whole one. */
 export const draftOf = (flow: FlowDef, base: FlowDef | undefined, replacesDefault: boolean): WorkflowDraft => {
+  const draft = draftFrom(flow, base, replacesDefault)
+  return { ...draft, initial: snapshot(draft) }
+}
+
+const snapshot = (draft: WorkflowDraft): NonNullable<WorkflowDraft['initial']> => ({
+  title: draft.title,
+  description: draft.description,
+  steps: clone(draft.steps.map(s => ({ id: String(s.step.id), step: s.step, on: s.on }))),
+})
+
+const draftFrom = (flow: FlowDef, base: FlowDef | undefined, replacesDefault: boolean): WorkflowDraft => {
   const current = asDraftSteps(flow)
   if (base === undefined) {
     return {
@@ -73,10 +84,13 @@ export const draftOf = (flow: FlowDef, base: FlowDef | undefined, replacesDefaul
 const withUse = (use: string | undefined): { use?: string } => (use === undefined ? {} : { use })
 
 /** "Novo workflow": from scratch (no base), or deriving from `base` with its steps as they are. */
-export const newDraft = (id: string, base: FlowDef | undefined): WorkflowDraft =>
-  base === undefined
-    ? { id, title: id, description: '', baseIds: [], replacesDefault: false, steps: [] }
-    : { ...draftOf(base, base, false), id, title: `${base.title} (${id})` }
+export const newDraft = (id: string, base: FlowDef | undefined, title?: string): WorkflowDraft => {
+  const made: WorkflowDraft =
+    base === undefined
+      ? { id, title: title ?? id, description: '', baseIds: [], replacesDefault: false, steps: [] }
+      : { ...draftOf(base, base, false), id, title: title ?? `${base.title} (${id})` }
+  return { ...made, initial: { ...(made.initial ?? snapshot(made)), title: made.title } }
+}
 
 const uniqueId = (draft: WorkflowDraft, wanted: string): string => {
   const taken = new Set([...draft.steps.map(s => String(s.step.id)), ...draft.baseIds])
@@ -86,7 +100,7 @@ const uniqueId = (draft: WorkflowDraft, wanted: string): string => {
   return `${wanted}-${n}`
 }
 
-const slug = (text: string): string =>
+export const slug = (text: string): string =>
   text
     .normalize('NFD')
     .replace(/[̀-ͯ]/g, '')
@@ -138,11 +152,42 @@ export const toggleStep = (draft: WorkflowDraft, id: string): WorkflowDraft => (
 
 export const moveStep = (draft: WorkflowDraft, id: string, by: -1 | 1): WorkflowDraft => {
   const i = draft.steps.findIndex(s => s.step.id === id)
-  const j = i + by
-  if (i === -1 || j < 0 || j >= draft.steps.length) return draft
+  if (i === -1 || !draft.steps[i]!.on) return draft
+  // the step swaps with the nearest switched-on one; switched-off steps stay where they are
+  let j = i + by
+  while (j >= 0 && j < draft.steps.length && !draft.steps[j]!.on) j += by
+  if (j < 0 || j >= draft.steps.length) return draft
   const steps = [...draft.steps]
   ;[steps[i], steps[j]] = [steps[j]!, steps[i]!]
   return { ...draft, steps, error: undefined }
+}
+
+const FIELD_NAMES: Record<string, string> = { agent: 'agente', model: 'modelo', effort: 'esforço', merge: 'merge', deploy: 'deploy' }
+
+/** What the owner changed since the draft was opened, one short phrase each, for the bar at the top. */
+export const changesOf = (draft: WorkflowDraft): string[] => {
+  const init = draft.initial
+  if (init === undefined) return []
+  const out: string[] = []
+  if (draft.title !== init.title) out.push('título')
+  if (draft.description !== init.description) out.push('descrição')
+  const before = new Map(init.steps.map(s => [s.id, s]))
+  const label = (s: WorkflowDraftStep) => String(s.step.title ?? s.step.id)
+  for (const s of draft.steps) {
+    const was = before.get(String(s.step.id))
+    if (was === undefined) {
+      if (s.on) out.push(`passo "${label(s)}" acrescentado`)
+    } else if (was.on !== s.on) {
+      out.push(`passo "${label(s)}" ${s.on ? 'religado' : 'desligado'}`)
+    } else {
+      const off = (['agent', 'model', 'effort', 'merge', 'deploy'] as const).filter(k => stable(s.step[k]) !== stable(was.step[k]))
+      if (off.length > 0) out.push(`passo "${label(s)}": ${off.map(k => FIELD_NAMES[k]).join(', ')}`)
+    }
+  }
+  const common = (ids: string[]) => ids.filter(id => before.has(id) && draft.steps.some(s => s.step.id === id))
+  const now = common(draft.steps.map(s => String(s.step.id)))
+  if (common(init.steps.map(s => s.id)).join() !== now.join()) out.push('ordem dos passos')
+  return out
 }
 
 export type StepField =
