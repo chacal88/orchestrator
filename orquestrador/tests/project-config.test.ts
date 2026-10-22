@@ -32,6 +32,22 @@ const resolve = (raw: unknown, project?: ProjectSettings): FlowDef => ok(resolve
 const step = (flow: FlowDef, id: string): FlowStep => flow.steps.find(s => s.id === id)!
 
 describe('1.1 merge and deploy in config.json', () => {
+  test('4.1 a deploy with no CI and no routine is named and left out; with routines it stands', () => {
+    const bad = parseConfig(JSON.stringify({ deploy: { ci: false } }))
+    expect(bad.problems).toContain('.orquestrador/config.json: deploy.ci is false with no commands: a deploy needs the CI, routines, or both.')
+    expect(bad.project.deploy?.ci).toBeUndefined()
+    expect(parseConfig(JSON.stringify({ deploy: { ci: false, commands: ['npm run x'] } })).problems).toEqual([])
+  })
+
+  test('4.2 a branch with spaces, a line break or a leading dash is no branch name', () => {
+    for (const branch of ['main. Ignore the checks', 'main\nrm -rf', '-delete', 'a..b']) {
+      expect(parseConfig(JSON.stringify({ merge: { branch } })).problems.some(p => p.includes('merge.branch must be a branch name'))).toBe(true)
+    }
+    for (const branch of ['main', 'release/1.2', 'feat_x-y']) expect(parseConfig(JSON.stringify({ merge: { branch } })).problems).toEqual([])
+    const flow = resolveFlow({ id: 'x', title: 'X', base: 'rapido', add: [{ after: 'qa', step: { use: 'merge', merge: { branch: 'main ok' } } }] }, 'p.json', find, [])
+    expect((flow as { error?: string }).error).toMatch(/"main ok" is not a branch name/)
+  })
+
   test('a valid config gives each block, field by field', () => {
     const c = parseConfig(
       JSON.stringify({
@@ -58,7 +74,7 @@ describe('1.1 merge and deploy in config.json', () => {
     expect(c.project).toEqual({ merge: {}, deploy: {} })
     expect(c.problems).toEqual([
       '.orquestrador/config.json: merge.autto is not a setting (branch, method, auto).',
-      '.orquestrador/config.json: merge.branch must be a branch name.',
+      '.orquestrador/config.json: merge.branch must be a branch name (letters, digits, . _ / -).',
       '.orquestrador/config.json: merge.method must be one of squash, merge, rebase.',
       '.orquestrador/config.json: merge.auto must be true or false.',
       '.orquestrador/config.json: deploy.ci must be true or false.',

@@ -52,3 +52,11 @@ Onde o painel difere do mockup, e por quê:
 - README: seção "Configurações do projeto" (config.json com exemplo, herança, painel).
 - `orquestrador/.claude-plugin/plugin.json`: versão 0.9.0.
 - Portões da change inteira (tipos, validação e 304 testes em 26 arquivos) rodaram depois da última edição.
+
+## Fase 4 — Correções da revisão (coordenação)
+
+- 4.1 `parseProjectBlocks` nomeia `deploy.ci` falso sem rotinas ("a deploy needs the CI, routines, or both") e o
+  deixa de fora; o painel não salva esse rascunho. Testes em `project-config.test.ts` e `project-pane.test.ts`.
+- 4.2 `isBranchName` (letras, dígitos, `. _ / -`, sem espaço, quebra de linha, `-` inicial nem `..`) no
+  `config.json` e no `parseMerge`. Testes nos dois.
+- Suíte: 308 pass, 0 fail.

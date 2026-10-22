@@ -15,3 +15,8 @@
 ## 3. Documentação e versão
 
 - [x] 3.1 README: configurações do projeto; versão 0.9.0; evidence.md — cx: simple
+
+## 4. Correções da revisão
+
+- [x] 4.1 `deploy` do projeto sem CI e sem rotinas é um problema nomeado no `config.json` (o painel não salva e o cartão mostra o erro); testes em `project-config.test.ts` e `project-pane.test.ts` — cx: simple
+- [x] 4.2 `merge.branch` validada como nome de branch (sem espaço nem quebra de linha) no `config.json` e no `parseMerge`; testes — cx: simple

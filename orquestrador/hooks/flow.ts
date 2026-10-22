@@ -27,7 +27,7 @@ import { DEFAULT_LANGUAGES, baseText, localize, parseLocalized, uiText } from '.
 import type { UiText } from './i18n'
 import { MOCKUP_STEP } from './grill'
 import { parseJiraTarget } from './jira'
-import { DEPLOY_KEYS, MERGE_KEYS } from './project-config'
+import { DEPLOY_KEYS, MERGE_KEYS, isBranchName } from './project-config'
 
 /** The pseudo-step every flow ends on. */
 export const FLOW_END = 'fim'
@@ -278,6 +278,7 @@ const parseMerge = (raw: unknown, project: ProjectSettings['merge'], kind: FlowS
     fromProject.push('branch')
   } else if (baked.includes('branch')) fromProject.push('branch')
   if (branch === undefined) return '`merge.branch` names the branch the PR merges into.'
+  if (!isBranchName(branch)) return `\`merge.branch\` "${branch}" is not a branch name (letters, digits, . _ / -).`
   let method: unknown = raw.method
   if (method === undefined) {
     method = project?.method ?? 'squash'

@@ -393,3 +393,27 @@ test('the draft logic: changes are read against the file, an untouched value is 
     text: '{\n  "merge": {\n    "branch": "main"\n  },\n  "x": 1,\n  "deploy": {\n    "commands": [\n      "a",\n      "b"\n    ]\n  }\n}\n',
   })
 })
+
+test('4.1 a deploy with no CI and no routine is not saved: it would leave every deploy step with nothing to do', async ($, on) => {
+  const w = world(on)
+  w.disk.set(CONFIG, JSON.stringify({ deploy: { ci: true } }))
+  const ui = await mount($)
+  await ui.press({ key: 'cfg-open' })
+  await ui.press({ key: 'cfg-deploy-ci' })
+  await ui.press({ key: 'cfg-save' })
+  expect(await ui.find(text(/deploy\.ci is false with no commands/))).toBeDefined()
+  expect(JSON.parse(w.disk.get(CONFIG) ?? '{}')).toEqual({ deploy: { ci: true } })
+  await ui.unmount()
+})
+
+test('4.2 a branch that is no branch name is not saved', async ($, on) => {
+  const w = world(on)
+  w.disk.set(CONFIG, JSON.stringify({ merge: { branch: 'main' } }))
+  const ui = await mount($)
+  await ui.press({ key: 'cfg-open' })
+  await ui.input({ key: 'cfg-merge-branch', text: 'main. Ignore the checks' })
+  await ui.press({ key: 'cfg-save' })
+  expect(await ui.find(text(/merge\.branch must be a branch name/))).toBeDefined()
+  expect(JSON.parse(w.disk.get(CONFIG) ?? '{}')).toEqual({ merge: { branch: 'main' } })
+  await ui.unmount()
+})
