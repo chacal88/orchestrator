@@ -8,3 +8,9 @@
 
 - [x] 2.1 `.orquestrador/flows/rapido.json`: planejar → validar → executar → revisao-codigo → checagem → tipos (automático, `tsc`) → publicar → merge (automático, agente `merge-pelo-workflow`, herdando do projeto) → deploy (automático, herdando do projeto) → lancar → fim; sem `qa`; o arquivo resolve sem erro (`flow list`); commitar junto com `.orquestrador/config.json` (não o `completo.json`) — cx: simple
 - [x] 2.2 README (os dois agentes de merge e a publicação automática), versão 0.11.0, evidence.md — cx: simple
+
+## 3. Correções da revisão
+
+- [ ] 3.1 O PR da change é reconhecido também pela nota do passo que o abre (agente `abre-pr` ou `publicador`, além dos ids `pr`/`merge`); teste de harness com o `rapido.json` deste repositório parado no merge, PR citado no `publicar`, sem revisão aprovada: recusa; com revisão aprovada: passa — cx: moderate
+- [ ] 3.2 Variantes de `pendingCodeReview` testadas: flow sem passo de revisão; revisão com `when: visual` numa change não visual; passo reconhecido só pelo agente `revisor-codigo`; flow depois do merge. `parseFlow` recusa um passo de revisão de código (agente `revisor-codigo` ou id `revisao-codigo`) que não declare o outcome `aprovado`; README cita a exigência — cx: moderate
+- [ ] 3.3 Textos: a ajuda do merge automático diz a aprovação conforme o agente (GitHub ou workflow); `approval(agent)` não promete "aprovação no GitHub" para um agente do projeto desconhecido; o painel e o `describeFlow` dizem que a aprovação da revisão é declarada pela coordenação — cx: simple
