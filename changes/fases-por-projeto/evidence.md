@@ -206,3 +206,28 @@ $ PATH=".../2.1.308/a93ded4b1b47/claude.app/Contents/MacOS:$PATH" \claude plugin
  0 fail
 Ran 220 tests across 21 files.
 ```
+
+## Fase 7 — Deploy e painel (7.1–7.6)
+
+- 7.1 `watchRoutines` guarda à parte, em `detect.routines`, as rotinas do deploy que juntou aos comandos de `producao`. `resolveFlow` devolve o `detect` de cada passo copiado da base ao que é dele (`ownDetect`) antes de `remove`/`add`/`override`, e o `parseFlow` final junta só as rotinas do deploy que ficou. `remove: ['deploy']` tira as rotinas; o override de `deploy.commands` deixa só as novas; os comandos próprios de `producao` (e um override deles) continuam.
+- 7.2 Um deploy do dono sem CI (`ci: false`, `auto: false`) mostra o botão "Deploy concluído" (o primeiro outcome do passo), em `flowView().ownerChoices`, também no meio das rotinas. `applyOutcome` aceita esse outcome só do dono (`ownerConfirms`), e o `describeFlow` diz que o botão existe. Um deploy que espera o CI segue só com "Deploy do CI concluído".
+- 7.3 `observeDeploy`: `gh run watch|view … --exit-status`, passando ou falhando, só é lido quando o passo espera o CI e ele não foi confirmado. Nos outros casos devolve `undefined` e o comando é ignorado.
+- 7.4 O rascunho guarda `source`, o arquivo do projeto de onde foi aberto. "Novo workflow" e "Salvar" de um rascunho sem `source` recusam quando algum arquivo de `.orquestrador/flows/` já tem o id (válido ou que não resolve) ou o nome `<id>.json` (até JSON quebrado). A recusa nomeia o arquivo, e só o arquivo de origem pode ser regravado.
+- 7.5 `brokenDependents`: antes de gravar, resolve os workflows do projeto com o arquivo novo no lugar. Os que resolviam e deixariam de resolver (filhos e netos do salvo) fazem o "Salvar" recusar, listando cada um com o arquivo e o erro.
+- 7.6 A guarda final do `draftFile` também compara (com chaves em ordem) agente, modelo, esforço, merge, deploy e details de cada passo do rascunho com o resolvido. Se diferir, recusa nomeando o passo e o campo. Os comandos próprios do `detect` de `producao`, quando diferem da base, vão para o `override` e o painel avisa ("O passo producao tem detect próprio (…), gravado no override…"); antes eles sumiam. Um workflow inteiro grava só os comandos próprios de `producao`, nunca as rotinas juntadas.
+
+Testes novos:
+- `tests/merge-deploy.test.ts`: 7.1 (×2), 7.2 e 7.3. O teste da fase 2 "only routines, owner's" deixou de exigir `ownerChoices` vazio.
+- `tests/workflows-pane.test.ts`: 7.4 (×2), 7.5 e 7.6 (×2).
+
+Portões (depois da última edição):
+
+```
+$ npx -y -p typescript@5.6.3 tsc -p <scratchpad>/tc/tsconfig.json
+exit 0
+
+$ PATH=".../2.1.308/a93ded4b1b47/claude.app/Contents/MacOS:$PATH" \claude plugin test orquestrador
+ 229 pass
+ 0 fail
+Ran 229 tests across 21 files.
+```

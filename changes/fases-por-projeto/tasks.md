@@ -41,9 +41,9 @@
 
 ## 7. Correções da revisão — deploy e painel
 
-- [ ] 7.1 Workflow derivado recalcula o detect de `producao`: sem as rotinas de um deploy removido, e só as rotinas atuais quando `deploy.commands` muda; testes com `remove: ['deploy']` e com override de `commands` — cx: moderate
-- [ ] 7.2 Deploy do dono só com rotinas tem saída no painel (botão do dono "Deploy concluído"); teste de que o dono sai desse estado — cx: moderate
-- [ ] 7.3 Um `gh run watch|view --exit-status` que falha só derruba o deploy quando o passo espera o CI e ele ainda não foi confirmado; testes com `ci: false` e depois do CI confirmado — cx: moderate
-- [ ] 7.4 Painel ⚙️: criar ou salvar não sobrescreve um arquivo de `.orquestrador/flows/` com o mesmo id ou nome, válido ou quebrado; a recusa nomeia o arquivo; teste — cx: moderate
-- [ ] 7.5 Salvar resolve também os workflows do projeto que derivam do salvo; se algum deixar de resolver, recusa e lista quais; teste — cx: moderate
-- [ ] 7.6 Guarda final do `draftFile` compara também os campos editáveis (agente, modelo, esforço, merge, deploy, details); edição própria do detect de `producao` avisa em vez de sumir — cx: simple
+- [x] 7.1 Workflow derivado recalcula o detect de `producao`: sem as rotinas de um deploy removido, e só as rotinas atuais quando `deploy.commands` muda; testes com `remove: ['deploy']` e com override de `commands` — cx: moderate
+- [x] 7.2 Deploy do dono só com rotinas tem saída no painel (botão do dono "Deploy concluído"); teste de que o dono sai desse estado — cx: moderate
+- [x] 7.3 Um `gh run watch|view --exit-status` que falha só derruba o deploy quando o passo espera o CI e ele ainda não foi confirmado; testes com `ci: false` e depois do CI confirmado — cx: moderate
+- [x] 7.4 Painel ⚙️: criar ou salvar não sobrescreve um arquivo de `.orquestrador/flows/` com o mesmo id ou nome, válido ou quebrado; a recusa nomeia o arquivo; teste — cx: moderate
+- [x] 7.5 Salvar resolve também os workflows do projeto que derivam do salvo; se algum deixar de resolver, recusa e lista quais; teste — cx: moderate
+- [x] 7.6 Guarda final do `draftFile` compara também os campos editáveis (agente, modelo, esforço, merge, deploy, details); edição própria do detect de `producao` avisa em vez de sumir — cx: simple
