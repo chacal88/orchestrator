@@ -30,6 +30,7 @@ import type {
 import {
   FINAL_SCOPE,
   GATE_IDS,
+  ARCHIVE_COMMAND,
   GH_MERGE,
   MAX_LIVE_SESSIONS,
   PROTECTED_DIR,
@@ -37,12 +38,18 @@ import {
   gateViews,
   isOpenGate,
   liveSessions,
+  isChangeBranch,
+  mergeSelector,
+  mergeTarget,
+  mergeWindow,
   classifyBash,
+  executedText,
   keepAttempt,
   mergeRecords,
   observeTool,
   phaseRefusal,
 } from './gates'
+import type { MergeTarget } from './gates'
 import {
   DEFAULT_FLOW_IDS,
   applyOutcome,
@@ -88,6 +95,8 @@ import {
   activityFor,
   activityKey,
   applyPlanUpdate,
+  changePrs,
+  finishedSessionIds,
   completePlan,
   parseRun,
   parseSessionRows,
@@ -698,9 +707,8 @@ const phaseRefusals = (
       return refusal === undefined ? [] : [refusal]
     })
 
-const finalOpenGates = async ($: EngineInterface, run: OrchestrationRun): Promise<GateView[]> => {
+const finalOpenGates = async ($: EngineInterface, run: OrchestrationRun, family: Family | undefined): Promise<GateView[]> => {
   if (run.finalGates === undefined) return []
-  const family = await loadFamily($)
   const check = familyCheck([await ownCheck($), ...(family?.children ?? []).map(c => c.gates)])
   return gateViews(run.finalGates, FINAL_SCOPE, check, await loadSkips($, run.change)).filter(isOpenGate)
 }
@@ -793,16 +801,34 @@ const touchesGateFiles = (tool: string, input: Record<string, unknown>): boolean
   )
 }
 
-/** Rigid: a fourth live phase session slows the owner's machine, so there is no way around it. */
+/** Every change this checkout coordinates: its published plan and its flow, either may be missing. */
+const ownChanges = async (
+  $: EngineInterface,
+  root: string,
+): Promise<{ run: OrchestrationRun | undefined; flow: FlowState | undefined }[]> => {
+  const flows = (await allFlowStates($)).filter(s => ownsFlow(s, root))
+  const runs = await Promise.all(flows.map(async s => readJson<OrchestrationRun>($, `${await baseDir($)}/runs/${runKey(s.change)}.json`)))
+  const changes = flows.map((flow, i) => ({ run: runs[i], flow }))
+  const run = await loadRun($, root)
+  return run === undefined || flows.some(f => f.change === run.change) ? changes : [...changes, { run, flow: undefined }]
+}
+
+/**
+ * Rigid: a fourth live phase session slows the owner's machine, so there is no way around it. Only
+ * sessions with live work count; the refusal says why each one does.
+ */
 const refuseStart = async ($: EngineInterface): Promise<string | undefined> => {
-  const [self] = parseSessionRows((await callTool($, { tool: GET_SESSION, session_id: 'self' })).text)
-  const family = parseSessionRows((await callTool($, { tool: LIST_SESSIONS, linked: true, limit: 50 })).text)
+  const { value: ownPlan = [] } = await $.state.get(PLAN)
+  const { self, children } = await loadSessions($, await baseDir($), ownPlan)
   if (self === undefined) return 'the orchestrator could not read this session, so it cannot count the live phase sessions.'
-  const live = liveSessions(family, self.sessionId, self.cwd)
+  const finished = finishedSessionIds(await ownChanges($, await $.session.root()), children)
+  const live = liveSessions(children, self.sessionId, self.cwd, finished)
   if (live.length < MAX_LIVE_SESSIONS) return undefined
   return (
-    `${live.length} phase sessions are alive (${live.map(r => r.name ?? r.title).join(', ')}); the ceiling is ` +
-    `${MAX_LIVE_SESSIONS}. Archive a finished one (its gates must have passed) before starting another.`
+    `${live.length} phase sessions are alive: ${live.map(l => `${l.session.name ?? l.session.title} (${l.why})`).join(', ')}; ` +
+    `the ceiling is ${MAX_LIVE_SESSIONS}. A session counts only while it runs, waits on the owner or has open tasks; ` +
+    'one whose phase or flow finished or whose PR merged or closed does not. Wait for one to finish, or archive one ' +
+    '(its gates must have passed), before starting another.'
   )
 }
 
@@ -822,21 +848,68 @@ const refuseArchive = async ($: EngineInterface, sessionId: unknown): Promise<st
   return refusals.join(' | ')
 }
 
-const refuseMerge = async ($: EngineInterface): Promise<string | undefined> => {
-  const run = await loadRun($, await $.session.root())
-  if (run === undefined) return undefined
-  const open = await finalOpenGates($, run)
+/** The head branch of the PR a merge names: the checkout's own branch when it names none. */
+const mergeHead = async ($: EngineInterface, selector: string | undefined, target: MergeTarget, root: string): Promise<string | undefined> => {
+  if (target.branch !== undefined) return target.branch
+  const argv =
+    selector === undefined
+      ? ['git', '-C', root, 'branch', '--show-current']
+      : ['gh', 'pr', 'view', selector, '--json', 'headRefName', '--jq', '.headRefName']
+  const ran = await $.process.run(argv, { cwd: root, timeoutMs: 15_000 }).catch(() => undefined)
+  const branch = ran?.exitCode === 0 ? ran.stdout.trim() : ''
+  return branch === '' ? undefined : branch
+}
+
+/**
+ * Whether a merge is of the change's own PR: its number is bound to a phase session, named by
+ * the plan or cited by the flow's PR step, or its head branch is a phase session's or carries
+ * the change id. A PR whose head branch cannot be read is taken as the change's: the gate fails
+ * closed.
+ */
+const mergesChangePr = async (
+  $: EngineInterface,
+  command: string,
+  run: OrchestrationRun,
+  flow: FlowState | undefined,
+  family: Family | undefined,
+  root: string,
+): Promise<boolean> => {
+  const selector = mergeSelector(command)
+  const target = mergeTarget(selector)
+  const { numbers, branches } = changePrs(run, flow, family?.children ?? [])
+  if (target.number !== undefined && numbers.has(target.number)) return true
+  const head = await mergeHead($, selector, target, root)
+  return head === undefined || isChangeBranch(head, run.change, branches)
+}
+
+/**
+ * The final gates hold back only the change's own PR, and only while its flow runs up to the
+ * step before the archive; a finished or aborted flow gates nothing.
+ */
+const refuseMerge = async ($: EngineInterface, command: string): Promise<string | undefined> => {
+  const root = await $.session.root()
+  const run = await loadRun($, root)
+  if (run === undefined || run.finalGates === undefined) return undefined
+  const flow = await loadFlowState($, run.change)
+  if (flow !== undefined && !mergeWindow(flow)) return undefined
+  const family = await loadFamily($)
+  if (!(await mergesChangePr($, command, run, flow, family, root))) return undefined
+  const open = await finalOpenGates($, run, family)
   if (open.length === 0) return undefined
   await logGateEvent($, run.change, { kind: 'refused', action: 'merge', gates: open.map(v => v.gate) })
   return (
     `final gates of ${run.change} not passed: ${open.map(v => `${v.gate} (${v.state})`).join(', ')}. ` +
-    'Run them once on the integrated code; only the owner can skip one, from the panel.'
+    'Run them once on the integrated code; only the owner can skip one, from the panel. ' +
+    `(Only a merge of ${run.change}'s own PR waits for them, until its flow reaches the archive.)`
   )
 }
 
-/** Edits to prose or outside the checkout (evidence.md, notes, scratch files) do not unprove a gate. */
+/**
+ * Edits to prose or outside the checkout (evidence.md, notes, scratch files) do not unprove a gate,
+ * nor do the change folders' own files (`.openspec.yaml` beside the proposal).
+ */
 const editsCode = (path: unknown, root: string): boolean =>
-  typeof path === 'string' && path.startsWith(`${root}/`) && !path.endsWith('.md')
+  typeof path === 'string' && path.startsWith(`${root}/`) && !path.endsWith('.md') && !path.includes('/openspec/changes/')
 
 type BashOutput = { backgroundTaskId?: string; interrupted?: boolean; bashEditDiff?: { files?: { filePath?: string }[] } }
 
@@ -857,7 +930,9 @@ const observeGates = async (
   if (tool === 'Bash') {
     const out = (failed ? undefined : ran.result) as BashOutput | undefined
     if (out?.backgroundTaskId !== undefined || out?.interrupted === true || input.run_in_background === true) return
-    edited = (out?.bashEditDiff?.files ?? []).some(f => editsCode(f.filePath, root))
+    // `openspec archive` only moves the change folder and merges its spec deltas: no code changed
+    const archive = ARCHIVE_COMMAND.test(executedText(String(input.command ?? '')))
+    edited = !archive && (out?.bashEditDiff?.files ?? []).some(f => editsCode(f.filePath, root))
     ;({ records: observed, attempt } = classifyBash(String(input.command ?? ''), failed, now))
   } else if (EDIT_TOOLS.has(tool)) {
     edited = !failed && editsCode(input.file_path ?? input.notebook_path, root)
@@ -1528,7 +1603,7 @@ export const register: Register = on => {
         : tool === ARCHIVE_SESSION
           ? await refuseArchive($, input.session_id)
           : tool === 'Bash' && typeof input.command === 'string' && GH_MERGE.test(input.command)
-            ? await refuseMerge($)
+            ? await refuseMerge($, input.command)
             : undefined
     if (refusal !== undefined) return { deny: `Orchestrator gate: ${refusal}` }
     if (tool === 'AskUserQuestion') {
