@@ -280,3 +280,15 @@ test('the flow files are the mod\'s alone, and a project flow overrides a defaul
   expect(String(done.result)).toMatch(/finished/)
   expect(saved(disk).status).toBe('done')
 })
+
+test('a derived project flow is resolved on load, and one that does not resolve is named', async ($, on) => {
+  const disk = world(on)
+  disk.set(
+    '/w/.orquestrador/flows/trunk.json',
+    JSON.stringify({ id: 'trunk', title: 'Trunk', base: 'rapido', remove: ['qa'], add: [{ after: 'pr', step: 'revisao-pr' }] }),
+  )
+  disk.set('/w/.orquestrador/flows/ruim.json', JSON.stringify({ id: 'ruim', title: 'Ruim', base: 'nenhum' }))
+  const listed = String((await flow($, { action: 'list' })).result)
+  expect(listed).toMatch(/trunk — Trunk: planejar → validar → executar → revisao-codigo → checagem → pr → revisao-pr → producao → arquivar/)
+  expect(listed).toMatch(/ignored: \/w\/\.orquestrador\/flows\/ruim\.json: base "nenhum" is no flow of the mod or of the project/)
+})
