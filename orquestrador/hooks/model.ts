@@ -13,6 +13,7 @@ import type {
   SessionRow,
 } from '../types'
 import { FINAL_SCOPE, GATES, citedPrs, familyCheck, gateViews, isOpenGate, parseGates } from './gates'
+import { uiText } from './i18n'
 import { normalizeKey } from './jira'
 
 export const PHASE_STATUSES: readonly PhaseStatus[] = [
@@ -356,6 +357,7 @@ export const findCard = (cards: readonly SessionCard[], ref: string | undefined)
  * sessions stopped on a permission or a question, then open PRs to look at.
  */
 export const attentionItems = (view: PanelView): Attention[] => {
+  const t = uiText(view.languages?.ui)
   const cards = view.self === undefined ? view.children : [view.self, ...view.children]
   const decisions: Attention[] = (view.run?.ownerQuestions ?? []).flatMap((q, i): Attention[] => {
     const card = findCard(cards, q.session)
@@ -385,7 +387,7 @@ export const attentionItems = (view: PanelView): Attention[] => {
             kind: card.waiting.kind,
             title:
               card.waiting.kind === 'permission'
-                ? `Permissão pendente: ${card.waiting.text}`
+                ? t.attention.permission(card.waiting.text)
                 : card.waiting.text,
             detail: card.title,
             recommendation: undefined,
@@ -401,7 +403,7 @@ export const attentionItems = (view: PanelView): Attention[] => {
           {
             id: `pr:${card.prNumber}`,
             kind: 'pr',
-            title: `PR #${card.prNumber} aberto`,
+            title: t.attention.prOpen(card.prNumber),
             detail: card.title,
             recommendation: undefined,
             card,
@@ -420,12 +422,12 @@ export const attentionItems = (view: PanelView): Attention[] => {
             kind: 'flow',
             title:
               flow.status === 'escalated'
-                ? `${step.title}: ${step.attempts} tentativas sem sucesso`
+                ? t.attention.escalated(step.title, step.attempts)
                 : step.title,
             detail:
               flow.status === 'escalated'
-                ? `Flow ${flow.flowTitle} de ${flow.change}: tentar de novo ou encerrar?`
-                : step.description ?? `Flow ${flow.flowTitle} de ${flow.change}`,
+                ? t.attention.escalatedDetail(flow.flowTitle, flow.change)
+                : step.description ?? t.attention.flowOf(flow.flowTitle, flow.change),
             recommendation: undefined,
             card: undefined,
             prUrl: undefined,
@@ -434,27 +436,27 @@ export const attentionItems = (view: PanelView): Attention[] => {
         ]
   const change = view.flow?.change ?? view.run?.change ?? ''
   const jiraItems: Attention[] = (view.jiraMoves ?? []).map(move => {
-    const now = move.from === undefined ? '' : ` Hoje: "${move.from}".`
+    const now = move.from === undefined ? '' : t.jira.today(move.from)
     const base = { id: `jira:${move.key}`, kind: 'jira' as const, recommendation: undefined, card: undefined, prUrl: undefined }
     if (move.state === 'ready') {
       return {
         ...base,
-        title: `A issue ${move.key} pode ir para ${move.toLabel}`,
-        detail: `${move.title ?? ''}${now} O Jira só muda quando você apertar o botão.`.trim(),
+        title: t.jira.canMove(move.key, move.toLabel),
+        detail: `${move.title ?? ''}${now} ${t.jira.onlyOnPress}`.trim(),
         jira: { change, key: move.key, transitionId: move.transitionId ?? '', toLabel: move.toLabel },
       }
     }
     if (move.state === 'no-transition') {
-      const options = move.available.length === 0 ? 'nenhuma transição disponível' : move.available.join(', ')
+      const options = move.available.length === 0 ? t.jira.noneAvailable : move.available.join(', ')
       return {
         ...base,
-        title: `A issue ${move.key} deveria ir para ${move.toLabel}, mas o Jira não oferece essa transição`,
-        detail: `${now.trim()} Disponíveis: ${options}. Ajuste o campo jira do passo no flow, ou mova na mão.`.trim(),
+        title: t.jira.noTransition(move.key, move.toLabel),
+        detail: `${now.trim()} ${t.jira.available(options)}`.trim(),
       }
     }
     return {
       ...base,
-      title: `A issue ${move.key} deveria ir para ${move.toLabel}, mas não consigo mexer no Jira`,
+      title: t.jira.noConnector(move.key, move.toLabel),
       detail: move.note,
     }
   })

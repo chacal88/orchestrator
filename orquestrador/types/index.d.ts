@@ -58,14 +58,29 @@ export type GateView = {
 
 export type FlowStepKind = 'session' | 'automatic' | 'owner' | 'loop'
 
+/** The languages the mod speaks. */
+export type Lang = 'pt-BR' | 'en'
+
+/** A project's two languages: `ui` for boxes and titles, `content` for descriptions and the change's own texts. */
+export type Languages = { ui: Lang; content: Lang }
+
+/** A flow field as a file writes it: plain text, or one text per language. */
+export type Localized = string | Partial<Record<Lang, string>>
+
+/** The same text per language, where the flow file gave more than one. */
+export type Translations = Partial<Record<Lang, string>>
+
 /** Where one outcome of a step leads; `label` is what the owner reads (pt-BR). */
-export type FlowOutcome = { label: string; next: string }
+export type FlowOutcome = { label: string; next: string; labels?: Translations }
 
 export type FlowStep = {
   id: string
   /** Plain words for the owner (pt-BR). */
   title: string
   description: string | undefined
+  /** The title and description per language; absent in a flow saved before 0.8.0, which keeps its plain text. */
+  titles?: Translations
+  descriptions?: Translations
   kind: FlowStepKind
   outcomes: Record<string, FlowOutcome>
   maxAttempts: number
@@ -85,6 +100,8 @@ export type FlowStep = {
   jira?: JiraTarget | false
   /** What the step reads, what it hands on and what it holds back (pt-BR), for the owner and the session. */
   details?: FlowStepDetails
+  /** The details per language, where the flow file gave more than one; `details` holds the pt-BR (or only) text. */
+  detailsByLang?: Partial<Record<Lang, FlowStepDetails>>
   /** session or loop (or a merge/deploy step, which a session carries out): the specialist agent that runs it. */
   agent?: string
   /** The model suggested for the session that runs the step. */
@@ -117,7 +134,15 @@ export type FlowDeployProgress = { ci: boolean; commands: string[] }
 export type FlowDetect = { commands: string[]; outcome: string; routines?: string[] }
 
 /** base: the flow a derived project flow was resolved from. */
-export type FlowDef = { id: string; title: string; description: string; steps: FlowStep[]; base?: string }
+export type FlowDef = {
+  id: string
+  title: string
+  description: string
+  titles?: Translations
+  descriptions?: Translations
+  steps: FlowStep[]
+  base?: string
+}
 
 /** A step added to a derived flow: a library id, `{ use: <library id>, ...changes }`, or a whole step. */
 export type FlowAdd = { after: string; step: string | Record<string, unknown> }
@@ -444,6 +469,8 @@ export type PanelView = {
   prep?: PrepView
   /** Per step id, from the flow's log: the elapsed time the Gates list shows. */
   flowTimes?: Record<string, StepTime>
+  /** The project's languages from .orquestrador/config.json; absent, pt-BR for both. */
+  languages?: Languages
 }
 
 /** One step of a workflow the owner edits in the Workflows panel. */

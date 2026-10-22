@@ -15,9 +15,15 @@ import type {
   FlowStepKind,
   FlowStepView,
   FlowView,
+  Lang,
+  Languages,
+  Localized,
+  Translations,
 } from '../types'
 import { libraryStep, NEXT_STEP, overlay } from './flows/library'
 import { executedText, isAgentName, masksExitCode } from './gates'
+import { DEFAULT_LANGUAGES, baseText, localize, parseLocalized, uiText } from './i18n'
+import type { UiText } from './i18n'
 import { MOCKUP_STEP } from './grill'
 import { parseJiraTarget } from './jira'
 
@@ -27,9 +33,9 @@ export const DEFAULT_MAX_ATTEMPTS = 3
 export const DEFAULT_FLOW_IDS = ['completo', 'rapido'] as const
 
 /** An escalation's two answers, pressed only by the owner. */
-export const ESCALATION_CHOICES: readonly FlowChoice[] = [
-  { outcome: 'tentar-de-novo', label: 'Tentar de novo' },
-  { outcome: 'encerrar', label: 'Encerrar o flow' },
+export const escalationChoices = (t: UiText = uiText(undefined)): FlowChoice[] => [
+  { outcome: 'tentar-de-novo', label: t.escalation.retry },
+  { outcome: 'encerrar', label: t.escalation.end },
 ]
 
 /** The outcome a loop step ends on, given by the mod once every phase closed. */
@@ -49,12 +55,18 @@ const AUTOMATIC_OUTCOMES = ['passou', 'falhou']
 const isRecord = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v)
 const text = (v: unknown): string | undefined => (typeof v === 'string' && v.trim() !== '' ? v.trim() : undefined)
 
+/** A field's per-language texts, kept only when the file gave them by language. */
+const byLang = (v: Localized | undefined): Translations | undefined => (v === undefined || typeof v === 'string' ? undefined : v)
+const perLang = (v: Localized): Translations => byLang(v) ?? {}
+
 /** A flow file, checked whole: every next step exists, every kind is known, every automatic step names its command. */
 export const parseFlow = (raw: unknown, source: string): FlowDef | { error: string } => {
   const fail = (why: string) => ({ error: `${source}: ${why}` })
   if (!isRecord(raw)) return fail('a flow is a JSON object.')
   const id = text(raw.id)
-  const title = text(raw.title)
+  const flowTitle = parseLocalized(raw.title)
+  const flowDescription = parseLocalized(raw.description)
+  const title = baseText(flowTitle)
   if (id === undefined || title === undefined) return fail('`id` and `title` are required.')
   if (!Array.isArray(raw.steps) || raw.steps.length === 0) return fail('`steps` must be a non-empty list.')
   const steps: FlowStep[] = []
@@ -62,7 +74,9 @@ export const parseFlow = (raw: unknown, source: string): FlowDef | { error: stri
     const where = `step ${i + 1}`
     if (!isRecord(s)) return fail(`${where} is not an object.`)
     const stepId = text(s.id)
-    const stepTitle = text(s.title)
+    const titles = parseLocalized(s.title)
+    const descriptions = parseLocalized(s.description)
+    const stepTitle = baseText(titles)
     if (stepId === undefined || stepTitle === undefined) return fail(`${where}: \`id\` and \`title\` are required.`)
     if (stepId === FLOW_END) return fail(`${where}: "${FLOW_END}" is reserved for the end of the flow.`)
     if (steps.some(p => p.id === stepId)) return fail(`step id "${stepId}" appears twice.`)
@@ -73,7 +87,9 @@ export const parseFlow = (raw: unknown, source: string): FlowDef | { error: stri
     for (const [name, o] of Object.entries(s.outcomes)) {
       const next = isRecord(o) ? text(o.next) : text(o)
       if (next === undefined) return fail(`step "${stepId}", outcome "${name}": \`next\` is required.`)
-      outcomes[name] = { label: (isRecord(o) ? text(o.label) : undefined) ?? name, next }
+      const label = isRecord(o) ? parseLocalized(o.label) : undefined
+      const labels = byLang(label)
+      outcomes[name] = { label: baseText(label) ?? name, next, ...(labels === undefined ? {} : { labels }) }
     }
     const maxAttempts = s.maxAttempts === undefined ? DEFAULT_MAX_ATTEMPTS : s.maxAttempts
     if (typeof maxAttempts !== 'number' || !Number.isInteger(maxAttempts) || maxAttempts < 1) {
@@ -102,7 +118,9 @@ export const parseFlow = (raw: unknown, source: string): FlowDef | { error: stri
     steps.push({
       id: stepId,
       title: stepTitle,
-      description: text(s.description),
+      description: baseText(descriptions),
+      ...(byLang(titles) === undefined ? {} : { titles: byLang(titles) }),
+      ...(byLang(descriptions) === undefined ? {} : { descriptions: byLang(descriptions) }),
       kind,
       outcomes,
       maxAttempts,
@@ -125,7 +143,14 @@ export const parseFlow = (raw: unknown, source: string): FlowDef | { error: stri
       }
     }
   }
-  return { id, title, description: text(raw.description) ?? '', steps }
+  return {
+    id,
+    title,
+    description: baseText(flowDescription) ?? '',
+    ...(byLang(flowTitle) === undefined ? {} : { titles: byLang(flowTitle) }),
+    ...(byLang(flowDescription) === undefined ? {} : { descriptions: byLang(flowDescription) }),
+    steps,
+  }
 }
 
 /** The step that says the change reached production; it also sees the deploy's routines. */
@@ -173,7 +198,7 @@ const DETAIL_KEYS = ['inputs', 'produces', 'blocks'] as const
 const EFFORTS: readonly string[] = ['low', 'medium', 'high', 'xhigh', 'max']
 const MERGE_METHODS: readonly string[] = ['squash', 'merge', 'rebase']
 
-type StepExtras = Pick<FlowStep, 'details' | 'agent' | 'model' | 'effort' | 'merge' | 'deploy'>
+type StepExtras = Pick<FlowStep, 'details' | 'detailsByLang' | 'agent' | 'model' | 'effort' | 'merge' | 'deploy'>
 
 /**
  * The fields that describe a step and who runs it: `details`, `agent`, `model`, `effort`, and the
@@ -187,13 +212,16 @@ const parseExtras = (s: Record<string, unknown>, kind: FlowStepKind): StepExtras
     const unknown = Object.keys(s.details).filter(k => !(DETAIL_KEYS as readonly string[]).includes(k))
     if (unknown.length > 0) return `\`details\` takes only inputs, produces and blocks, not ${unknown.join(', ')}.`
     const details: FlowStepDetails = {}
+    const byLang: Partial<Record<Lang, FlowStepDetails>> = {}
     for (const key of DETAIL_KEYS) {
       if (s.details[key] === undefined) continue
-      const value = text(s.details[key])
-      if (value === undefined) return `\`details.${key}\` must be text.`
-      details[key] = value
+      const value = parseLocalized(s.details[key])
+      if (value === undefined) return `\`details.${key}\` must be text, or one text per language.`
+      details[key] = baseText(value)
+      for (const [lang, t] of Object.entries(perLang(value))) (byLang[lang as Lang] ??= {})[key] = t
     }
     out.details = details
+    if (Object.keys(byLang).length > 0) out.detailsByLang = byLang
   }
   for (const key of ['agent', 'model'] as const) {
     if (s[key] === undefined) continue
@@ -273,6 +301,31 @@ type RawStep = Record<string, unknown> & { id: string; outcomes: Record<string, 
 const names = (v: unknown): string[] | undefined =>
   v === undefined ? [] : Array.isArray(v) && v.every(x => text(x) !== undefined) ? v.map(x => text(x) as string) : undefined
 
+/** A parsed step as a file writes it: its title, description and labels by language where it has them. */
+export const asWritten = ({ titles, descriptions, detailsByLang, ...step }: FlowStep): Record<string, unknown> => ({
+  ...step,
+  ...(step.details === undefined || detailsByLang === undefined
+    ? {}
+    : {
+        details: Object.fromEntries(
+          DETAIL_KEYS.flatMap((key): [string, Localized][] => {
+            const texts: Translations = {}
+            for (const lang of Object.keys(detailsByLang) as Lang[]) {
+              const t = detailsByLang[lang]?.[key]
+              if (t !== undefined) texts[lang] = t
+            }
+            const base = step.details?.[key]
+            return Object.keys(texts).length > 0 ? [[key, texts]] : base === undefined ? [] : [[key, base]]
+          }),
+        ),
+      }),
+  title: titles ?? step.title,
+  ...((descriptions ?? step.description) === undefined ? {} : { description: descriptions ?? step.description }),
+  outcomes: Object.fromEntries(
+    Object.entries(step.outcomes).map(([name, { labels, ...o }]) => [name, { ...o, label: labels ?? o.label }]),
+  ),
+})
+
 /**
  * A flow file whole: one with `steps` goes straight to parseFlow; one with `base` is resolved from
  * its base (found by `find`, which may itself be derived), then `remove` (each outcome that led to a
@@ -302,7 +355,8 @@ export const resolveFlow = (
   }
   const base = resolveFlow(found.raw, found.source, find, path)
   if ('error' in base) return fail(`base "${baseId}" does not resolve: ${base.error}`)
-  let steps = JSON.parse(JSON.stringify(base.steps)) as RawStep[]
+  // each text goes back to how a file writes it, one per language, so a derived flow keeps the translations
+  let steps = (JSON.parse(JSON.stringify(base.steps)) as FlowStep[]).map(asWritten) as unknown as RawStep[]
   // production's detect goes back to its own commands; parseFlow joins the routines of the deploy that stays
   for (const step of steps) {
     const own = ownDetect(step.detect as FlowDetect | undefined)
@@ -380,7 +434,12 @@ export const resolveFlow = (
   }
 
   const parsed = parseFlow(
-    { id, title: text(raw.title) ?? base.title, description: text(raw.description) ?? base.description, steps },
+    {
+      id,
+      title: parseLocalized(raw.title) ?? base.titles ?? base.title,
+      description: parseLocalized(raw.description) ?? base.descriptions ?? base.description,
+      steps,
+    },
     source,
   )
   return 'error' in parsed ? parsed : { ...parsed, base: baseId }
@@ -745,22 +804,40 @@ export const ownerPress = (state: FlowState, step: string, outcome: string, at: 
       : applyOutcome(state, { step, outcome, by: 'owner', ...(note === undefined ? {} : { note }) }, at)
 
 /** What the owner sees after a press: the answer recorded, in their words, and where the flow went. */
-export const pressedToast = (before: FlowState, after: FlowState, step: string, outcome: string): string => {
-  const label = pressedLabel(before, step, outcome)
+export const pressedToast = (
+  before: FlowState,
+  after: FlowState,
+  step: string,
+  outcome: string,
+  lang: Lang = DEFAULT_LANGUAGES.ui,
+): string => {
+  const t = uiText(lang)
+  const label = pressedLabel(before, step, outcome, lang)
+  const nextStep = stepOf(after.flow, after.current)
   const next =
     after.status === 'done'
-      ? 'Flow concluído.'
+      ? t.toast.flowDone
       : after.status === 'aborted'
-        ? 'Flow encerrado.'
-        : `Próximo passo: ${stepOf(after.flow, after.current)?.title ?? after.current}.`
-  return `Registrado: ${label}. ${next}`
+        ? t.toast.flowEnded
+        : t.toast.nextStep(nextStep === undefined ? after.current : stepTitle(nextStep, lang))
+  return t.toast.registered(label, next)
 }
 
-/** The button's own words: the owner step's outcome label, or the escalation choice's. */
-const pressedLabel = (before: FlowState, step: string, outcome: string): string =>
-  stepOf(before.flow, step)?.outcomes[outcome]?.label ??
-  ESCALATION_CHOICES.find(c => c.outcome === outcome)?.label ??
-  (outcome === DEPLOY_CI_OUTCOME ? DEPLOY_CI_LABEL : outcome)
+/** A step's title, description and outcome labels in a language; a flow without them keeps its plain text. */
+export const stepTitle = (step: FlowStep, lang: Lang): string => localize(step.titles, lang) ?? step.title
+const stepDescription = (step: FlowStep, lang: Lang): string | undefined =>
+  localize(step.descriptions, lang) ?? step.description
+export const outcomeLabel = (o: FlowOutcome, lang: Lang): string => localize(o.labels, lang) ?? o.label
+
+/** The button's own words, in the owner's language: the owner step's outcome label, or the escalation choice's. */
+const pressedLabel = (before: FlowState, step: string, outcome: string, lang: Lang = DEFAULT_LANGUAGES.ui): string => {
+  const declared = stepOf(before.flow, step)?.outcomes[outcome]
+  return (
+    (declared === undefined ? undefined : outcomeLabel(declared, lang)) ??
+    escalationChoices(uiText(lang)).find(c => c.outcome === outcome)?.label ??
+    (outcome === DEPLOY_CI_OUTCOME ? uiText(lang).deployCi : outcome)
+  )
+}
 
 /**
  * What the coordinator reads after an owner press, or nothing when it has nothing to do: the flow
@@ -821,7 +898,7 @@ export const noteOwnerStep = (state: FlowState, note: string, at: number): Moved
 export const currentStep = (state: FlowState): FlowStep | undefined =>
   state.status === 'done' || state.status === 'aborted' ? undefined : stepOf(state.flow, state.current)
 
-const stepView = (state: FlowState, step: FlowStep, index: number, currentIndex: number): FlowStepView => {
+const stepView = (state: FlowState, step: FlowStep, index: number, currentIndex: number, languages: Languages): FlowStepView => {
   const record = state.records[step.id]
   const isCurrent = step.id === state.current && (state.status === 'running' || state.status === 'escalated')
   const finished = state.status === 'done'
@@ -834,38 +911,40 @@ const stepView = (state: FlowState, step: FlowStep, index: number, currentIndex:
         : 'pending'
   return {
     id: step.id,
-    title: step.title,
-    description: step.description,
+    title: stepTitle(step, languages.ui),
+    description: stepDescription(step, languages.content),
     kind: step.kind,
     state: state_,
     attempts: state.attempts[step.id] ?? 0,
     maxAttempts: step.maxAttempts,
     outcome: record?.outcome,
-    outcomeLabel: record === undefined ? undefined : step.outcomes[record.outcome]?.label,
+    outcomeLabel: record === undefined || step.outcomes[record.outcome] === undefined
+      ? undefined
+      : outcomeLabel(step.outcomes[record.outcome]!, languages.ui),
   }
 }
 
 /** Everything the panel draws of a flow, from the saved state alone. */
-export const flowView = (state: FlowState): FlowView => {
+export const flowView = (state: FlowState, languages: Languages = DEFAULT_LANGUAGES): FlowView => {
   const currentIndex = state.status === 'done' ? state.flow.steps.length : indexOf(state.flow, state.current)
-  const steps = state.flow.steps.map((s, i) => stepView(state, s, i, currentIndex))
+  const steps = state.flow.steps.map((s, i) => stepView(state, s, i, currentIndex, languages))
   const step = currentStep(state)
   const ownerChoices: FlowChoice[] =
     state.status === 'escalated'
-      ? [...ESCALATION_CHOICES]
+      ? escalationChoices(uiText(languages.ui))
       : step?.deploy !== undefined
         ? deployPending(state, step).ci
-          ? [{ outcome: DEPLOY_CI_OUTCOME, label: DEPLOY_CI_LABEL }]
+          ? [{ outcome: DEPLOY_CI_OUTCOME, label: uiText(languages.ui).deployCi }]
           : ownerConfirms(state, step, 'owner', Object.keys(step.outcomes)[0]!)
-            ? Object.entries(step.outcomes).slice(0, 1).map(([outcome, o]) => ({ outcome, label: o.label }))
+            ? Object.entries(step.outcomes).slice(0, 1).map(([outcome, o]) => ({ outcome, label: outcomeLabel(o, languages.ui) }))
             : []
         : step?.kind === 'owner'
-          ? Object.entries(step.outcomes).map(([outcome, o]) => ({ outcome, label: o.label }))
+          ? Object.entries(step.outcomes).map(([outcome, o]) => ({ outcome, label: outcomeLabel(o, languages.ui) }))
           : []
   return {
     change: state.change,
     flowId: state.flow.id,
-    flowTitle: state.flow.title,
+    flowTitle: localize(state.flow.titles, languages.ui) ?? state.flow.title,
     status: state.status,
     current: steps.find(s => s.state === 'current'),
     waitingOn: step === undefined ? undefined : state.status === 'escalated' ? 'owner' : ANSWERED_BY[step.kind],

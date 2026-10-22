@@ -176,8 +176,10 @@ diagnóstico pronto ao dono.
    (change, onda, fase) quando houver. Nunca ponha em `ownerQuestions` um aviso para
    apertar botão do flow (o passo do dono já aparece sozinho e some ao ser respondido);
    `ownerQuestions` é só decisão fora do flow, e sai do plano assim que respondida.
-   `summary`, `note` e perguntas são para o dono:
-   português simples, o efeito para ele, sem arquivo, versão ou sigla. "Aceitar
+   `summary`, `note` e perguntas são para o dono: linguagem simples, o efeito para ele,
+   sem arquivo, versão ou sigla. Escreva-os, e também proposta, design, tarefas e
+   perguntas do grill, no idioma `content` do projeto, que as respostas de `flow start`,
+   `flow status` e `plano` informam (`.orquestrador/config.json`; sem ele, pt-BR). "Aceitar
    recomendação" chega como mensagem dele: siga com ela.
 5. **Jira.** Quando o passo pede mudança de estado, o painel avisa; a issue só se move
    no botão **"Mover no Jira"** do dono.

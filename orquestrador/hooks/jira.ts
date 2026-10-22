@@ -1,4 +1,6 @@
 import type { FlowStep, JiraCategory, JiraIssue, JiraMove, JiraTarget, JiraTransition, OrchestrationRun, PhaseStatus } from '../types'
+import { uiText } from './i18n'
+import type { UiText } from './i18n'
 
 /** A Jira key as Jira spells it: project letters, a dash, a number. */
 export const normalizeKey = (value: unknown): string | undefined => {
@@ -73,10 +75,10 @@ export const parseIssue = (text: string | undefined, key: string, site: string |
 }
 
 /** Says when the panel and Jira disagree about whether the work is finished. */
-export const divergence = (phase: PhaseStatus, issue: JiraIssue | undefined): string | undefined => {
+export const divergence = (phase: PhaseStatus, issue: JiraIssue | undefined, t: UiText = uiText(undefined)): string | undefined => {
   if (issue === undefined || issue.category === 'unknown') return undefined
-  if (phase === 'done' && issue.category !== 'done') return `Fase fechada, mas ${issue.key} segue "${issue.status ?? 'aberta'}" no Jira`
-  if (phase !== 'done' && issue.category === 'done') return `${issue.key} já está "${issue.status ?? 'concluída'}" no Jira, mas a fase não fechou`
+  if (phase === 'done' && issue.category !== 'done') return t.jira.closedButOpen(issue.key, issue.status)
+  if (phase !== 'done' && issue.category === 'done') return t.jira.doneButOpen(issue.key, issue.status)
   return undefined
 }
 

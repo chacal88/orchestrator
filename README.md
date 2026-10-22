@@ -2,7 +2,7 @@
 
 Plugin para o Claude Code que orquestra uma change com várias sessões em paralelo e mostra tudo num painel lateral: em que passo o trabalho está, o que cada sessão está fazendo, quais gates de qualidade passaram e o que espera uma decisão sua.
 
-*A Claude Code plugin (mod) that orchestrates a change across parallel sessions through a declared flow, with a live side panel and owner decisions as panel buttons. The UI is in Brazilian Portuguese.*
+*A Claude Code plugin (mod) that orchestrates a change across parallel sessions through a declared flow, with a live side panel and owner decisions as panel buttons. The UI speaks Brazilian Portuguese or English, set per project (see "Idioma").*
 
 ## O que ele faz
 
@@ -159,6 +159,21 @@ Formato:
 ```
 
 Tipos de passo: `session`, `automatic` (com `command`), `owner` e `loop` (sobre as fases do `tasks.md`). Campos opcionais: `maxAttempts` (padrão 3, depois escala para o dono), `when: "visual"`, `detect`, `cleanup`, `jira`, `details`, `agent`, `model`, `effort`, `merge` e `deploy`.
+
+`title`, `description` e `label` aceitam texto simples ou um texto por idioma, como `{ "pt-BR": "Investigar", "en": "Investigate" }`. Quando falta o idioma pedido, o painel usa o outro.
+
+### Idioma
+
+Cada projeto escolhe o idioma em `.orquestrador/config.json`, em dois eixos independentes:
+
+```json
+{ "language": { "ui": "en", "content": "pt-BR" } }
+```
+
+- **`ui`, caixas e títulos:** cabeçalhos das caixas, botões, status, a faixa acima do prompt, os avisos, os títulos dos passos do flow e os rótulos das respostas.
+- **`content`, descrições e textos da change:** a descrição do flow e de cada passo. Também o idioma em que a sessão coordenadora escreve proposta, tarefas, perguntas do grill, títulos e notas das fases e perguntas ao dono. O mod informa esse idioma nas respostas das ferramentas `flow` e `plano`.
+
+Idiomas: `pt-BR` e `en`. `"language": "en"` vale para os dois eixos. Sem o arquivo, fica `pt-BR` nos dois. Um valor desconhecido também fica em `pt-BR`, e o painel avisa. O exemplo acima mostra as fases em inglês e os textos dos itens em português.
 
 ## Desenvolvimento
 
