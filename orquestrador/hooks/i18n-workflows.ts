@@ -29,7 +29,10 @@ const pt = {
   fromAgentSuffix: ' (do agente)',
   fromAgent: (model: string) => `${model} (do agente)`,
   summary: {
-    mergeAuto: (method: string, branch: string) => `Automático · ${method} em ${branch} · só com PR aprovado e CI verde, nunca com --admin`,
+    mergeAuto: (method: string, branch: string, agent?: string) =>
+      agent === 'merge-pelo-workflow'
+        ? `Automático · ${method} em ${branch} · quando o workflow aprovou (revisão, portões e CI se houver), nunca com --admin`
+        : `Automático · ${method} em ${branch} · só com PR aprovado e CI verde, nunca com --admin`,
     mergeOwner: (method: string, branch: string) => `Você faz o merge · ${method} em ${branch}`,
     waitsCi: 'espera o CI',
     runs: (commands: string) => `roda ${commands}`,
@@ -399,7 +402,10 @@ const en: WorkflowsText = {
   fromAgentSuffix: ' (from the agent)',
   fromAgent: model => `${model} (from the agent)`,
   summary: {
-    mergeAuto: (method, branch) => `Automatic · ${method} into ${branch} · only with an approved PR and green CI, never with --admin`,
+    mergeAuto: (method, branch, agent) =>
+      agent === 'merge-pelo-workflow'
+        ? `Automatic · ${method} into ${branch} · once the workflow approved (review, gates and CI if any), never with --admin`
+        : `Automatic · ${method} into ${branch} · only with an approved PR and green CI, never with --admin`,
     mergeOwner: (method, branch) => `You merge · ${method} into ${branch}`,
     waitsCi: 'waits for the CI',
     runs: commands => `runs ${commands}`,

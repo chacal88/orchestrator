@@ -849,6 +849,9 @@ test('a merge step with the merge-pelo-workflow agent says the workflow approves
   w.disk.set(`${DIR}/pelowf.json`, JSON.stringify({ ...TRUNK, id: 'pelowf', add: [{ after: 'pr', step }] }))
   const ui = await mount($, 'terminal', 30)
   await ui.press({ key: 'wf-open:pelowf' })
+  // the step's one-line summary in the list says the workflow approves it, too
+  expect(await ui.find(text(/Automático · squash em main · quando o workflow aprovou/))).toBeDefined()
+  expect(await ui.find(text(/só com PR aprovado e CI verde/))).toBeUndefined()
   await ui.press({ key: 'wf-step:merge' })
   expect(await ui.find(text(/^merge-pelo-workflow \(do plugin\)$/))).toBeDefined()
   expect(await ui.find(text(/^Aprovação do workflow: a revisão de código do flow aprovada/))).toBeDefined()
