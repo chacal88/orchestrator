@@ -236,6 +236,31 @@ export const phaseCounts = (
   return counts
 }
 
+/**
+ * The plan as the panel shows it: a phase the loop closed reads done without the coordinator
+ * publishing again, a finished flow reads every phase done, and an ended one leaves none in flight.
+ */
+export const withFlowStatus = (
+  run: OrchestrationRun,
+  flow: Pick<FlowState, 'change' | 'status' | 'closed'> | undefined,
+): OrchestrationRun => {
+  if (flow === undefined || flow.change !== run.change) return run
+  const statusOf = (phase: OrchestrationRun['waves'][number]['phases'][number]): PhaseStatus =>
+    flow.status === 'done' || flow.closed?.[phase.id] !== undefined
+      ? 'done'
+      : flow.status === 'aborted' && phase.status !== 'done'
+        ? 'pending'
+        : phase.status
+  return {
+    ...run,
+    waves: run.waves.map(wave => ({ ...wave, phases: wave.phases.map(phase => ({ ...phase, status: statusOf(phase) })) })),
+  }
+}
+
+/** Whether a phase is past its gates: the loop closed it, or the change's flow is over. */
+export const closedByFlow = (flow: Pick<FlowState, 'status' | 'closed'> | undefined, phaseId: string): boolean =>
+  flow !== undefined && (flow.status === 'done' || flow.status === 'aborted' || flow.closed?.[phaseId] !== undefined)
+
 /** The coordinator's plan as the plan tool receives it, checked field by field. */
 export const parseRun = (
   input: Record<string, unknown>,

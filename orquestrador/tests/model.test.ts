@@ -13,6 +13,7 @@ import {
   phaseViews,
   planProgress,
   toCard,
+  withFlowStatus,
 } from '../hooks/model'
 
 const items = [
@@ -100,6 +101,16 @@ describe('parseRun', () => {
     const views = phaseViews(run, [toCard(row!, undefined)])
     expect(views[0]?.[0]?.card?.sessionId).toBe('local_9')
     expect(views[1]?.[0]?.card).toBeUndefined()
+  })
+
+  test("the panel's plan follows the flow: a closed phase is done, a finished flow all done, an ended one none in flight", () => {
+    const run = parseRun({ ...input, waves: [{ phases: [{ id: 'A', title: 'A', status: 'running' }, { id: 'B', title: 'B', status: 'blocked' }] }] }, '/w', 1)
+    if ('error' in run) throw new Error(run.error)
+    const closed = { A: { at: 2 } } as never
+    expect(phaseCounts(withFlowStatus(run, { change: 'chatgpt-ads', status: 'running', closed }))).toMatchObject({ done: 1, blocked: 1 })
+    expect(phaseCounts(withFlowStatus(run, { change: 'chatgpt-ads', status: 'done', closed: undefined }))).toMatchObject({ done: 2 })
+    expect(phaseCounts(withFlowStatus(run, { change: 'chatgpt-ads', status: 'aborted', closed }))).toMatchObject({ done: 1, pending: 1 })
+    expect(withFlowStatus(run, { change: 'other', status: 'done', closed: undefined })).toBe(run)
   })
 })
 

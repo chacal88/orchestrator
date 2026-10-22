@@ -159,7 +159,9 @@ diagnóstico pronto ao dono.
 5. **Fechar fase:** confira a afirmação (diff, teste barato) e chame `flow close
    {phase}`. O mod confere portões, tarefas marcadas e trabalho commitado, e arquiva a
    sessão; se recusar, peça à sessão o que falta (`send_message`). Quando todas fecham,
-   o mod encerra o laço sozinho. Não use `flow report executar`.
+   o mod encerra o laço sozinho. Não use `flow report executar`. O painel mostra a fase
+   fechada na hora, sem você republicar o plano; ao republicar, a fase que o flow já fechou
+   sai como `done` sem pedir portão de novo.
 6. **Destravar:** fase fechada libera vaga → próxima onda. Sessão parada por pergunta →
    responda você com o que está nos artefatos, regras e memória; só escale o que é do
    dono. Sessão falhou → diagnostique, corrija o prompt e reenvie.
@@ -227,7 +229,9 @@ passo do dono? O `ScheduleWakeup` longo está agendado?
 5. **Em produção** (dono): botão **"Está em produção"**, ou o mod detecta o comando de
    deploy sozinho.
 6. **Arquivar** (automático): rode `openspec archive` numa sessão; quando passa, o mod
-   arquiva as sessões restantes e remove o grupo da sidebar. Registre o resumo final
+   arquiva as sessões restantes e remove o grupo da sidebar. Com o flow concluído o painel
+   se atualiza sozinho (todas as fases fechadas, nenhuma em voo; encerrado, nenhuma em voo);
+   não precisa publicar o plano final, e publicá-lo não pede portões. Registre o resumo final
    no ledger, resuma por fase em poucas linhas ao dono e arquive a coordenadora por
    último.
 
