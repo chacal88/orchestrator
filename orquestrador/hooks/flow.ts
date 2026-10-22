@@ -923,3 +923,59 @@ const describeDeploy = (state: FlowState, step: FlowStep, where: string): string
     `(→ ${Object.values(step.outcomes)[0]?.next}) once all are done; ${fails}. It cannot be reported.`
   )
 }
+
+/** Where a step's agent file was found: the project's own, the mod's plugin, or nowhere. */
+export type AgentFound = { source: 'project' | 'plugin'; path: string } | undefined
+
+const AGENT_SOURCE = { project: 'do projeto', plugin: 'do plugin' } as const
+
+/** The step as the model must run it: agent (and where it came from), model, effort and details. */
+export const describeStepAgent = (step: FlowStep, found: AgentFound): string | undefined => {
+  const lines: string[] = []
+  if (step.agent !== undefined) {
+    lines.push(
+      found === undefined
+        ? `Agente: "${step.agent}" — nenhum arquivo encontrado (nem .orquestrador/agents/${step.agent}.md no projeto nem agents/${step.agent}.md no plugin); siga a descrição do passo sem agente.`
+        : `Agente: "${step.agent}" (${AGENT_SOURCE[found.source]}). Instruções do agente: ${found.path}`,
+    )
+  }
+  if (step.model !== undefined) lines.push(`Modelo: ${step.model}`)
+  if (step.effort !== undefined) lines.push(`Esforço: ${step.effort}`)
+  const d = step.details
+  if (d?.inputs !== undefined) lines.push(`Entrada: ${d.inputs}`)
+  if (d?.produces !== undefined) lines.push(`Saída: ${d.produces}`)
+  if (d?.blocks !== undefined) lines.push(`Bloqueia: ${d.blocks}`)
+  if (lines.length === 0) return undefined
+  const head = step.kind === 'loop' ? 'Cada fase deste passo usa:' : 'Neste passo:'
+  return `${head}\n${lines.map(l => `  ${l}`).join('\n')}`
+}
+
+const ANSWERER_LABEL: Record<FlowStepKind, string> = {
+  session: 'sessão',
+  loop: 'mod',
+  automatic: 'mod',
+  owner: 'dono',
+}
+
+/** One step of the sequence with who answers it and whether merge/deploy run on their own. */
+const stepSummary = (s: FlowStep): string => {
+  const mode = (auto: boolean) => (auto ? 'automático' : 'manual')
+  const extra = [
+    s.merge === undefined ? undefined : `merge ${mode(s.merge.auto)}`,
+    s.deploy === undefined ? undefined : `deploy ${mode(s.deploy.auto)}`,
+    s.agent === undefined ? undefined : `agente ${s.agent}`,
+  ].filter((x): x is string => x !== undefined)
+  return `${s.id} (${[ANSWERER_LABEL[s.kind], ...extra].join(', ')})`
+}
+
+/** A workflow whole for the owner's choice: title, description, origin and every step with its answerer. */
+export const describeWorkflow = (flow: FlowDef, origin: 'default' | 'project'): string => {
+  const from =
+    flow.base !== undefined ? `derivado de ${flow.base}` : origin === 'project' ? 'do projeto' : 'padrão'
+  return [
+    `${flow.id} — ${flow.title}: ${flow.steps.map(s => s.id).join(' → ')} → fim`,
+    `  Descrição: ${flow.description === '' ? '(sem descrição)' : flow.description}`,
+    `  Origem: ${from}`,
+    `  Passos: ${flow.steps.map(stepSummary).join(' → ')}`,
+  ].join('\n')
+}

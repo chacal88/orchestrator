@@ -57,6 +57,8 @@ import {
   automaticOutcome,
   currentStep,
   describeFlow,
+  describeStepAgent,
+  describeWorkflow,
   detectedOutcome,
   executedTextShort,
   noteOwnerStep,
@@ -70,7 +72,7 @@ import {
   wakePrompt,
   startFlow,
 } from './flow'
-import type { FlowSource, Moved } from './flow'
+import type { AgentFound, FlowSource, Moved } from './flow'
 import { closePhase, finishLoop, isClosed, loopRefusal, loopUnits, phaseSessions, uncommitted, unitRefusal, withEvents } from './lifecycle'
 import { DEFAULT_FLOWS, defaultFlows } from './flows/index'
 import {
@@ -1051,10 +1053,32 @@ const readFlowDir = async ($: EngineInterface, dir: string): Promise<{ files: Fl
  * The mod's default flows, then the project's own in `<repo>/.orquestrador/flows`, which win by id;
  * a project flow derived from another is resolved, and one that does not resolve is named in `problems`.
  */
-const loadFlows = async ($: EngineInterface): Promise<{ flows: Record<string, FlowDef>; problems: string[] }> => {
+const loadFlows = async (
+  $: EngineInterface,
+): Promise<{ flows: Record<string, FlowDef>; problems: string[]; projectIds: Set<string> }> => {
   const read = await readFlowDir($, `${await $.session.root()}/.orquestrador/flows`)
   const project = resolveProjectFlows(DEFAULT_FLOWS, read.files)
-  return { flows: mergeFlows(defaultFlows(), project.flows), problems: [...read.problems, ...project.problems] }
+  return {
+    flows: mergeFlows(defaultFlows(), project.flows),
+    problems: [...read.problems, ...project.problems],
+    projectIds: new Set(project.flows.map(f => f.id)),
+  }
+}
+
+/** A step's agent: the project's `.orquestrador/agents/<name>.md` wins over the plugin's `agents/<name>.md`. */
+const findAgent = async ($: EngineInterface, name: string): Promise<AgentFound> => {
+  const project = `${await $.session.root()}/.orquestrador/agents/${name}.md`
+  if (await $.fs.exists(project)) return { source: 'project', path: project }
+  const plugin = `${$.plugin.root}/agents/${name}.md`
+  return (await $.fs.exists(plugin)) ? { source: 'plugin', path: plugin } : undefined
+}
+
+/** What the current step's agent, model, effort and details say, for the status of a running flow. */
+const describeAgent = async ($: EngineInterface, state: FlowState): Promise<string | undefined> => {
+  if (state.status !== 'running') return undefined
+  const step = state.flow.steps.find(s => s.id === state.current)
+  if (step === undefined) return undefined
+  return describeStepAgent(step, step.agent === undefined ? undefined : await findAgent($, step.agent))
 }
 
 const flowFile = async ($: EngineInterface, change: string, ext: 'json' | 'ndjson'): Promise<string> =>
@@ -1109,9 +1133,9 @@ const flowError = (why: string): FlowReply => ({ result: `Flow: ${why}`, isError
 const handleFlowTool = async ($: EngineInterface, input: Record<string, unknown>): Promise<FlowReply> => {
   const action = input.action
   if (action === 'list') {
-    const { flows, problems } = await loadFlows($)
-    const lines = Object.values(flows).map(f => `${f.id} — ${f.title}: ${f.steps.map(s => s.id).join(' → ')} → fim`)
-    return { result: [...lines, ...problems.map(p => `ignored: ${p}`)].join('\n') }
+    const { flows, problems, projectIds } = await loadFlows($)
+    const blocks = Object.values(flows).map(f => describeWorkflow(f, projectIds.has(f.id) ? 'project' : 'default'))
+    return { result: [...blocks, ...problems.map(p => `ignored: ${p}`)].join('\n') }
   }
   if (action === 'start') {
     const change = typeof input.change === 'string' ? input.change.trim() : ''
@@ -1495,7 +1519,9 @@ const handlePrepAction = async ($: EngineInterface, state: FlowState, input: Rec
 /** Where the flow stands, with what the pre-execution step gathered so far. */
 const describeWithPrep = async ($: EngineInterface, state: FlowState): Promise<string> => {
   const prep = describePrep(state, await loadPrep($, state.change))
-  return prep === undefined ? describeFlow(state) : `${describeFlow(state)} ${prep}`
+  const base = prep === undefined ? describeFlow(state) : `${describeFlow(state)} ${prep}`
+  const agent = await describeAgent($, state)
+  return agent === undefined ? base : `${base}\n${agent}`
 }
 
 /**
