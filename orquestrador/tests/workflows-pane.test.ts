@@ -18,7 +18,7 @@ type World = { disk: Map<string, string>; panes: { id: string; title: string }[]
 const world = (on: On): World => {
   mock.store(on)
   const w: World = { disk: new Map(), panes: [], toasts: [] }
-  const plugin = ['planejador', 'executor', 'revisor-codigo', 'abre-pr', 'merge', 'deploy']
+  const plugin = ['planejador', 'executor', 'revisor-codigo', 'abre-pr', 'merge', 'merge-pelo-workflow', 'deploy']
   on('env.get', () => ({ value: '/h' }))
   let now = 1_000
   on('clock.now', () => ({ value: (now += 1_000) }))
@@ -164,6 +164,7 @@ test('4.2 the list shows each workflow with its origin and the files in error; a
   await ui.press({ key: 'wf-step:merge' })
   expect(await ui.find(text(/branch main · squash · automático: sim/))).toBeDefined()
   expect(await ui.find(text(/^merge \(do plugin\)$/))).toBeDefined()
+  expect(await ui.find(text(/^Aprovação no GitHub e CI verde: o PR precisa/))).toBeDefined()
 
   await ui.press({ key: 'wf-step:deploy' })
   expect(await ui.find(text(/CI sim · rotinas: npm run migrate · automático: não/))).toBeDefined()
@@ -838,5 +839,18 @@ test('11.6 a step with no agent says so', async ($, on) => {
   const ui = await mount($)
   await ui.press({ key: 'wf-open:semagente' })
   expect(await ui.find(text(/^Uma sessão faz, sem agente definido$/))).toBeDefined()
+  await ui.unmount()
+})
+
+test('a merge step with the merge-pelo-workflow agent says the workflow approves it, not GitHub', async ($, on) => {
+  const w = world(on)
+  const step = { use: 'merge', agent: 'merge-pelo-workflow', merge: { branch: 'main', auto: true } }
+  w.disk.set(`${DIR}/pelowf.json`, JSON.stringify({ ...TRUNK, id: 'pelowf', add: [{ after: 'pr', step }] }))
+  const ui = await mount($, 'terminal', 30)
+  await ui.press({ key: 'wf-open:pelowf' })
+  await ui.press({ key: 'wf-step:merge' })
+  expect(await ui.find(text(/^merge-pelo-workflow \(do plugin\)$/))).toBeDefined()
+  expect(await ui.find(text(/^Aprovação do workflow: a revisão de código do flow aprovada/))).toBeDefined()
+  expect(await ui.find(text(/^Aprovação no GitHub e CI verde/))).toBeUndefined()
   await ui.unmount()
 })

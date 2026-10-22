@@ -10,6 +10,7 @@ import {
   flowView,
   observeDeploy,
   ownerPress,
+  pendingCodeReview,
   pendingReview,
   resolveFlow,
   startFlow,
@@ -328,5 +329,42 @@ describe('the deploy\'s routines answer production', () => {
   test('without a deploy, producao keeps its own', () => {
     const rapido = defaultFlows().find(f => f.id === 'rapido')!
     expect(stepAt(rapido, 'producao').detect?.commands).not.toContain('npm run migrate:prod')
+  })
+})
+
+describe('pendingCodeReview', () => {
+  const flow = trunk({ branch: 'main', auto: true })
+
+  test('the code review before the merge, until it is approved', () => {
+    const at = parked(flow, 'merge')
+    expect(pendingCodeReview(at)).toBeUndefined()
+    const noRecord = { ...at, records: Object.fromEntries(Object.entries(at.records).filter(([id]) => id !== 'revisao-codigo')) }
+    expect(pendingCodeReview(noRecord)?.id).toBe('revisao-codigo')
+    const rejected = { ...at, records: { ...at.records, 'revisao-codigo': { outcome: 'rejeitado', by: 'session' as const, at: 2 } } }
+    expect(pendingCodeReview(rejected)?.id).toBe('revisao-codigo')
+    expect(pendingCodeReview({ ...noRecord, status: 'done' })).toBeUndefined()
+  })
+
+  test('a rejection turns the flow back to run, and the record is gone until the review is approved again', () => {
+    const review = parked(flow, 'revisao-codigo')
+    const back = ok(applyOutcome(review, { step: 'revisao-codigo', outcome: 'rejeitado', by: 'session' }, 2))
+    expect(back.state.current).toBe('executar')
+    expect(back.state.records['revisao-codigo']).toBeUndefined()
+    expect(pendingCodeReview(back.state)?.id).toBe('revisao-codigo')
+  })
+})
+
+describe('the merge agents', () => {
+  test('describeFlow says which approval the merge needs, by agent', () => {
+    const workflow = trunk({ branch: 'main', auto: true })
+    const withAgent = { ...workflow, steps: workflow.steps.map(s => (s.id === 'merge' ? { ...s, agent: 'merge-pelo-workflow' } : s)) }
+    const text = describeFlow(parked(withAgent, 'merge'))
+    expect(text).toContain("on the workflow's own approval")
+    expect(text).toContain('GitHub approval is not required')
+    expect(text).toContain('`gh pr merge <pr> --squash`')
+    expect(text).not.toContain('approved on GitHub and its CI is green')
+    expect(describeFlow(parked(workflow, 'merge'))).toContain('approved on GitHub and its CI is green')
+    const byOwner = { ...withAgent, steps: withAgent.steps.map(s => (s.id === 'merge' ? { ...s, merge: { ...s.merge!, auto: false }, kind: 'owner' as const } : s)) }
+    expect(describeFlow(parked(byOwner, 'merge'))).toContain("waits on the workflow's approval")
   })
 })
