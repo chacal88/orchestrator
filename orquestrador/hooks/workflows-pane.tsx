@@ -33,7 +33,7 @@ import {
 } from './workflow-edit'
 import type { StepField } from './workflow-edit'
 import type { FlowSource } from './flow'
-import { CONFIG_PATH, DEFAULT_LANGUAGES, localize, parseConfig, parseLocalized } from './i18n'
+import { DEFAULT_LANGUAGES, localize, parseLocalized } from './i18n'
 import { workflowsText } from './i18n-workflows'
 import type { WorkflowsText } from './i18n-workflows'
 
@@ -885,16 +885,6 @@ const defaultsById = (): Record<string, FlowDef> => Object.fromEntries(defaultFl
 const originOf = (t: WorkflowsText, flow: FlowDef, project: boolean): string =>
   flow.base !== undefined ? t.origin.derived(flow.base) : project ? t.origin.project : t.origin.standard
 
-/** The project's languages from `<repo>/.orquestrador/config.json`, read fresh; no file or a bad one, pt-BR. */
-async function loadLanguages($: EngineInterface): Promise<Languages> {
-  try {
-    const path = `${await $.session.root()}/${CONFIG_PATH}`
-    return parseConfig((await $.fs.exists(path)) ? await $.fs.read(path) : undefined).languages
-  } catch {
-    return DEFAULT_LANGUAGES
-  }
-}
-
 /** The ⚙️ pane drawn: its view read from the disk and the state, its presses bound to `$`. */
 export async function drawWorkflows(
   $: EngineInterface,
@@ -902,7 +892,8 @@ export async function drawWorkflows(
   columns: number,
 ): Promise<RenderElement> {
   const loaded = await loadFlows($)
-  const languages = await loadLanguages($)
+  const languages = loaded.config.languages
+  const project = loaded.config.project
   const t = workflowsText(languages.ui)
   const [selected, focus, insert, draft, forms, notice] = await Promise.all([
     $.state.get(SELECTED),
@@ -1014,7 +1005,7 @@ export async function drawWorkflows(
     head: field => value => editDraft(d => ({ ...d, [field]: value })),
     toggle: step => () => editDraft(d => toggleStep(d, step)),
     move: (step, by) => () => editDraft(d => moveStep(d, step, by)),
-    set: (step, change) => () => editDraft(d => setStepField(d, step, change)),
+    set: (step, change) => () => editDraft(d => setStepField(d, step, change, project)),
     insert: after => () => {
       void update($, INSERT, i => (i === after ? null : after)).catch(fail('insert'))
     },
@@ -1023,7 +1014,7 @@ export async function drawWorkflows(
       const at = view.insert
       if (d === null || at === null) return
       const after = at === INSERT_END ? null : at
-      const added = forms$.libraryUse === '' ? addNewStep(d, forms$, after, t) : addLibraryStep(d, forms$.libraryUse, after)
+      const added = forms$.libraryUse === '' ? addNewStep(d, forms$, after, t) : addLibraryStep(d, forms$.libraryUse, after, project)
       if (!('steps' in added)) {
         void $.state.set(DRAFT, { ...d, error: added.error }).catch(fail('add'))
         return
@@ -1053,7 +1044,7 @@ export async function drawWorkflows(
 async function saveDraft($: EngineInterface, t: WorkflowsText): Promise<void> {
   const { value: draft } = await $.state.get(DRAFT)
   if (draft == null) return
-  const { files, dir } = await loadFlows($)
+  const { files, dir, config } = await loadFlows($)
   const refuse = (error: string) => $.state.set(DRAFT, { ...draft, error })
   const relative = (path: string) => `.orquestrador/flows/${path.slice(dir.length + 1)}`
   // only the file the draft was opened from may be written over; any other of the same id or name stays
@@ -1065,12 +1056,12 @@ async function saveDraft($: EngineInterface, t: WorkflowsText): Promise<void> {
       return
     }
   }
-  const result = draftFile(draft, raw => resolveCandidate(DEFAULT_FLOWS, files, target, raw, t), t)
+  const result = draftFile(draft, raw => resolveCandidate(DEFAULT_FLOWS, files, target, raw, t, config.project), t, config.project)
   if ('error' in result) {
     await refuse(result.error)
     return
   }
-  const broken = brokenDependents(DEFAULT_FLOWS, files, target, result.raw)
+  const broken = brokenDependents(DEFAULT_FLOWS, files, target, result.raw, config.project)
   if (broken.length > 0) {
     const named = broken.map(p => p.split(`${dir}/`).join('.orquestrador/flows/'))
     await refuse(t.saved.broken(draft.id, named.join(' ')))

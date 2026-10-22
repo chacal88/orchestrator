@@ -1,4 +1,4 @@
-import type { FlowDef, FlowDeploy, FlowDetect, FlowMerge, WorkflowDraft, WorkflowDraftStep, WorkflowForms } from '../types'
+import type { FlowDef, FlowDeploy, FlowDetect, FlowMerge, ProjectSettings, WorkflowDraft, WorkflowDraftStep, WorkflowForms } from '../types'
 import { FLOW_END, PRODUCTION_STEP, asWritten, ownDetect, resolveProjectFlows } from './flow'
 import type { FlowSource } from './flow'
 import { LIBRARY, NEXT_STEP, libraryStep } from './flows/library'
@@ -18,6 +18,26 @@ const stable = (v: unknown): string =>
       ? Object.fromEntries(Object.entries(x).sort(([a], [b]) => a.localeCompare(b)))
       : x,
   ) ?? 'undefined'
+
+/** A merge or deploy block's values, without the note of which came from the project. */
+const valuesOf = (block: unknown): Record<string, unknown> | undefined => {
+  if (typeof block !== 'object' || block === null || Array.isArray(block)) return undefined
+  const { fromProject: _note, ...values } = block as Record<string, unknown>
+  return values
+}
+/** The block as a file writes it: without the values that came from the project, and the note. `keep` stays. */
+const fileBlock = (block: unknown, keep: readonly string[] = []): Record<string, unknown> | undefined => {
+  const values = valuesOf(block)
+  if (values === undefined) return undefined
+  const from = ((block as Record<string, unknown>).fromProject ?? []) as string[]
+  return Object.fromEntries(Object.entries(values).filter(([k]) => !from.includes(k) || keep.includes(k)))
+}
+/** A step as a whole file writes it: its merge or deploy without what the project supplies (`auto` stays, it decides the kind). */
+const fileStep = (step: RawStep): RawStep => {
+  const out = { ...step }
+  for (const key of ['merge', 'deploy'] as const) if (out[key] !== undefined) out[key] = fileBlock(out[key], ['auto'])
+  return out
+}
 const outcomesOf = (step: RawStep): Outcomes => (step.outcomes ?? {}) as Outcomes
 
 export const EMPTY_FORMS: WorkflowForms = { newId: '', newBase: '', stepTitle: '', stepKind: 'session', stepAgent: '', stepCommand: '', libraryUse: '', routineFor: '' }
@@ -119,11 +139,16 @@ const insertAfter = (draft: WorkflowDraft, after: string | null, step: WorkflowD
 }
 
 /** A library step added after `after` (the end when none), under an id of its own. */
-export const addLibraryStep = (draft: WorkflowDraft, use: string, after: string | null): WorkflowDraft | { error: string } => {
-  const probe = libraryStep(use)
+export const addLibraryStep = (
+  draft: WorkflowDraft,
+  use: string,
+  after: string | null,
+  project: ProjectSettings = {},
+): WorkflowDraft | { error: string } => {
+  const probe = libraryStep(use, project)
   if (typeof probe === 'string') return { error: probe }
   const id = uniqueId(draft, String(probe.id))
-  const step = libraryStep({ use, id })
+  const step = libraryStep({ use, id }, project)
   if (typeof step === 'string') return { error: step }
   return insertAfter(draft, after, { step: { ...step, id }, from: 'added', use, on: true })
 }
@@ -201,11 +226,22 @@ export type StepField =
   | { field: 'merge'; value: Partial<FlowMerge> }
   | { field: 'deploy'; value: Partial<FlowDeploy> }
 
+/** The merge or deploy step built again from `next` (its explicit fields); who answers it follows its `auto`. */
+const rebuildStep = (s: WorkflowDraftStep, field: 'merge' | 'deploy', next: Record<string, unknown>, id: string, project: ProjectSettings): WorkflowDraftStep => {
+  const rebuilt = libraryStep({ use: field, id, [field]: next }, project)
+  if (typeof rebuilt === 'string') return s
+  for (const key of ['title', 'agent', 'model', 'effort', 'details'] as const) {
+    if (s.step[key] !== undefined) rebuilt[key] = s.step[key]
+  }
+  return { step: rebuilt, from: 'added', use: field, on: s.on }
+}
+
 /**
  * One field of a step changed. An empty agent, model or effort clears it. A merge or deploy that
- * turns automatic (or back) is the library's step built again, which changes who answers it.
+ * turns automatic (or back) is the library's step built again, which changes who answers it. A merge
+ * or deploy field the owner sets is the step's own from then on, no longer the project's.
  */
-export const setStepField = (draft: WorkflowDraft, id: string, change: StepField): WorkflowDraft => ({
+export const setStepField = (draft: WorkflowDraft, id: string, change: StepField, project: ProjectSettings = {}): WorkflowDraft => ({
   ...draft,
   error: undefined,
   steps: draft.steps.map(s => {
@@ -213,19 +249,28 @@ export const setStepField = (draft: WorkflowDraft, id: string, change: StepField
     const step = { ...s.step }
     if (change.field === 'merge' || change.field === 'deploy') {
       const prior = (step[change.field] ?? {}) as Record<string, unknown>
-      const next = { ...prior, ...change.value }
+      const next: Record<string, unknown> = { ...prior, ...change.value }
+      const inherited = ((prior.fromProject ?? []) as string[]).filter(k => !(k in change.value))
+      if (inherited.length > 0) next.fromProject = inherited
+      else delete next.fromProject
       if (next.auto === prior.auto) return { ...s, step: { ...step, [change.field]: next } }
-      const rebuilt = libraryStep({ use: change.field, id, [change.field]: next })
-      if (typeof rebuilt === 'string') return s
-      for (const key of ['title', 'agent', 'model', 'effort', 'details'] as const) {
-        if (step[key] !== undefined) rebuilt[key] = step[key]
-      }
-      return { step: rebuilt, from: 'added', use: change.field, on: s.on }
+      return rebuildStep(s, change.field, next, id, project)
     }
     const value = change.value.trim()
     if (value === '') delete step[change.field]
     else step[change.field] = value
     return { ...s, step }
+  }),
+})
+
+/** The step goes back to the project's merge or deploy: none of its own fields are kept. */
+export const useProjectValues = (draft: WorkflowDraft, id: string, project: ProjectSettings): WorkflowDraft => ({
+  ...draft,
+  error: undefined,
+  steps: draft.steps.map(s => {
+    if (s.step.id !== id) return s
+    const field = s.step.merge !== undefined ? 'merge' : s.step.deploy !== undefined ? 'deploy' : undefined
+    return field === undefined ? s : rebuildStep(s, field, {}, id, project)
   }),
 })
 
@@ -258,16 +303,20 @@ const desiredSteps = (draft: WorkflowDraft): RawStep[] => {
 }
 
 /** An added step as `add` writes it: `{ use, …what differs from the library's }`, or the whole step. */
-const addSpec = (s: WorkflowDraftStep): RawStep | string => {
-  if (s.use === undefined) return s.step
+const addSpec = (s: WorkflowDraftStep, project: ProjectSettings): RawStep | string => {
+  if (s.use === undefined) return fileStep(s.step)
   const spec: RawStep = { use: s.use }
-  const plain = libraryStep(s.use)
+  const plain = libraryStep(s.use, project)
   if (typeof plain !== 'string' && plain.id !== s.step.id) spec.id = s.step.id
-  for (const key of ['merge', 'deploy'] as const) if (s.step[key] !== undefined) spec[key] = s.step[key]
-  const lib = libraryStep(spec)
-  if (typeof lib === 'string') return s.step
+  // what the step writes (as before), less the values the project supplies: those are not the workflow's
+  for (const key of ['merge', 'deploy'] as const) {
+    const own = fileBlock(s.step[key])
+    if (own !== undefined && Object.keys(own).length > 0) spec[key] = own
+  }
+  const lib = libraryStep(spec, project)
+  if (typeof lib === 'string') return fileStep(s.step)
   for (const [key, value] of Object.entries(s.step)) {
-    if (key !== 'id' && !same(value, lib[key])) spec[key] = value
+    if (key !== 'id' && key !== 'merge' && key !== 'deploy' && !same(value, lib[key])) spec[key] = value
   }
   return spec
 }
@@ -286,11 +335,12 @@ export const draftFile = (
   draft: WorkflowDraft,
   resolve: (raw: Record<string, unknown>) => FlowDef | { error: string },
   t: WorkflowsText = workflowsText(undefined),
+  project: ProjectSettings = {},
 ): { raw: Record<string, unknown>; flow: FlowDef; notice?: string } | { error: string } => {
   const head = { id: draft.id, title: draft.title.trim() || draft.id, description: draft.description }
   const desired = desiredSteps(draft)
   if (draft.base === undefined) {
-    const raw = { ...head, steps: desired }
+    const raw = { ...head, steps: desired.map(fileStep) }
     const flow = resolve(raw)
     if ('error' in flow) return flow
     const drift = driftOf(desired, flow, t)
@@ -310,7 +360,10 @@ export const draftFile = (
       for (const [key, value] of Object.entries(s.step)) {
         // production's detect also holds the deploy's routines, which parseFlow puts back by itself
         if (key === 'detect' && id === PRODUCTION_STEP) continue
-        if (key !== 'id' && key !== 'kind' && key !== 'outcomes' && !same(value, orig[key])) changed[key] = value
+        if (key === 'merge' || key === 'deploy') {
+          // the project's values are not the workflow's: only what the step writes goes in the override
+          if (!same(fileBlock(value), fileBlock(orig[key]))) changed[key] = fileBlock(value)
+        } else if (key !== 'id' && key !== 'kind' && key !== 'outcomes' && !same(value, orig[key])) changed[key] = value
       }
       const dropped = Object.keys(orig).filter(k => k !== 'outcomes' && s.step[k] === undefined)
       if (id === PRODUCTION_STEP) {
@@ -331,7 +384,7 @@ export const draftFile = (
     } else {
       const after = previous ?? [...kept][0]
       if (after === undefined) return { error: t.editor.keepOne(draft.base) }
-      add.push({ after, step: addSpec(s) })
+      add.push({ after, step: addSpec(s, project) })
     }
     previous = id
   }
@@ -372,7 +425,9 @@ const driftOf = (desired: readonly RawStep[], flow: FlowDef, t: WorkflowsText): 
     // compared as a file writes the step, so a field given per language reads the same on both sides
     const parsed = flow.steps.find(s => s.id === want.id)
     const got = parsed === undefined ? undefined : asWritten(parsed)
-    const off = EDITABLE.filter(key => stable(want[key]) !== stable(got?.[key]))
+    const off = EDITABLE.filter(key =>
+      key === 'merge' || key === 'deploy' ? stable(valuesOf(want[key])) !== stable(valuesOf(got?.[key])) : stable(want[key]) !== stable(got?.[key]),
+    )
     if (off.length > 0) {
       return t.editor.drift(String(want.id), off.join(', '))
     }
@@ -389,10 +444,11 @@ export const brokenDependents = (
   project: readonly FlowSource[],
   source: string,
   raw: Record<string, unknown>,
+  settings: ProjectSettings = {},
 ): string[] => {
-  const before = resolveProjectFlows(defaults, project).problems
+  const before = resolveProjectFlows(defaults, project, settings).problems
   const others = project.filter(f => f.source !== source)
-  const after = resolveProjectFlows(defaults, [...others, { source, raw }]).problems
+  const after = resolveProjectFlows(defaults, [...others, { source, raw }], settings).problems
   const failed = (problems: string[], file: string) => problems.some(p => p.startsWith(`${file}:`))
   return others.filter(f => !failed(before, f.source) && failed(after, f.source)).map(f => after.find(p => p.startsWith(`${f.source}:`))!)
 }
@@ -407,9 +463,10 @@ export const resolveCandidate = (
   source: string,
   raw: Record<string, unknown>,
   t: WorkflowsText = workflowsText(undefined),
+  settings: ProjectSettings = {},
 ): FlowDef | { error: string } => {
   const others = project.filter(f => f.source !== source && (f.raw as { id?: unknown } | null)?.id !== raw.id)
-  const { flows, problems } = resolveProjectFlows(defaults, [...others, { source, raw }])
+  const { flows, problems } = resolveProjectFlows(defaults, [...others, { source, raw }], settings)
   const problem = problems.find(p => p.startsWith(`${source}:`))
   if (problem !== undefined) return { error: problem }
   return flows.find(f => f.id === raw.id) ?? { error: t.editor.unresolved(source) }

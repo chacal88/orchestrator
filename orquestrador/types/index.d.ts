@@ -119,10 +119,29 @@ export type FlowStepDetails = { inputs?: string; produces?: string; blocks?: str
 export type FlowEffort = 'low' | 'medium' | 'high' | 'xhigh' | 'max'
 
 /** auto: the coordinator merges by itself (an automatic step); otherwise the owner merges (an owner step). */
-export type FlowMerge = { branch: string; method: 'squash' | 'merge' | 'rebase'; auto: boolean }
+export type FlowMerge = {
+  branch: string
+  method: 'squash' | 'merge' | 'rebase'
+  auto: boolean
+  /** The fields the step did not write: their value comes from the project's settings (config.json). */
+  fromProject?: string[]
+}
 
 /** ci: the merge's CI deploys and the step waits for it; commands: routines run after the merge, in order. */
-export type FlowDeploy = { ci: boolean; commands: string[]; auto: boolean }
+export type FlowDeploy = {
+  ci: boolean
+  commands: string[]
+  auto: boolean
+  /** The fields the step did not write: their value comes from the project's settings. */
+  fromProject?: string[]
+}
+
+/** The project's merge defaults, each field optional: only what the config files set. */
+export type ProjectMerge = Partial<Pick<FlowMerge, 'branch' | 'method' | 'auto'>>
+/** The project's deploy defaults, each field optional. */
+export type ProjectDeploy = Partial<Pick<FlowDeploy, 'ci' | 'commands' | 'auto'>>
+/** The project's defaults for the merge and deploy steps of every workflow. */
+export type ProjectSettings = { merge?: ProjectMerge; deploy?: ProjectDeploy }
 
 /** How far a deploy step got: the CI's deploy confirmed, and the routines seen passing, in order. */
 export type FlowDeployProgress = { ci: boolean; commands: string[] }

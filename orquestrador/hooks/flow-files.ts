@@ -1,10 +1,11 @@
 import type { EngineInterface } from 'claude-code'
 
-import type { FlowDef } from '../types'
+import type { FlowDef, Languages, ProjectSettings } from '../types'
 import { mergeFlows, resolveProjectFlows } from './flow'
 import type { AgentFound, FlowSource } from './flow'
 import { DEFAULT_FLOWS, defaultFlows } from './flows/index'
 import { isAgentName } from './gates'
+import { CONFIG_PATH, parseConfig } from './i18n'
 
 // Function declarations: the engine follows `$` past an import only into one of these.
 
@@ -24,7 +25,31 @@ export async function readFlowDir($: EngineInterface, dir: string): Promise<{ fi
   return { files, problems }
 }
 
+export type LoadedConfig = {
+  languages: Languages
+  project: ProjectSettings
+  problems: string[]
+  /** The file's text as read, so a save can change only its own keys. */
+  text: string | undefined
+}
+
+/** The project's settings from `config.json`, read fresh; a file that cannot be read counts as absent. */
+export async function loadConfig($: EngineInterface): Promise<LoadedConfig> {
+  const root = await $.session.root()
+  const read = async (path: string): Promise<string | undefined> => {
+    try {
+      return (await $.fs.exists(path)) ? await $.fs.read(path) : undefined
+    } catch {
+      return undefined
+    }
+  }
+  const text = await read(`${root}/${CONFIG_PATH}`)
+  return { ...parseConfig(text), text }
+}
+
 export type LoadedFlows = {
+  /** The project's merge and deploy settings the flows inherited. */
+  config: LoadedConfig
   flows: Record<string, FlowDef>
   problems: string[]
   projectIds: Set<string>
@@ -40,8 +65,10 @@ export type LoadedFlows = {
 export async function loadFlows($: EngineInterface): Promise<LoadedFlows> {
   const dir = `${await $.session.root()}/.orquestrador/flows`
   const read = await readFlowDir($, dir)
-  const project = resolveProjectFlows(DEFAULT_FLOWS, read.files)
+  const config = await loadConfig($)
+  const project = resolveProjectFlows(DEFAULT_FLOWS, read.files, config.project)
   return {
+    config,
     files: read.files,
     dir,
     flows: mergeFlows(defaultFlows(), project.flows),

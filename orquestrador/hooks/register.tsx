@@ -94,11 +94,11 @@ import {
   rejectPlan,
 } from './grill'
 import { bandSummary, parseEvents, stepTimes } from './glance'
-import { CONFIG_PATH, DEFAULT_LANGUAGES, contentRule, parseConfig, uiText } from './i18n'
+import { DEFAULT_LANGUAGES, contentRule, uiText } from './i18n'
 import type { UiText } from './i18n'
 import { renderBand, renderPane } from './pane'
 import { WORKFLOWS_PANE, drawWorkflows, toggleWorkflowsPane } from './workflows-pane'
-import { findAgent, loadFlows } from './flow-files'
+import { findAgent, loadConfig as loadProjectConfig, loadFlows } from './flow-files'
 import { firstSite, issueUrl, jiraKeys, moveFor, parseIssue, parseTransitions, wishes } from './jira'
 import { changeDir, openSpecView } from './openspec'
 import {
@@ -376,8 +376,7 @@ const readText = async ($: EngineInterface, path: string): Promise<string | unde
   (await $.fs.exists(path)) ? $.fs.read(path) : undefined
 
 /** The project's languages from `<repo>/.orquestrador/config.json`, read fresh: an edit shows on the next refresh. */
-const loadConfig = async ($: EngineInterface): Promise<{ languages: Languages; problems: string[] }> =>
-  parseConfig(await readText($, `${await $.session.root()}/${CONFIG_PATH}`).catch(() => undefined))
+const loadConfig = async ($: EngineInterface): Promise<{ languages: Languages; problems: string[] }> => loadProjectConfig($)
 
 /** The owner's words now, for a toast raised outside the pane. */
 const textNow = async ($: EngineInterface): Promise<UiText> =>

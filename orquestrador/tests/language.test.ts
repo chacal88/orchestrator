@@ -63,7 +63,11 @@ describe('the project config', () => {
     expect(parseLanguages('en').languages).toEqual({ ui: 'en', content: 'en' })
     expect(parseLanguages({ ui: 'en', content: 'pt-BR' }).languages).toEqual({ ui: 'en', content: 'pt-BR' })
     expect(parseLanguages({ content: 'en' }).languages).toEqual({ ui: 'pt-BR', content: 'en' })
-    expect(parseConfig(undefined)).toEqual({ languages: { ui: 'pt-BR', content: 'pt-BR' }, problems: [] })
+    expect(parseConfig(undefined)).toEqual({
+      languages: { ui: 'pt-BR', content: 'pt-BR' },
+      project: { merge: {}, deploy: {} },
+      problems: [],
+    })
   })
 
   test('an unknown language or a broken file stays pt-BR and says why', () => {

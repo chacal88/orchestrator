@@ -1,8 +1,8 @@
 ## 1. Configurações do projeto no config.json
 
-- [ ] 1.1 `merge` e `deploy` no `config.json`: parse e validação, problemas nomeados, tipos — cx: moderate
-- [ ] 1.2 Herança nos passos `merge`/`deploy`: campo não escrito no workflow vem do projeto; marca a origem; `auto` herdado decide o kind; testes (sem config, com config, valor próprio vence, change em andamento intacta) — cx: complex
-- [ ] 1.3 `flow status` e `flow list` dizem quando merge/deploy vêm do projeto — cx: simple
+- [x] 1.1 `merge` e `deploy` no `config.json`: parse e validação, problemas nomeados, tipos — cx: moderate
+- [x] 1.2 Herança nos passos `merge`/`deploy`: campo não escrito no workflow vem do projeto; marca a origem; `auto` herdado decide o kind; testes (sem config, com config, valor próprio vence, change em andamento intacta) — cx: complex
+- [x] 1.3 `flow status` e `flow list` dizem quando merge/deploy vêm do projeto — cx: simple
 
 ## 2. Seção "Este projeto" no painel ⚙️
 
