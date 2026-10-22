@@ -31,3 +31,19 @@
 
 - [x] 5.1 README: workflows do projeto (derivado, biblioteca, merge/deploy automáticos, agentes) e o painel ⚙️ — cx: simple
 - [x] 5.2 Versão 0.8.0 e evidence.md — cx: simple
+
+## 6. Correções da revisão — merge seguro
+
+- [ ] 6.1 `--admin` recusado sobre o texto bruto do comando: entre aspas, dentro de `bash -c`/`sh -c`/`eval`, depois de continuação de linha (`\` + quebra) e vindo de variável (`$`) num comando de merge; um teste por forma — cx: complex
+- [ ] 6.2 As outras formas de merge passam pela mesma recusa (revisão do PR pendente, portões finais, `--admin`): flags globais antes de `pr` (`gh -R o/r pr merge`), `gh api` com `pulls/<n>/merge` ou `mergePullRequest`; teste de cada uma. `git merge` + `git push` na branch protegida fica com a proteção do GitHub (registrar no evidence.md) — cx: complex
+- [ ] 6.3 Nome de agente validado (`^[a-z0-9]+(-[a-z0-9]+)*$`) no `parseFlow` e no `findAgent`; teste com `../x` — cx: simple
+- [ ] 6.4 Skill: as recusas de `--admin` e de merge sem revisão já existem (verbo no presente) — cx: simple
+
+## 7. Correções da revisão — deploy e painel
+
+- [ ] 7.1 Workflow derivado recalcula o detect de `producao`: sem as rotinas de um deploy removido, e só as rotinas atuais quando `deploy.commands` muda; testes com `remove: ['deploy']` e com override de `commands` — cx: moderate
+- [ ] 7.2 Deploy do dono só com rotinas tem saída no painel (botão do dono "Deploy concluído"); teste de que o dono sai desse estado — cx: moderate
+- [ ] 7.3 Um `gh run watch|view --exit-status` que falha só derruba o deploy quando o passo espera o CI e ele ainda não foi confirmado; testes com `ci: false` e depois do CI confirmado — cx: moderate
+- [ ] 7.4 Painel ⚙️: criar ou salvar não sobrescreve um arquivo de `.orquestrador/flows/` com o mesmo id ou nome, válido ou quebrado; a recusa nomeia o arquivo; teste — cx: moderate
+- [ ] 7.5 Salvar resolve também os workflows do projeto que derivam do salvo; se algum deixar de resolver, recusa e lista quais; teste — cx: moderate
+- [ ] 7.6 Guarda final do `draftFile` compara também os campos editáveis (agente, modelo, esforço, merge, deploy, details); edição própria do detect de `producao` avisa em vez de sumir — cx: simple
