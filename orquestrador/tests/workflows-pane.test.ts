@@ -123,30 +123,31 @@ test('4.2 the list shows each workflow with its origin and the files in error; a
 
   for (const surface of ['desktop', 'terminal', 'mobile'] as const) {
     const ui = await mount($, surface, 30)
-    expect(await ui.find(text(/completo · padrão/))).toBeDefined()
-    expect(await ui.find(text(/rapido · padrão/))).toBeDefined()
-    expect(await ui.find(text(/trunk · derivado de rapido/))).toBeDefined()
+    expect(await ui.find(text(/^Completo/))).toBeDefined()
+    expect(await ui.find(text(/^Trunk/))).toBeDefined()
+    // no "id · origem" line: the origin is a tag
+    expect(await ui.find(text(/trunk · derivado/))).toBeUndefined()
     expect(await ui.find(text(/PR direto na main/))).toBeDefined()
-    expect(await ui.find(text(/Deste projeto/))).toBeDefined()
-    expect(await ui.find(text(/Padrões do plugin/))).toBeDefined()
+    expect(await ui.find(text(/DESTE PROJETO/))).toBeDefined()
+    expect(await ui.find(text(/PADRÕES DO PLUGIN/))).toBeDefined()
     expect(await ui.find(text(/2 arquivos com erro, ignorados/))).toBeDefined()
     expect(await ui.find(text(/quebrado\.json — o arquivo não é um JSON válido/))).toBeDefined()
     expect(await ui.find(text(/orfao\.json — `remove`: "nao-existe"/))).toBeDefined()
-    expect(await ui.find(text(/\[derivado de rapido\]/))).toBeDefined()
-    expect(await ui.find(text(/\[merge automático\]/))).toBeDefined()
+    expect(await ui.find(text(/^derivado de rapido$/))).toBeDefined()
+    expect(await ui.find(text(/^merge automático$/))).toBeDefined()
     await ui.unmount()
   }
 
   const ui = await mount($, 'terminal', 30)
   await ui.press({ key: 'wf-open:trunk' })
-  expect(await ui.find(text(/trunk · derivado de rapido/))).toBeDefined()
+  expect(await ui.find(text(/^derivado de rapido$/))).toBeDefined()
   const rows = (await ui.findAll({ type: 'Button' })).map(b => b.key ?? '').filter(k => k.startsWith('wf-step:'))
   expect(rows).toEqual(
     ['planejar', 'validar', 'executar', 'revisao-codigo', 'checagem', 'pr', 'revisao-pr', 'merge', 'deploy', 'producao', 'arquivar'].map(
       id => `wf-step:${id}`,
     ),
   )
-  expect(await ui.find(text(/agente planejador · Opus 5\.5 · esforço alto/))).toBeDefined()
+  expect(await ui.find(text(/^Uma sessão faz, com o agente planejador \(Opus 5\.5, esforço alto\)$/))).toBeDefined()
   expect(await ui.find(text(/Automático · squash em main · só com PR aprovado e CI verde, nunca com --admin/))).toBeDefined()
   expect(await ui.find(text(/Você confirma · espera o CI e roda npm run migrate/))).toBeDefined()
   expect(await ui.find(text(/sessão faz/))).toBeDefined()
@@ -259,7 +260,7 @@ test('4.3 edits stay a draft in the mod until Salvar or Descartar', async ($, on
   const again = await mount($)
   expect(await again.find({ key: 'wf-step:revisao-de-seguranca' })).toBeDefined()
   await again.press({ key: 'wf-discard' })
-  expect(await again.find(text(/rapido · padrão/))).toBeDefined()
+  expect(await again.find(text(/^Rápido/))).toBeDefined()
   expect([...w.disk.keys()].filter(k => k.startsWith(DIR))).toEqual([])
   await again.unmount()
 })
@@ -275,6 +276,7 @@ test('4.4 saving a derived workflow writes the derived form, and the mod loads i
   expect(await ui.find(text(/Editando Trunk/))).toBeDefined()
   await ui.press({ key: 'wf-step:qa' })
   await ui.press({ key: 'wf-toggle:qa' })
+  await ui.press({ key: 'wf-step:pr' })
   await ui.press({ key: 'wf-insert:pr' })
   await ui.select({ key: 'wf-add-library', value: 'revisao-pr' })
   await ui.press({ key: 'wf-add' })
@@ -307,7 +309,7 @@ test('4.4 saving a derived workflow writes the derived form, and the mod loads i
     order: ['planejar', 'validar', 'executar', 'checagem', 'revisao-codigo', 'pr', 'revisao-pr', 'merge', 'producao', 'arquivar'],
   })
   expect(await ui.find(text(/Salvo em \.orquestrador\/flows\/trunk\.json/))).toBeDefined()
-  expect(await ui.find(text(/trunk · derivado de rapido/))).toBeDefined()
+  expect(await ui.find(text(/^derivado de rapido$/))).toBeDefined()
   await ui.unmount()
 
   const list = String((await flow($, { action: 'list' })).result)
@@ -338,7 +340,7 @@ test('4.4 a draft that does not resolve shows the error and writes nothing', asy
   await scratch.press({ key: 'wf-back' })
   await scratch.input({ key: 'wf-new-name', text: 'Vazio' })
   await scratch.press({ key: 'wf-new' })
-  expect(await scratch.find(text(/Do zero/))).toBeDefined()
+  expect(await scratch.find(text(/Do zero/))).toBeUndefined()
   await scratch.press({ key: 'wf-save' })
   expect(await scratch.find(text(/Não salvei: .*`steps` must be a non-empty list/))).toBeDefined()
   expect(w.disk.has(`${DIR}/vazio.json`)).toBe(false)
@@ -369,7 +371,7 @@ test('4.4 a workflow from scratch is written with its whole steps', async ($, on
       { id: 'conferir', title: 'Conferir', kind: 'owner', outcomes: { feito: { label: 'Feito', next: 'fim' } } },
     ],
   })
-  expect(await ui.find(text(/curto · do projeto/))).toBeDefined()
+  expect(await ui.find(text(/^do projeto$/))).toBeDefined()
   await ui.unmount()
 })
 
@@ -388,7 +390,7 @@ test('4.4 editing a default writes a project workflow of the same id, with a war
   await ui.press({ key: 'wf-save' })
   expect(file(w, 'rapido')).toEqual({ id: 'rapido', title: expect.any(String), description: expect.any(String), base: 'rapido', remove: ['qa'] })
   expect(await ui.find(text(/O workflow padrão rapido segue no mod, mas este projeto passa a usar o seu no lugar dele/))).toBeDefined()
-  expect(await ui.find(text(/rapido · derivado de rapido/))).toBeDefined()
+  expect(await ui.find(text(/^derivado de rapido$/))).toBeDefined()
   await ui.unmount()
 
   // the change that started on the default keeps its snapshot, qa included
@@ -562,14 +564,14 @@ test('10.1 the list: "Deste projeto" and "Padrões do plugin", a card each, a de
 
   for (const [surface, columns] of SURFACES) {
     const ui = await mountAny($, surface, columns)
-    await see(ui, /Deste projeto/)
-    await see(ui, /Padrões do plugin/)
+    await see(ui, /DESTE PROJETO/)
+    await see(ui, /PADRÕES DO PLUGIN/)
     // a card each: a line of what it does, its steps and its tags
     await see(ui, /PR direto na main/)
     await see(ui, /^\d+ passos$/)
-    await see(ui, /\[derivado de rapido\]/)
-    await see(ui, /\[merge automático\]/)
-    await see(ui, /\[substitui o padrão rapido\]/)
+    await see(ui, /^derivado de rapido$/)
+    await see(ui, /^merge automático$/)
+    await see(ui, /^substitui o padrão rapido$/)
     // the default the project's own replaces is shown as unused, with why
     await see(ui, /fora de uso/)
     await see(ui, /Este projeto usa o seu Rápido do projeto no lugar deste\./)
@@ -607,8 +609,8 @@ test('10.2 an open workflow: the legend, numbered steps with a line each, and th
     await see(ui, /sessão faz/)
     await see(ui, /você aprova/)
     await see(ui, /o mod confere/)
-    await see(ui, /^1\.$/)
-    await see(ui, /agente planejador · Opus 5\.5 · esforço alto/)
+    await see(ui, /^1$/)
+    await see(ui, /^Uma sessão faz, com o agente planejador \(Opus 5\.5, esforço alto\)$/)
     expect(await ui.find({ key: 'wf-save' })).toBeUndefined()
     await ui.press({ key: 'wf-step:revisao-codigo' })
     for (const label of ['Quem faz', 'Agente', 'Modelo', 'Recebe', 'Entrega', 'Se rejeitar']) {
@@ -640,8 +642,8 @@ test('10.3 10.4 10.5 editing: the bar on top, compact steps with the open one in
     await see(ui, /Rascunho: nada é gravado até salvar\./)
     await see(ui, /Nenhuma mudança ainda\./)
     await see(ui, /Toque num passo para editar\. "\+ passo aqui" acrescenta naquele lugar\./)
-    // a "+ passo aqui" between every two steps
-    expect(keys.filter(k => k.startsWith('wf-insert:'))).toHaveLength(keys.filter(k => k.startsWith('wf-step:')).length)
+    // one "+ passo aqui", at the end while no step is open (not between every two steps)
+    expect(keys.filter(k => k.startsWith('wf-insert:'))).toEqual(['wf-insert::fim'])
 
     await ui.press({ key: 'wf-step:revisao-codigo' })
     const footer = (await keysOf(ui)).filter(k => /^wf-(up|down|toggle):revisao-codigo$/.test(k))
@@ -772,4 +774,69 @@ test('10.7 listAgents: one with no frontmatter shows without a description; a fi
   expect(agents.some(a => a.name === 'notas' || a.name.includes(' ') || a.name === 'Nome Ruim')).toBe(false)
   expect(agents.find(a => a.name === 'revisor-codigo')).toMatchObject({ source: 'project', description: 'O revisor deste projeto.' })
   expect(agents.filter(a => a.name === 'revisor-codigo')).toHaveLength(1)
+})
+
+test('11.1 11.3 11.4 11.6 tags are pills, no brackets; the step summary is plain; the card has no "id · origem" line', async ($, on) => {
+  const w = world(on)
+  w.disk.set(`${DIR}/trunk.json`, JSON.stringify(TRUNK))
+  w.disk.set(`${DIR}/rapido.json`, JSON.stringify({ id: 'rapido', title: 'Rápido do projeto', description: 'O meu.', base: 'rapido' }))
+  for (const [surface, columns] of SURFACES) {
+    const ui = await mountAny($, surface, columns)
+    expect(await ui.find(text(/\[.*\]/))).toBeUndefined()
+    expect(await ui.find(text(/^\S+ · (padrão|do projeto|derivado)/))).toBeUndefined()
+    // a tag is a Text inside a rounded Box with a background
+    const pill = JSON.stringify(await ui.find(text(/^substitui o padrão rapido$/)))
+    expect(pill).toContain('substitui o padrão rapido')
+    expect(JSON.stringify(await ui.findAll({ type: 'Box', borderStyle: 'round', backgroundColor: '#FDF3E1' } as never))).toContain('substitui o padrão rapido')
+    await ui.press({ key: 'wf-open:trunk' })
+    await see(ui, /^Uma sessão faz, com o agente planejador \(Opus 5\.5, esforço alto\)$/)
+    expect(await ui.find(text(/o da sessão/))).toBeUndefined()
+    expect(await ui.find(text(/[▸▾]/))).toBeUndefined()
+    await ui.press({ key: 'wf-edit' })
+    expect(await ui.find(text(/\[(sessão|você|mod)\]/))).toBeUndefined()
+    await see(ui, /^sessão$/)
+    await see(ui, /^você$/)
+    await ui.press({ key: 'wf-discard' })
+    await ui.press({ key: 'wf-back' })
+    await ui.unmount()
+  }
+})
+
+test('11.5 editing: one "+ passo aqui" after the open step, Nome e descrição folded, no "Do zero" line', async ($, on) => {
+  const w = world(on)
+  w.disk.set(`${DIR}/trunk.json`, JSON.stringify(TRUNK))
+  const ui = await mount($)
+  await ui.press({ key: 'wf-open:trunk' })
+  await ui.press({ key: 'wf-edit' })
+  expect(await ui.find({ key: 'wf-title' })).toBeUndefined()
+  expect(await ui.find(text(/^› Nome e descrição$/))).toBeDefined()
+  await ui.press({ key: 'wf-head-toggle' })
+  expect(await ui.find({ key: 'wf-title' })).toBeDefined()
+  expect(await ui.find({ key: 'wf-description' })).toBeDefined()
+  await ui.press({ key: 'wf-head-toggle' })
+  const inserts = async () => (await keysOf(ui)).filter(k => k.startsWith('wf-insert:'))
+  expect(await inserts()).toEqual(['wf-insert::fim'])
+  await ui.press({ key: 'wf-step:merge' })
+  expect(await inserts()).toEqual(['wf-insert:merge'])
+  await ui.press({ key: 'wf-step:deploy' })
+  expect(await inserts()).toEqual(['wf-insert:deploy'])
+  await ui.press({ key: 'wf-discard' })
+  await ui.unmount()
+
+  const scratch = await mount($)
+  await scratch.press({ key: 'wf-back' })
+  await scratch.input({ key: 'wf-new-name', text: 'Vazio' })
+  await scratch.press({ key: 'wf-new' })
+  expect(await scratch.find(text(/Do zero/))).toBeUndefined()
+  expect(await keysOf(scratch as unknown as Ui)).toContain('wf-insert::fim')
+  await scratch.unmount()
+})
+
+test('11.6 a step with no agent says so', async ($, on) => {
+  const w = world(on)
+  w.disk.set(`${DIR}/semagente.json`, JSON.stringify({ id: 'semagente', title: 'Sem agente', description: 'x', steps: [{ id: 'fazer', title: 'Fazer', kind: 'session', outcomes: { pronto: { label: 'Pronto', next: 'fim' } } }] }))
+  const ui = await mount($)
+  await ui.press({ key: 'wf-open:semagente' })
+  expect(await ui.find(text(/^Uma sessão faz, sem agente definido$/))).toBeDefined()
+  await ui.unmount()
 })

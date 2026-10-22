@@ -345,3 +345,20 @@ Ran 251 tests across 22 files.
 desligado não se move); `changesOf` depois de desligar, trocar agente e reordenar (e o passo religado deixa de ser
 mudança); `listAgents` com um `.md` sem frontmatter (aparece sem descrição nem modelo), um `.txt` e um nome inválido
 (somem) e o agente do projeto valendo uma vez só no lugar do do plugin. Suíte: 254 pass, 0 fail.
+
+## Fase 11 — painel mais fiel ao mockup (0.8.2)
+
+`orquestrador/hooks/workflows-pane.tsx`, `.orquestrador/flows/rapido.json`, `tests/workflows-pane.test.ts`.
+
+- Lista: título "Workflows" `size: title` semibold com divisória embaixo; seções em caixa alta pequena (DESTE PROJETO,
+  PADRÕES DO PLUGIN); cartão com nome semibold + "›" e "N passos" à direita, descrição cinza e etiquetas como pílula
+  (Box redondo com fundo: azul "derivado de X", cinza "merge/deploy automático", âmbar "substitui o padrão X"); sem a
+  linha "id · origem".
+- Workflow aberto: nome `heading` semibold; a origem vira pílula; número do passo dentro de círculo na cor de quem
+  responde, sem "▸"; título semibold e resumo cinza embaixo; resumo "Uma sessão faz, com o agente X (Opus 5.5, esforço
+  alto)" ou "Uma sessão faz, sem agente definido" (nunca "o da sessão").
+- Edição: "sessão/você/mod" em pílula colorida; um só "+ passo aqui", depois do passo aberto (ou no fim, sem passo aberto);
+  sem a linha "Do zero"; Nome e Descrição num bloco recolhido "Nome e descrição".
+- `rapido.json` do repo: `agent` em `planejar` (planejador) e `revisao-codigo` (revisor-codigo).
+- Testes: 257 pass, 0 fail (três novos: pílulas sem colchetes e resumo, um só "+ passo aqui", sem agente). tsc e
+  `plugin validate` saíram com 0.
