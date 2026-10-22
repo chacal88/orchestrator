@@ -46,3 +46,9 @@ Onde o painel difere do mockup, e por quê:
 - No mockup o Completo "usa o merge e o deploy daqui"; os workflows padrão deste plugin não têm passo de merge
   nem de deploy, então o painel mostra o Completo como "não tem passo", com "Acrescentar merge e deploy".
 - "Acrescentar"/"Passar" usam os valores já salvos no `config.json`, não os do rascunho ainda aberto.
+
+## Fase 3 — documentação e versão
+
+- README: seção "Configurações do projeto" (config.json com exemplo, herança, painel).
+- `orquestrador/.claude-plugin/plugin.json`: versão 0.9.0.
+- Portões da change inteira (tipos, validação e 304 testes em 26 arquivos) rodaram depois da última edição.

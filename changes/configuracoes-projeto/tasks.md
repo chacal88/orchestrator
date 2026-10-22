@@ -14,4 +14,4 @@
 
 ## 3. Documentação e versão
 
-- [ ] 3.1 README: configurações do projeto; versão 0.9.0; evidence.md — cx: simple
+- [x] 3.1 README: configurações do projeto; versão 0.9.0; evidence.md — cx: simple
