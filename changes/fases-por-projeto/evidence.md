@@ -206,3 +206,40 @@ $ PATH=".../2.1.308/a93ded4b1b47/claude.app/Contents/MacOS:$PATH" \claude plugin
  0 fail
 Ran 220 tests across 21 files.
 ```
+
+## Fase 6 — Merge seguro (6.1–6.4)
+
+Branch `claude/fpp-merge-seguro-e21dc5`. Testes novos em `tests/merge-safe.test.ts` (um por forma).
+
+- 6.1 O guarda lê o comando como o shell o roda (`commandsRun` em `gates.ts`): palavra por palavra, tirando as
+  aspas, juntando `\` + quebra de linha e entrando nos scripts de `bash -c`/`sh -c`/`eval` e de `$(…)`/`` `…` ``;
+  corpo de heredoc segue texto. `mergeCalls` acha cada merge e diz o PR, se tem `--admin` e se algum argumento
+  carrega `$`. Recusados: `"--admin"`, `'--admin'`, `bash -c "… --admin"`, `sh -c '…'`, `eval "…"`, `\` + quebra
+  + `--admin`, e `$VAR`/`$(…)`/`` `…` `` nos argumentos ("the mod cannot see what it carries"). Seguem livres:
+  `gh pr merge 805 --squash`, `echo "gh pr merge … --admin"`, um commit cuja mensagem cita o comando, um heredoc.
+- 6.2 As mesmas recusas valem para `gh -R o/r pr merge`, `gh --repo[=]o/r pr merge`, `gh api …/pulls/<n>/merge`
+  (qualquer método; o alvo é `<n>`) e `gh api graphql` com `mergePullRequest` (o PR vem por node id, que o mod não
+  lê: tomado como o da change, falha fechada), também dentro de `bash -c`/`sh -c`/`eval`. `gh api` que não faz
+  merge (`pulls/<n>`, `pulls/<n>/files`, graphql de leitura, proteção de branch) segue livre. O teste rápido que
+  manda ao guarda (`GH_MERGE`) passou a ser `gh` … `merge` no texto bruto, também no `isGuarded` (o guarda que
+  recusa quando o mod falha).
+- Fora do alcance do mod, registrado: um `git merge` local seguido de `git push` direto na branch protegida não é
+  um merge de PR; quem o barra é a proteção de branch do GitHub (push direto exige PR aprovado e CI verde), não o
+  mod. Também ficam fora: `gh` chamado por alias do usuário, um script em arquivo (`bash merge.sh`), e
+  `bash -c "$X"`/`eval "$X"` cujo conteúdo inteiro vem de variável.
+- 6.3 `isAgentName` (`^[a-z0-9]+(-[a-z0-9]+)*$`, em `gates.ts`): o `parseFlow` recusa o nome como erro de parse
+  citando o passo (`x.json: step "a": \`agent\` "../x" must be lowercase words joined by hyphens…`) — uma linha no
+  `parseExtras` e o import em `flow.ts`; o `findAgent` devolve "sem agente" sem montar caminho. Teste com `../x`.
+- 6.4 Skill `change-orchestrator` § 4: "o mod recusa", no presente, com as formas cobertas.
+
+Portões (depois da última edição):
+
+```
+$ npx -y -p typescript@5.6.3 tsc -p <scratchpad>/tc/tsconfig.json   # tipos do engine 2.1.308, opções do § Tipos, hooks + types + tests
+exit 0
+
+$ PATH=".../2.1.308/a93ded4b1b47/claude.app/Contents/MacOS:$PATH" \claude plugin test orquestrador
+ 233 pass
+ 0 fail
+Ran 233 tests across 22 files.
+```
