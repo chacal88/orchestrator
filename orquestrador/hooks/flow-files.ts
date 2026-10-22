@@ -61,3 +61,39 @@ export async function findAgent($: EngineInterface, name: string): Promise<Agent
   const plugin = `${$.plugin.root}/agents/${name}.md`
   return (await $.fs.exists(plugin)) ? { source: 'plugin', path: plugin } : undefined
 }
+
+/** An agent the owner can pick for a step, as its file's frontmatter says. */
+export type AgentInfo = { name: string; description: string; model: string | undefined; source: 'project' | 'plugin' }
+
+const frontmatter = (text: string): Record<string, string> => {
+  const head = /^---\r?\n([\s\S]*?)\r?\n---/.exec(text)?.[1] ?? ''
+  return Object.fromEntries(
+    head.split(/\r?\n/).flatMap(line => {
+      const at = line.indexOf(':')
+      return at <= 0 ? [] : [[line.slice(0, at).trim(), line.slice(at + 1).trim()] as const]
+    }),
+  )
+}
+
+/**
+ * The agents on offer: the plugin's `agents/*.md` and the project's `.orquestrador/agents/*.md`, by name;
+ * a project agent of the same name replaces the plugin's, as `findAgent` has it.
+ */
+export async function listAgents($: EngineInterface): Promise<AgentInfo[]> {
+  const found = new Map<string, AgentInfo>()
+  const dirs = [
+    ['plugin', `${$.plugin.root}/agents`],
+    ['project', `${await $.session.root()}/.orquestrador/agents`],
+  ] as const
+  for (const [source, dir] of dirs) {
+    if (!(await $.fs.exists(dir))) continue
+    for (const file of await $.fs.list(dir)) {
+      if (file.kind !== 'file' || !file.name.endsWith('.md')) continue
+      const name = file.name.slice(0, -3)
+      if (!isAgentName(name)) continue
+      const head = frontmatter(await $.fs.read(`${dir}/${file.name}`))
+      found.set(name, { name, source, description: head.description ?? '', model: head.model === undefined || head.model === '' ? undefined : head.model })
+    }
+  }
+  return [...found.values()].sort((a, b) => a.name.localeCompare(b.name))
+}

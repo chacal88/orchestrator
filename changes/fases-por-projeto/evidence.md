@@ -304,3 +304,61 @@ Ran 229 tests across 21 files.
   - `git -c core.pager=…`/`core.sshCommand=…`/`core.fsmonitor=…` rodando um merge. Exótico.
   - Script gravado numa chamada e executado em outra; `git push` direto e `--admin` por API com token. A trava
     real é a proteção de branch do GitHub, que precisa incluir administradores.
+
+## Fase 10 — Painel ⚙️ Workflows refeito (10.1–10.6)
+
+Só o desenho e as ações do painel (`hooks/workflows-pane.tsx`) mudaram, mais o mínimo em `hooks/workflow-edit.ts` (resumo das mudanças, "Subir/Descer" pulando passo desligado, nome do workflow novo) e `hooks/flow-files.ts` (`listAgents`). `draftFile`, `resolveCandidate`, `brokenDependents`, a recusa de sobrescrever (7.4–7.6) e o que é gravado ficaram como estavam. Estado novo: `wfInsert` (onde o "+ passo aqui" está aberto), `forms.libraryUse`, `forms.routineFor`, `draft.initial` (o rascunho como foi aberto, para o resumo).
+
+Testes novos em `tests/workflows-pane.test.ts` (cada um nas superfícies desktop, terminal, terminal a 30 colunas e mobile): 10.1 lista, 10.2 workflow aberto, 10.3–10.5 edição. Os 4.x e 7.x seguem, com as chaves/textos que mudaram acertados (ver abaixo). Estilo da bancada: o mundo simulado agora lista e lê os agentes do plugin.
+
+Telas como ficaram:
+- Lista: título e ajuda; "Deste projeto" e "Padrões do plugin"; cartão por workflow (título ›, nº de passos, `id · origem`, descrição, etiquetas `[derivado de X]`, `[merge automático]`, `[deploy automático]`, `[substitui o padrão X]`); padrão substituído como "fora de uso" com "Este projeto usa o seu X no lugar deste."; erros num aviso vermelho próprio ("N arquivo(s) com erro, ignorado(s)", `arquivo — motivo`); "Novo workflow" com Nome (id derivado do nome, mostrado), "Começar de" (`Título — copia os N passos` / `Do zero — nenhum passo`), ajuda em cada campo e "Criar e editar".
+- Workflow aberto: "← Workflows", título com "Editar" ao lado, `id · origem`, descrição, legenda (sessão faz / você aprova / o mod confere, com as cores), passos numerados com o número na cor de quem responde e uma linha (agente · modelo · esforço, ou comando, merge, deploy); aberto mostra Quem faz, Agente (origem), Modelo, Recebe, Entrega, Se rejeitar (volta para X, de um outcome que leva a passo anterior), mais Comando/Merge/Deploy/Bloqueia/Evidência quando existem.
+- Edição: caixa no topo com "Editando <nome>", aviso de rascunho, Salvar, Descartar e o resumo ("2 mudanças: …" / "Nenhuma mudança ainda."); erro de salvar logo abaixo da caixa; Nome e Descrição; passos compactos (`n. título [quem]`), o aberto num cartão (Agente em lista com origem e "Nenhum", descrição do escolhido embaixo, Modelo e Esforço com "(do agente)", e os campos de merge/deploy com ajuda, botões que alternam "Fazer o merge sozinho: sim"), rodapé do cartão Subir, Descer, "Desligar este passo"; "+ passo aqui" depois de cada passo abre "Acrescentar depois de X" (passo pronto da biblioteca com a explicação, ou "Um passo novo, do zero" com título, quem responde, agente e comando; Acrescentar / Cancelar); o passo acrescentado abre na hora; rotinas do deploy são uma lista de campos com "Tirar a rotina N" e "+ rotina"; passos desligados riscados no fim com "religar".
+
+Onde difere do mockup, e por quê:
+- A barra do topo não é fixa (o pane rola inteiro e o engine não tem posição fixa): é o primeiro bloco.
+- Sem "1–5 … mostrar": todos os passos ficam compactos em uma linha; o dono abre o que quiser.
+- Sem "Abrir e corrigir" no aviso de erro (não há ação de abrir arquivo no mod): o aviso diz para corrigir ou apagar o arquivo em `.orquestrador/flows/`.
+- O agente do projeto com o nome de um do plugin aparece uma vez, "(do projeto)", como pedido (o mockup mostrava os dois).
+- Os agentes do plugin não trazem esforço no frontmatter: o esforço sem valor próprio diz "o da sessão"; só o modelo ganha "(do agente)".
+- Rotinas, merge sozinho e deploy sozinho ficam no cartão do passo (e não no formulário de "+ passo aqui"): o passo acrescentado abre na hora para preenchê-los. Sem checkbox: botão que diz o estado. `Select` sem descrição por opção: a explicação do escolhido vai num texto abaixo.
+- "Criar e editar" é "Criar" que já abre a edição, como no mockup; o nome do workflow novo vira o título e o id sai dele (`slug`).
+- Os 4.x/7.x mudaram só nas chaves e textos da nova disposição (`wf-new-name`, `wf-insert:<passo>` + `wf-add`, agente em lista, "religar").
+
+Portões (depois da última edição):
+
+```
+$ npx -y -p typescript@5.6.3 tsc -p <scratchpad>/tc/tsconfig.json
+exit 0
+$ PATH=".../2.1.308/a93ded4b1b47/claude.app/Contents/MacOS:$PATH" \claude plugin validate orquestrador
+✔ Validation passed   (aviso antigo: sem ícone)
+$ PATH=".../2.1.308/a93ded4b1b47/claude.app/Contents/MacOS:$PATH" \claude plugin test orquestrador
+ 251 pass
+ 0 fail
+Ran 251 tests across 22 files.
+```
+
+### 10.7 — testes pedidos pela revisão (coordenação)
+
+`tests/workflows-pane.test.ts`: `moveStep` passando por um passo desligado (sobe e desce; o primeiro não sobe; o
+desligado não se move); `changesOf` depois de desligar, trocar agente e reordenar (e o passo religado deixa de ser
+mudança); `listAgents` com um `.md` sem frontmatter (aparece sem descrição nem modelo), um `.txt` e um nome inválido
+(somem) e o agente do projeto valendo uma vez só no lugar do do plugin. Suíte: 254 pass, 0 fail.
+
+## Fase 11 — painel mais fiel ao mockup (0.8.2)
+
+`orquestrador/hooks/workflows-pane.tsx`, `.orquestrador/flows/rapido.json`, `tests/workflows-pane.test.ts`.
+
+- Lista: título "Workflows" `size: title` semibold com divisória embaixo; seções em caixa alta pequena (DESTE PROJETO,
+  PADRÕES DO PLUGIN); cartão com nome semibold + "›" e "N passos" à direita, descrição cinza e etiquetas como pílula
+  (Box redondo com fundo: azul "derivado de X", cinza "merge/deploy automático", âmbar "substitui o padrão X"); sem a
+  linha "id · origem".
+- Workflow aberto: nome `heading` semibold; a origem vira pílula; número do passo dentro de círculo na cor de quem
+  responde, sem "▸"; título semibold e resumo cinza embaixo; resumo "Uma sessão faz, com o agente X (Opus 5.5, esforço
+  alto)" ou "Uma sessão faz, sem agente definido" (nunca "o da sessão").
+- Edição: "sessão/você/mod" em pílula colorida; um só "+ passo aqui", depois do passo aberto (ou no fim, sem passo aberto);
+  sem a linha "Do zero"; Nome e Descrição num bloco recolhido "Nome e descrição".
+- `rapido.json` do repo: `agent` em `planejar` (planejador) e `revisao-codigo` (revisor-codigo).
+- Testes: 257 pass, 0 fail (três novos: pílulas sem colchetes e resumo, um só "+ passo aqui", sem agente). tsc e
+  `plugin validate` saíram com 0.

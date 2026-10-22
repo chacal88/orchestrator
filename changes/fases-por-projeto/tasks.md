@@ -57,3 +57,26 @@
 
 - [x] 9.1 Merge escondido avaliado por comando: um comando que não é `gh` lido nem inerte e cita `gh` e `merge` é recusado mesmo com outro merge legível na mesma linha (`gh pr merge 6 --squash && xargs gh pr merge --admin`); teste — cx: simple
 - [x] 9.2 `git` sai dos inertes: `git -c alias.*=!…`, `git rebase --exec`/`-x`, `git filter-branch --*-filter`/`--exec` e `git bisect run` com `gh` e `merge` são recusados; `git commit/log/diff/status/add/push` seguem livres; teste — cx: simple
+
+## 10. Painel ⚙️ Workflows refeito (ajustes da conferência do dono)
+
+Mockup aprovado pelo dono em 2026-10-22: https://claude.ai/artifact/9MWU1UatsPeXt44EhrvMba (telas "Lista de workflows", "Workflow aberto", "Editando um workflow").
+
+- [x] 10.1 Lista: seções "Deste projeto" e "Padrões do plugin"; cartão por workflow com uma linha do que faz, nº de passos e etiquetas (derivado de X, merge/deploy automático, substitui o padrão); padrão substituído apagado com o motivo; erros num aviso próprio em português; "Novo workflow" com Nome (id derivado do nome) e "Começar de", cada campo com explicação — cx: moderate
+- [x] 10.2 Workflow aberto: passos numerados com quem responde (sessão faz / você aprova / o mod confere) e um resumo de uma linha (agente · modelo · esforço, comando, merge, deploy); passo aberto mostra Quem faz, Agente (origem), Modelo, Recebe, Entrega, Se rejeitar; "Editar" no topo — cx: moderate
+- [x] 10.3 Edição: barra fixa no topo com "Salvar", "Descartar", aviso de rascunho e o resumo das mudanças; passos compactos, o aberto num cartão; "Subir", "Descer" e "Desligar este passo" no rodapé do cartão; passo desligado riscado no fim com "religar" — cx: complex
+- [x] 10.4 Agente escolhido numa lista (agentes do plugin e de `.orquestrador/agents/`, com a origem, mais "Nenhum"), com a descrição do escolhido abaixo; modelo e esforço vêm do agente ("(do agente)") até o dono trocar; texto de ajuda em cada campo (branch do merge, como juntar, merge/deploy automático, rotinas, comando) — cx: moderate
+- [x] 10.5 "+ passo aqui" entre passos: acrescenta naquele lugar, da biblioteca (com a explicação do escolhido) ou passo novo (título, quem responde, agente, comando); rotinas do deploy como lista de campos com "+ rotina" — cx: moderate
+- [x] 10.6 Testes de harness das três telas (desktop, terminal e largura estreita), e os testes 4.x/7.x do painel seguem passando — cx: moderate
+- [x] 10.7 Testes da revisão: `moveStep` passando por um passo desligado, `changesOf` depois de ligar/desligar/reordenar/trocar agente, `listAgents` com `.md` sem frontmatter (aparece sem descrição) e arquivo que não é agente (some) — cx: simple
+
+## 11. Painel mais fiel ao mockup (2ª conferência do dono, prints em 2026-10-22)
+
+- [x] 11.1 Etiquetas como pílula (Box com `backgroundColor`, `borderStyle: "round"`, `paddingX`), nunca entre colchetes: "substitui o padrão", "derivado de X", "merge automático", "deploy automático", e quem responde ("sessão", "você", "mod") — cx: simple
+- [x] 11.2 Títulos com peso: "Workflows" e o nome do workflow `size: "heading"` + `weight: "semibold"`; nome de cada cartão e de cada passo `weight: "semibold"`; seções ("Deste projeto", "Padrões do plugin", "Passos") como rótulo pequeno em caixa alta — cx: simple
+- [x] 11.3 Número do passo dentro de um círculo colorido (Box redondo com fundo da cor de quem responde), sem o "▸" antes do título; a linha de resumo embaixo do título, em cinza — cx: simple
+- [x] 11.4 Cartão da lista: nome + "›" à esquerda e "N passos" à direita, descrição, etiquetas; sem a linha "id · origem" (a origem vira etiqueta) — cx: simple
+- [x] 11.5 Edição: um só "+ passo aqui", depois do passo aberto (ou no fim, sem passo aberto), não entre todos; tirar a linha "Do zero: grava os passos completos"; Nome e Descrição do workflow num bloco recolhido "Nome e descrição" — cx: simple
+- [x] 11.6 Resumo do passo sem jargão: "Uma sessão faz, com o agente X (modelo Y)" ou "Uma sessão faz, sem agente definido"; nunca "o da sessão" — cx: simple
+- [x] 11.7 `.orquestrador/flows/rapido.json` deste repo: `agent` nos passos de sessão que ainda não têm (`planejar` → planejador, `revisao-codigo` → revisor-codigo) — cx: simple
+- [x] 11.8 Testes atualizados (etiquetas sem colchetes, um só "+ passo aqui", resumo do passo) e os três portões — cx: simple
