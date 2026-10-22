@@ -54,14 +54,14 @@ import {
   flowView,
   mergeFlows,
   ownerPress,
-  parseFlow,
   pressedToast,
+  resolveProjectFlows,
   wakePrompt,
   startFlow,
 } from './flow'
-import type { Moved } from './flow'
+import type { FlowSource, Moved } from './flow'
 import { closePhase, finishLoop, isClosed, loopRefusal, loopUnits, phaseSessions, uncommitted, unitRefusal, withEvents } from './lifecycle'
-import { defaultFlows } from './flows/index'
+import { DEFAULT_FLOWS, defaultFlows } from './flows/index'
 import {
   MOCKUP_STEP,
   RELEASE_OUTCOME,
@@ -933,31 +933,30 @@ const FLOW_SCHEMA = {
 
 const flowsDir = async ($: EngineInterface): Promise<string> => `${await baseDir($)}/flows`
 
-/** Every flow file of one folder, the ones that do not parse named in `problems`. */
-const readFlowDir = async ($: EngineInterface, dir: string): Promise<{ flows: FlowDef[]; problems: string[] }> => {
-  if (!(await $.fs.exists(dir))) return { flows: [], problems: [] }
-  const files = (await $.fs.list(dir)).filter(f => f.kind === 'file' && f.name.endsWith('.json'))
-  const flows: FlowDef[] = []
+/** Every flow file of one folder as read, the ones that are not JSON named in `problems`. */
+const readFlowDir = async ($: EngineInterface, dir: string): Promise<{ files: FlowSource[]; problems: string[] }> => {
+  if (!(await $.fs.exists(dir))) return { files: [], problems: [] }
+  const entries = (await $.fs.list(dir)).filter(f => f.kind === 'file' && f.name.endsWith('.json'))
+  const files: FlowSource[] = []
   const problems: string[] = []
-  for (const file of files) {
-    let raw: unknown
+  for (const file of entries) {
     try {
-      raw = JSON.parse(await $.fs.read(`${dir}/${file.name}`))
+      files.push({ source: `${dir}/${file.name}`, raw: JSON.parse(await $.fs.read(`${dir}/${file.name}`)) })
     } catch {
       problems.push(`${dir}/${file.name}: not valid JSON.`)
-      continue
     }
-    const parsed = parseFlow(raw, `${dir}/${file.name}`)
-    if ('error' in parsed) problems.push(parsed.error)
-    else flows.push(parsed)
   }
-  return { flows, problems }
+  return { files, problems }
 }
 
-/** The mod's default flows, then the project's own in `<repo>/.orquestrador/flows`, which win by id. */
+/**
+ * The mod's default flows, then the project's own in `<repo>/.orquestrador/flows`, which win by id;
+ * a project flow derived from another is resolved, and one that does not resolve is named in `problems`.
+ */
 const loadFlows = async ($: EngineInterface): Promise<{ flows: Record<string, FlowDef>; problems: string[] }> => {
-  const project = await readFlowDir($, `${await $.session.root()}/.orquestrador/flows`)
-  return { flows: mergeFlows(defaultFlows(), project.flows), problems: project.problems }
+  const read = await readFlowDir($, `${await $.session.root()}/.orquestrador/flows`)
+  const project = resolveProjectFlows(DEFAULT_FLOWS, read.files)
+  return { flows: mergeFlows(defaultFlows(), project.flows), problems: [...read.problems, ...project.problems] }
 }
 
 const flowFile = async ($: EngineInterface, change: string, ext: 'json' | 'ndjson'): Promise<string> =>
