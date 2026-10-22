@@ -15,9 +15,9 @@ Plugin para o Claude Code que orquestra uma change com várias sessões em paral
   - `rapido`, para correções pequenas.
   - Um projeto pode ter flows próprios em `.orquestrador/flows/*.json`, escritos do zero ou derivados de outro (veja [Workflows do projeto](#workflows-do-projeto)).
   - Ao iniciar uma change, a coordenação sempre mostra os workflows disponíveis para você escolher.
-- **Passos descritos a fundo, com agente especialista.** Cada passo diz o que recebe, o que produz e o que bloqueia. Cada passo de sessão nomeia o agente que o executa, com modelo e esforço. O plugin traz oito agentes em `orquestrador/agents/`: planejador, revisor-plano, executor, revisor-codigo, abre-pr, publicador, merge e deploy. Um projeto troca qualquer um deles com um arquivo de mesmo nome em `.orquestrador/agents/`.
+- **Passos descritos a fundo, com agente especialista.** Cada passo diz o que recebe, o que produz e o que bloqueia. Cada passo de sessão nomeia o agente que o executa, com modelo e esforço. O plugin traz nove agentes em `orquestrador/agents/`: planejador, revisor-plano, executor, revisor-codigo, abre-pr, publicador, merge, merge-pelo-workflow e deploy. Um projeto troca qualquer um deles com um arquivo de mesmo nome em `.orquestrador/agents/`.
 - **Revisão do PR, merge e deploy como passos.** Servem para projetos trunk-based (um merge na `main`) e para projetos dev/master (merge em `dev` para o QA, em `master` para a produção).
-  - **Merge automático:** só acontece com o PR aprovado no GitHub, o CI verde e os portões finais passados. O mod recusa `gh pr merge` antes da revisão do PR e recusa `--admin` sempre.
+  - **Merge automático, com dois agentes à escolha no passo.** `merge` (o padrão) só mergeia com o PR aprovado no GitHub, o CI verde e os portões finais passados. `merge-pelo-workflow` mergeia quando o workflow aprovou (a revisão de código do flow aprovada, os portões finais passados e o CI verde se houver) e não exige aprovação no GitHub. O mod recusa `gh pr merge` antes da revisão do PR e, enquanto um passo de revisão de código (agente `revisor-codigo` ou id `revisao-codigo`) antes do merge não estiver aprovado desde a última volta do flow; recusa `--admin` sempre. Um passo de revisão de código (agente `revisor-codigo` ou id `revisao-codigo`) precisa declarar o outcome `aprovado`, que a coordenação reporta; o flow que não o declara é recusado ao carregar. O PR da change é reconhecido também pela nota do passo que o abre (agente `abre-pr` ou `publicador`).
   - **Deploy:** espera o deploy do CI, roda rotinas fora do CI, ou faz os dois; pode ser automático, logo depois do merge.
 - **Painel ⚙️ Workflows (`/orquestrador-workflows`).** Fica separado do painel 🧭 e mostra os workflows disponíveis com a configuração de cada passo. Ali você também cria e edita os workflows do projeto.
 - **Gates de qualidade por fase.** São checagens como testes, lint, `check.sh`, `openspec validate`, print da tela e revisão de regras:
@@ -156,6 +156,11 @@ Num projeto dev/master, use dois merges: `merge-dev` (com `"branch": "dev"`), se
 - `merge`, com `{ "branch", "method", "auto" }`. O método padrão é `squash`.
   - Com `auto: false`, o passo é seu: o botão, ou o mod vê o seu `gh pr merge` passar.
   - Com `auto: true`, o passo é automático. A coordenação confere a aprovação e o CI e roda `gh pr merge --<method>` sozinha. O `--admin` é sempre recusado.
+  - `"agent": "merge"` (padrão) exige a aprovação no GitHub e o CI verde. `"agent": "merge-pelo-workflow"` troca a aprovação no GitHub pela do workflow: a revisão de código do flow aprovada, os portões finais passados e o CI verde se houver. O painel explica os dois no passo Merge.
+
+### Publicação automática (este repositório)
+
+O Rápido deste repositório (`.orquestrador/flows/rapido.json`, com o `.orquestrador/config.json`) publica sem a conferência do dono: planejar, validar, executar, revisão de código, checagem (`plugin test`), tipos (`tsc`), publicar, merge automático com `merge-pelo-workflow`, deploy automático (as rotinas de update do plugin, vindas do `config.json`), lançar a versão (release) e fim. O `/reload-plugins` segue com você: nenhuma rotina o roda.
 - `deploy`, com `{ "ci", "commands", "auto" }`.
   - `ci`: espera o deploy do CI. O botão "Deploy do CI concluído" confirma, ou o mod vê `gh run watch … --exit-status` passar.
   - `commands`: as rotinas fora do CI, rodadas na ordem, cada uma como comando próprio.

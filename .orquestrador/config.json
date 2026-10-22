@@ -1,0 +1,16 @@
+{
+  "language": {
+    "ui": "pt-BR"
+  },
+  "merge": {
+    "auto": true
+  },
+  "deploy": {
+    "auto": true,
+    "ci": false,
+    "commands": [
+      "claude plugin marketplace update orquestrador",
+      "claude plugin update orquestrador@orquestrador"
+    ]
+  }
+}

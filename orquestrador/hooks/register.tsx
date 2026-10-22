@@ -66,6 +66,7 @@ import {
   noteOwnerStep,
   observeDeploy,
   pendingReview,
+  pendingCodeReview,
   flowView,
   outcomeLabel,
   stepTitle,
@@ -984,6 +985,14 @@ const refuseMerge = async ($: EngineInterface, command: string): Promise<string 
       reasons.push(
         `the PR review "${review.id}" (${review.title}) of ${run.change} is not answered yet: the owner approves the PR ` +
           `on GitHub and presses "${press}" in the panel before it merges.`,
+      )
+    }
+    const code = flow === undefined ? undefined : pendingCodeReview(flow)
+    if (code !== undefined) {
+      held.push(code.id)
+      reasons.push(
+        `the code review "${code.id}" (${code.title}) of ${run.change} has no "aprovado" since the flow last entered it: ` +
+          "the flow's reviewer approves before the PR merges (a turn back to run again clears it).",
       )
     }
     const open = run.finalGates === undefined ? [] : await finalOpenGates($, run, family)

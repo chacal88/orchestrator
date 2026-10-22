@@ -2,9 +2,10 @@ import { expect, mock, test } from 'claude-code/testing'
 import type { Engine, TestBody } from 'claude-code/testing'
 
 import type { ActivityRecord, FlowState, OrchestrationRun } from '../types'
-import { resolveFlow, startFlow } from '../hooks/flow'
+import { parseFlow, resolveFlow, startFlow } from '../hooks/flow'
 import { DEFAULT_FLOWS, defaultFlows } from '../hooks/flows/index'
 import { sessionActivityKey } from '../hooks/model'
+import { PROJECT, raw as rapidoRepoRaw } from './rapido-repo-flow'
 
 /** The clone is activated, as the owner does from the panel: the mod works only where it is. */
 const ACTIVE: [string, string] = ['/w/.claude/settings.local.json', JSON.stringify({ env: { ORQUESTRADOR: 'barrar' } })]
@@ -89,7 +90,7 @@ const run = (extra: Partial<OrchestrationRun> = {}): OrchestrationRun => ({
 const flowAt = (w: World, current: string, status: FlowState['status'] = 'running', flowId = 'rapido') => {
   const def = defaultFlows().find(f => f.id === flowId)!
   const { state } = startFlow(def, { change: 'demo', coordinatorCwd: '/w', changePath: 'openspec/changes/demo', visual: false }, 1)
-  const parked: FlowState = { ...state, current, status, records: { pr: { outcome: 'aberto', by: 'session', at: 5, note: 'PR aberto #801' } } }
+  const parked: FlowState = { ...state, current, status, records: { 'revisao-codigo': { outcome: 'aprovado', by: 'session', at: 4 }, pr: { outcome: 'aberto', by: 'session', at: 5, note: 'PR aberto #801' } } }
   w.disk.set(`${BASE}/flows/demo.json`, JSON.stringify(parked))
 }
 
@@ -312,4 +313,61 @@ test('the mod ticks the deploy it sees, refuses a routine out of order, and move
   await bash($, 'npm run migrate:prod')
   await bash($, 'npm run seed:prod')
   expect(flowOf(w)).toMatchObject({ current: 'producao', records: { deploy: { outcome: 'passou', by: 'automatic' } } })
+})
+
+/** The trunk flow parked at `current`, with the code review's record set (or removed) as given. */
+const withCodeReview = (w: World, current: string, outcome: string | undefined) => {
+  trunkAt(w, current)
+  const state = flowOf(w)
+  const { 'revisao-codigo': _was, ...rest } = state.records
+  const records = outcome === undefined ? rest : { ...rest, 'revisao-codigo': { outcome, by: 'session' as const, at: 6 } }
+  w.disk.set(`${BASE}/flows/demo.json`, JSON.stringify({ ...state, records }))
+}
+
+test("the change's merge waits for the flow's code review: refused without it, let through once approved, refused again after a rejection", async ($, on) => {
+  const w = world(on)
+  setup(w, { finalGates: undefined })
+  w.heads = { '805': 'claude/product-feed-purpose' }
+  const refused = /the code review "revisao-codigo" \(.*\) of demo has no "aprovado" since the flow last entered it/
+  withCodeReview(w, 'merge', undefined)
+  expect(await merge($, 'gh pr merge 801 --squash')).toMatch(refused)
+  expect(w.disk.get(`${BASE}/gates/demo.ndjson`) ?? '').toContain('"gates":["revisao-codigo"]')
+  // an unrelated PR is not the review's to hold
+  expect(await merge($, 'gh pr merge 805 --squash')).toBeUndefined()
+  // approved: the merge goes through
+  withCodeReview(w, 'merge', 'aprovado')
+  expect(await merge($, 'gh pr merge 801 --squash')).toBeUndefined()
+  // rejected: refused again
+  withCodeReview(w, 'merge', 'rejeitado')
+  expect(await merge($, 'gh pr merge 801 --squash')).toMatch(refused)
+  // a finished flow holds nothing
+  withCodeReview(w, 'merge', undefined)
+  w.disk.set(`${BASE}/flows/demo.json`, JSON.stringify({ ...flowOf(w), status: 'done' }))
+  expect(await merge($, 'gh pr merge 801 --squash')).toBeUndefined()
+})
+
+/** This repository's own rapido.json parked at its merge: the PR is opened (and cited) by the publicar step, not by a step named pr. */
+const repoFlowAt = (w: World, review: string | undefined) => {
+  const def = parseFlow(rapidoRepoRaw, 'rapido.json', PROJECT)
+  if ('error' in def) throw new Error(def.error)
+  const { state } = startFlow(def, { change: 'demo', coordinatorCwd: '/w', changePath: 'openspec/changes/demo', visual: false }, 1)
+  const records: FlowState['records'] = { publicar: { outcome: 'publicado', by: 'session', at: 5, note: 'PR aberto #801' } }
+  if (review !== undefined) records['revisao-codigo'] = { outcome: review, by: 'session', at: 4 }
+  w.disk.set(`${BASE}/flows/demo.json`, JSON.stringify({ ...state, current: 'merge', attempts: { merge: 1 }, records }))
+}
+
+test("the repository's own rapido flow: the PR cited by publicar is the change's, so the merge waits for the code review", async ($, on) => {
+  const w = world(on)
+  setup(w, { finalGates: undefined })
+  // a head branch that carries neither the change id nor a phase session's branch
+  w.heads = { '801': 'claude/release-notes', '805': 'claude/product-feed-purpose' }
+  const refused = /the code review "revisao-codigo" \(.*\) of demo has no "aprovado" since the flow last entered it/
+  repoFlowAt(w, undefined)
+  expect(await merge($, 'gh pr merge 801 --squash')).toMatch(refused)
+  // an unrelated PR stays free
+  expect(await merge($, 'gh pr merge 805 --squash')).toBeUndefined()
+  repoFlowAt(w, 'rejeitado')
+  expect(await merge($, 'gh pr merge 801 --squash')).toMatch(refused)
+  repoFlowAt(w, 'aprovado')
+  expect(await merge($, 'gh pr merge 801 --squash')).toBeUndefined()
 })

@@ -383,6 +383,7 @@ export const renderWorkflows = (els: WorkflowsElements, view: WorkflowsView, act
     out.push(row(t.rows.model, modelRow(s)))
     if (s.command !== undefined) out.push(row(t.rows.command, s.command))
     if (s.merge !== undefined) out.push(row(t.rows.merge, t.mergeRow(s.merge.branch, s.merge.method, yes(s.merge.auto))))
+    if (s.merge !== undefined) out.push(row(t.merge.approvalRow, t.merge.approval(s.agent)))
     if (s.deploy !== undefined) {
       out.push(row(t.rows.deploy, t.deployRow(yes(s.deploy.ci), s.deploy.commands.length === 0 ? t.noneRoutine : s.deploy.commands.join(' ; '), yes(s.deploy.auto))))
     }
@@ -482,6 +483,7 @@ export const renderWorkflows = (els: WorkflowsElements, view: WorkflowsView, act
     else if (Select !== undefined) {
       if (takesAgent) {
         body.push(agentSelect(`wf-agent:${s.id}`, s.agent, set('agent')), agentAbout(s.agent))
+        if (s.merge !== undefined) body.push(help(t.merge.approval(s.agent)))
       }
       const fromAgent = agentModel(s.agent)
       const models = [...new Set([...MODELS, ...(s.model === undefined ? [] : [s.model])])]
@@ -529,7 +531,7 @@ export const renderWorkflows = (els: WorkflowsElements, view: WorkflowsView, act
             {t.merge.auto(yes(s.merge.auto))}
           </Button>,
         ),
-        help(t.merge.autoHelp),
+        help(t.merge.autoHelp(s.agent)),
       )
     }
     if (s.deploy !== undefined) {
