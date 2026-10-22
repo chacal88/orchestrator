@@ -201,6 +201,35 @@ test('a gh call that only reads, and text that only mentions a merge, still pass
   expect(opaqueMerge('gh pr view 805 --json mergeable')).toBeUndefined()
 })
 
+// 9.1 — a readable merge does not cover a hidden one beside it
+
+test('a hidden merge next to a readable one is still refused, command by command', async ($, on) => {
+  orchestrated(world(on), undefined)
+  expect(await merge($, 'gh pr merge 805 --squash && echo 805 | xargs gh pr merge --admin')).toMatch(OPAQUE)
+  expect(await merge($, 'cp a b; gh pr merge 805 --squash; timeout 5 gh pr merge 805 --admin')).toMatch(OPAQUE)
+  expect(await merge($, "gh pr merge 805 --squash\nbash <<'EOF'\ngh pr merge 805 --admin\nEOF")).toMatch(OPAQUE)
+  expect(await merge($, 'gh pr merge 805 --squash && G=gh && $G pr merge 805 --admin')).toMatch(OPAQUE)
+  // a readable merge with ordinary commands around it passes
+  expect(await merge($, 'git pull && gh pr merge 805 --squash && npm test')).toBeUndefined()
+  expect(await merge($, 'gh pr merge 805 --squash && bash scripts/after-merge-check.sh')).toBeUndefined()
+})
+
+// 9.2 — git runs commands of its own
+
+test('a git that runs a command is not inert: alias with !, rebase --exec, filter-branch, bisect run', async ($, on) => {
+  orchestrated(world(on), undefined)
+  for (const command of [
+    "git -c alias.x='!gh pr merge 805 --admin' x",
+    "git rebase -i main --exec 'gh pr merge 805 --admin'",
+    "git rebase main -x 'gh pr merge 805 --admin'",
+    "git filter-branch --tree-filter 'gh pr merge 805 --admin' HEAD",
+    "git bisect run sh -c 'gh pr merge 805 --admin'",
+  ]) expect(await merge($, command)).toMatch(OPAQUE)
+  expect(await merge($, "git commit -m 'gh pr merge needs the review'")).toBeUndefined()
+  expect(await merge($, 'git log --grep "gh pr merge" --oneline')).toBeUndefined()
+  expect(await merge($, 'git add -A && git commit -m "merge gh docs" && git push')).toBeUndefined()
+})
+
 test('the merge calls a command line runs, and the PR each names', () => {
   expect(mergeCalls('gh pr merge 5 --squash').map(c => [c.via, c.selector, c.admin, c.dynamic])).toEqual([['pr', '5', false, false]])
   expect(mergeCalls('gh -R o/r pr merge feat/x -d').map(c => c.selector)).toEqual(['feat/x'])

@@ -281,3 +281,14 @@ Ran 229 tests across 21 files.
 - Fora do alcance, como antes: alias do usuário, script em arquivo (`bash merge.sh`) e `bash -c "$X"` com o
   conteúdo inteiro numa variável; `git merge` + `git push` direto na branch protegida fica com a proteção de
   branch do GitHub, que precisa de "include administrators" ligado para valer também para admins.
+
+## Fase 9 — Correções da 3ª revisão (9.1, 9.2), feitas pela coordenação, depois do "Tentar de novo" do dono
+
+- 9.1 `opaqueMerge` julga cada comando da linha. Sem merge lido, vale a regra da fase 8 (qualquer comando que
+  executa algo). Com um merge lido, cada outro comando é recusado quando ele mesmo cita `gh` e `merge`, quando é um
+  shell lendo do stdin ou quando o executável vem de variável; `refuseMerge` passou a consultar `opaqueMerge` sempre.
+  `gh pr merge 6 --squash && xargs gh pr merge --admin` e `…; timeout 5 gh pr merge 5 --admin` são recusados;
+  `git pull && gh pr merge 805 --squash && npm test` e `… && bash scripts/after-merge-check.sh` seguem livres.
+- 9.2 `git` saiu de `INERT`: `gitRuns` recusa `-c alias.*=!…`, `rebase --exec`/`-x`, `filter-branch` e `bisect run`
+  quando a linha cita `gh` e `merge`; `git commit`/`log`/`add`/`push` seguem livres.
+- Testes em `tests/merge-safe.test.ts` (2). Restos registrados na fase 8 seguem como estão.

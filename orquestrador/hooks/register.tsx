@@ -899,7 +899,7 @@ const mergesChangePr = async (
  */
 const refuseMerge = async ($: EngineInterface, command: string): Promise<string | undefined> => {
   const calls = mergeCalls(command)
-  const opaque = calls.length === 0 ? opaqueMerge(command) : undefined
+  const opaque = opaqueMerge(command)
   if (calls.length === 0 && opaque === undefined) return undefined
   const root = await $.session.root()
   const run = await loadRun($, root)

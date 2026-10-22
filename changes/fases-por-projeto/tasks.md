@@ -55,5 +55,5 @@
 
 ## 9. Correções da 3ª revisão
 
-- [ ] 9.1 Merge escondido avaliado por comando: um comando que não é `gh` lido nem inerte e cita `gh` e `merge` é recusado mesmo com outro merge legível na mesma linha (`gh pr merge 6 --squash && xargs gh pr merge --admin`); teste — cx: simple
-- [ ] 9.2 `git` sai dos inertes: `git -c alias.*=!…`, `git rebase --exec`/`-x`, `git filter-branch --*-filter`/`--exec` e `git bisect run` com `gh` e `merge` são recusados; `git commit/log/diff/status/add/push` seguem livres; teste — cx: simple
+- [x] 9.1 Merge escondido avaliado por comando: um comando que não é `gh` lido nem inerte e cita `gh` e `merge` é recusado mesmo com outro merge legível na mesma linha (`gh pr merge 6 --squash && xargs gh pr merge --admin`); teste — cx: simple
+- [x] 9.2 `git` sai dos inertes: `git -c alias.*=!…`, `git rebase --exec`/`-x`, `git filter-branch --*-filter`/`--exec` e `git bisect run` com `gh` e `merge` são recusados; `git commit/log/diff/status/add/push` seguem livres; teste — cx: simple

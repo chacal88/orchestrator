@@ -576,24 +576,47 @@ export const mergeCalls = (command: string): MergeCall[] =>
 
 /** Programs that only print, read or move around what they are given: a merge in their arguments does not run. */
 const INERT = new Set([
-  'echo', 'printf', 'cat', 'grep', 'egrep', 'rg', 'git', 'head', 'tail', 'less', 'jq', 'wc', 'sort', 'uniq', 'diff',
+  'echo', 'printf', 'cat', 'grep', 'egrep', 'rg', 'head', 'tail', 'less', 'jq', 'wc', 'sort', 'uniq', 'diff',
   'cd', 'ls', 'pwd', 'true', 'false', 'test', '[', 'mkdir', 'touch', 'cp', 'mv', 'tee',
 ])
+
+/** A `git` that runs a command of its own: an alias with `!`, `rebase --exec`/`-x`, `filter-branch`, `bisect run`. */
+const gitRuns = (words: readonly Word[]): boolean => {
+  const texts = words.map(w => w.text)
+  return (
+    texts.some(t => /^alias\.[^=]*=\s*!/.test(t)) ||
+    texts.includes('filter-branch') ||
+    (texts.includes('rebase') && texts.some(t => t === '-x' || t === '--exec' || t.startsWith('--exec='))) ||
+    (texts.includes('bisect') && texts.includes('run'))
+  )
+}
+
+const namesMerge = (text: string): boolean => /\bgh\b/.test(text) && /merge/i.test(text)
 
 /**
  * A command line that names `gh` and a merge the mod cannot read as one: the `gh` runs behind
  * another program (`xargs`, `find -exec`, `timeout`, `nice`, `sudo -u`, `env -u`…), from a script
- * a shell reads on stdin (a heredoc or a pipe into `bash`), or under a name a variable holds
- * (`$G pr merge`). Its text when it is that, so the guard fails closed; undefined when every
- * command is a `gh` the mod reads or a program that only prints.
+ * a shell reads on stdin (a heredoc or a pipe into `bash`), through a `git` that runs commands, or
+ * under a name a variable holds (`$G pr merge`). Its text when it is that, so the guard fails
+ * closed; undefined when every command is a `gh` the mod reads or a program that only prints.
+ *
+ * With no merge read on the line, any such command counts. With one read, each other command is
+ * judged on its own, so a readable merge cannot cover a hidden one beside it
+ * (`gh pr merge 6 --squash && xargs gh pr merge --admin`) and `gh pr merge 6 && npm test` passes.
  */
 export const opaqueMerge = (command: string): string | undefined => {
-  if (!/\bgh\b/.test(command) || !/merge/i.test(command) || mergeCalls(command).length > 0) return undefined
+  if (!namesMerge(command)) return undefined
+  const read = mergeCalls(command).length > 0
   const hidden = commandsRun(command).find(words => {
     const head = words[0]
-    if (head === undefined) return false
+    if (head === undefined || mergeCall(words) !== undefined) return false
     const name = head.text.split('/').pop() ?? ''
-    return head.dynamic || (name !== 'gh' && !INERT.has(name))
+    if (name === 'gh' && !head.dynamic) return false
+    const runs = head.dynamic || (name === 'git' ? gitRuns(words) : !INERT.has(name))
+    if (!runs) return false
+    if (!read) return true
+    const stdinShell = SHELLS.test(name) && words.slice(1).every(w => w.text.startsWith('-') || w.text.startsWith('<'))
+    return head.dynamic || stdinShell || namesMerge(words.map(w => w.text).join(' '))
   })
   return hidden?.map(w => w.text).join(' ').replace(/\s+/g, ' ').slice(0, 80)
 }
