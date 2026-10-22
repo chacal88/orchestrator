@@ -1,0 +1,142 @@
+import type { EngineInterface } from 'claude-code'
+
+import type { ActivationLevel } from '../types'
+
+/** The file the activation lives in: local to the clone, kept out of git, read by Claude Code on every change. */
+export const SETTINGS_PATH = '.claude/settings.local.json'
+export const LEVELS: readonly ActivationLevel[] = ['barrar', 'lembrar']
+/** The word in the hook's command by which "Desativar" finds the hook the mod put there, and only it. */
+export const HOOK_MARK = 'orquestrador:ativar'
+
+/** What the SessionStart hook prints: stdout of a `command` hook becomes context for the session. */
+export const HOOK_COMMAND =
+  'printf \'%s\\n\' "Orquestrador ativo neste clone (nivel: ${ORQUESTRADOR:-barrar}). Siga o flow da change em andamento; ' +
+  'passos do dono so o dono responde no painel (/orquestrador); sem merge --admin e sem pular portoes." ' +
+  `# ${HOOK_MARK}`
+
+type Json = Record<string, unknown>
+const isRecord = (v: unknown): v is Json => typeof v === 'object' && v !== null && !Array.isArray(v)
+
+/** The file's text as an object, or why it is not one; an empty or absent file is an empty object. */
+export const parseSettings = (text: string | undefined): { data: Json } | { error: 'notJson' | 'notObject' } => {
+  if (text === undefined || text.trim() === '') return { data: {} }
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(text)
+  } catch {
+    return { error: 'notJson' }
+  }
+  return isRecord(parsed) ? { data: parsed } : { error: 'notObject' }
+}
+
+/** The level the file marks, or none: only the two known words count. */
+export const levelOf = (data: Json): ActivationLevel | undefined => {
+  const env = data.env
+  const level = isRecord(env) ? env.ORQUESTRADOR : undefined
+  return LEVELS.find(l => l === level)
+}
+
+const ours = (hook: unknown): boolean => isRecord(hook) && typeof hook.command === 'string' && hook.command.includes(HOOK_MARK)
+
+/** The SessionStart groups without the mod's hook; a group left with no hook goes too. */
+const withoutOurs = (groups: unknown): unknown[] =>
+  (Array.isArray(groups) ? groups : []).flatMap((group: unknown) => {
+    if (!isRecord(group) || !Array.isArray(group.hooks)) return [group]
+    const kept = group.hooks.filter(h => !ours(h))
+    if (kept.length === group.hooks.length) return [group]
+    return kept.length === 0 ? [] : [{ ...group, hooks: kept }]
+  })
+
+/** The settings with the mark at `level` and the mod's hook; every other key and hook as it was. */
+export const activate = (data: Json, level: ActivationLevel): Json => {
+  const next: Json = { ...data }
+  next.env = { ...(isRecord(data.env) ? data.env : {}), ORQUESTRADOR: level }
+  const hooks: Json = isRecord(data.hooks) ? { ...data.hooks } : {}
+  hooks.SessionStart = [...withoutOurs(hooks.SessionStart), { hooks: [{ type: 'command', command: HOOK_COMMAND }] }]
+  next.hooks = hooks
+  return next
+}
+
+/** The settings without the mark and the mod's hook, and without the `env`/`hooks` keys that leaves empty. */
+export const deactivate = (data: Json): Json => {
+  const next: Json = { ...data }
+  if (isRecord(data.env)) {
+    const { ORQUESTRADOR: _gone, ...env } = data.env
+    if (Object.keys(env).length === 0) delete next.env
+    else next.env = env
+  }
+  if (isRecord(data.hooks)) {
+    const { SessionStart: groups, ...hooks } = data.hooks
+    if (groups !== undefined) {
+      const kept = withoutOurs(groups)
+      if (kept.length > 0) (hooks as Json).SessionStart = kept
+    }
+    if (Object.keys(hooks).length === 0) delete next.hooks
+    else next.hooks = hooks
+  }
+  return next
+}
+
+export const settingsText = (data: Json): string => `${JSON.stringify(data, null, 2)}\n`
+
+/**
+ * The repository's main checkout and its git dir: a worktree reads the main checkout's settings,
+ * so the activation lives there. Without git, the session's own folder.
+ */
+const found = new Map<string, { root: string; gitDir: string }>()
+export async function projectRoot($: EngineInterface): Promise<{ root: string; gitDir: string | undefined }> {
+  const cwd = await $.session.root()
+  const known = found.get(cwd)
+  if (known !== undefined) return known
+  const ran = await $.process.run(['git', '-C', cwd, 'rev-parse', '--path-format=absolute', '--git-common-dir'], { cwd, timeoutMs: 10_000 }).catch(() => undefined)
+  const dir = ran?.exitCode === 0 ? ran.stdout.trim() : ''
+  if (dir.startsWith('/') && dir.endsWith('/.git')) {
+    const here = { root: dir.slice(0, -'/.git'.length), gitDir: dir }
+    found.set(cwd, here)
+    return here
+  }
+  return { root: cwd, gitDir: undefined }
+}
+
+export type Activation = { level: ActivationLevel | undefined; invalid: boolean }
+
+async function readSettings($: EngineInterface, path: string): Promise<string | undefined> {
+  try {
+    return (await $.fs.exists(path)) ? await $.fs.read(path) : undefined
+  } catch {
+    return undefined
+  }
+}
+
+/** The mark, read from the file itself so it counts at once, with no restart. A broken file marks nothing. */
+export async function readActivation($: EngineInterface): Promise<Activation> {
+  const { root } = await projectRoot($)
+  const parsed = parseSettings(await readSettings($, `${root}/${SETTINGS_PATH}`))
+  return 'error' in parsed ? { level: undefined, invalid: true } : { level: levelOf(parsed.data), invalid: false }
+}
+
+/** Keeps the file out of git when the mod created it: the clone's exclude, never the .gitignore. */
+async function ensureIgnored($: EngineInterface, root: string, gitDir: string | undefined): Promise<void> {
+  if (gitDir === undefined) return
+  const ran = await $.process.run(['git', '-C', root, 'check-ignore', '-q', SETTINGS_PATH], { cwd: root, timeoutMs: 10_000 }).catch(() => undefined)
+  if (ran === undefined || ran.exitCode === 0) return
+  const exclude = `${gitDir}/info/exclude`
+  const prior = (await readSettings($, exclude)) ?? ''
+  if (prior.split('\n').some(l => l.trim() === SETTINGS_PATH || l.trim() === `**/${SETTINGS_PATH}`)) return
+  await $.fs.write(exclude, `${prior}${prior === '' || prior.endsWith('\n') ? '' : '\n'}${SETTINGS_PATH}\n`)
+}
+
+export type Written = { ok: true } | { ok: false; error: 'notJson' | 'notObject' }
+
+/** Turns the activation on at `level`, or off with `null`; a file that is not a JSON object is left untouched. */
+export async function writeActivation($: EngineInterface, level: ActivationLevel | null): Promise<Written> {
+  const { root, gitDir } = await projectRoot($)
+  const path = `${root}/${SETTINGS_PATH}`
+  const text = await readSettings($, path)
+  const parsed = parseSettings(text)
+  if ('error' in parsed) return { ok: false, error: parsed.error }
+  if (level === null && text === undefined) return { ok: true }
+  await $.fs.write(path, settingsText(level === null ? deactivate(parsed.data) : activate(parsed.data, level)))
+  if (text === undefined) await ensureIgnored($, root, gitDir)
+  return { ok: true }
+}
