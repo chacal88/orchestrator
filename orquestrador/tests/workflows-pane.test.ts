@@ -7,6 +7,7 @@ import { DEFAULT_FLOWS } from '../hooks/flows/index'
 import { changesOf, draftFile, draftOf, moveStep, setStepField, toggleStep } from '../hooks/workflow-edit'
 import { listAgents } from '../hooks/flow-files'
 import { workflowsText } from '../hooks/i18n-workflows'
+import { PROJECT, raw as RAPIDO_REPO } from './rapido-repo-flow'
 
 type On = Parameters<TestBody>[1]
 type Surface = 'desktop' | 'terminal' | 'mobile'
@@ -53,6 +54,10 @@ const world = (on: On): World => {
       .filter(k => k.startsWith(`${e.path}/`) && !k.slice(e.path.length + 1).includes('/'))
       .map(k => ({ name: k.slice(e.path.length + 1), kind: 'file', size: 1, mtimeMs: 0, isLink: false })) as never,
   }))
+  // a session start, as a reload of the plugin's code runs again
+  on('command.register', () => ({ value: undefined }) as never)
+  on('tool.register', () => ({ value: undefined }) as never)
+  on('session.start', () => ({ cwd: '/w' }) as never)
   on('tool.list', () => ({ value: [] as never }))
   on('tool.call', () => ({ result: 'ok', text: 'ok' }) as never)
   on('ui.open', ($, e) => {
@@ -871,4 +876,113 @@ test('the merge texts follow the agent: workflow, GitHub, and an unknown project
     expect(t.merge.approval('meu-merge')).not.toMatch(/GitHub/)
     expect(t.merge.approval('merge-pelo-workflow')).toMatch(/aprovado/)
   }
+})
+
+/** This repository's rapido.json as the disk holds it, beside its config.json (merge and deploy automatic, routines). */
+const repoRapido = (w: World): string => {
+  const text$ = `${JSON.stringify(RAPIDO_REPO, null, 2)}\n`
+  w.disk.set(`${DIR}/rapido.json`, text$)
+  w.disk.set('/w/.orquestrador/config.json', JSON.stringify({ language: { ui: 'pt-BR' }, ...PROJECT }))
+  return text$
+}
+/** `/reload-plugins`: the mod's code loaded again, its `session.start` run again, the state kept. */
+const reload = ($: Engine) => $.session.start({ cwd: '/w', surface: 'desktop', isInteractive: true } as never)
+const repoCopy = () => JSON.parse(JSON.stringify(RAPIDO_REPO)) as { steps: Record<string, unknown>[] }
+
+test('a draft kept from before (the pane drawn again, the command run again) and Salvar with nothing changed leaves the file as it was', async ($, on) => {
+  const w = world(on)
+  const before = repoRapido(w)
+  const ui = await mount($)
+  await ui.press({ key: 'wf-open:rapido' })
+  await ui.press({ key: 'wf-edit' })
+  await ui.unmount()
+  // the pane closed and opened again: the editor comes back with the draft, "Salvar" its first button
+  await $.command.run({ command: 'orquestrador-workflows' } as never)
+  await $.command.run({ command: 'orquestrador-workflows' } as never)
+  const again = await mount($)
+  expect(await again.find(text(/Editando Rápido \(plugin\)/))).toBeDefined()
+  expect(await again.find(text(/Nenhuma mudança ainda/))).toBeDefined()
+  await again.press({ key: 'wf-save' })
+  // this press used to write the file again, with method squash, auto and the defaults in every step
+  expect(w.disk.get(`${DIR}/rapido.json`)).toBe(before)
+  expect(await again.find(text(/Nada mudou: \.orquestrador\/flows\/rapido\.json ficou como estava/))).toBeDefined()
+  expect(await again.find(text(/Salvo em/))).toBeUndefined()
+  await again.unmount()
+})
+
+test('after the code reloads, a draft and a notice of the earlier load are set aside: nothing is offered to save', async ($, on) => {
+  const w = world(on)
+  const before = repoRapido(w)
+  const ui = await mount($)
+  await ui.press({ key: 'wf-open:rapido' })
+  await ui.press({ key: 'wf-edit' })
+  await ui.press({ key: 'wf-step:planejar' })
+  await ui.select({ key: 'wf-agent:planejar', value: 'executor' })
+  expect(await ui.find(text(/passo "Planejar": agente/))).toBeDefined()
+  await ui.unmount()
+
+  await reload($)
+  const after = await mount($)
+  expect(await after.find({ key: 'wf-save' })).toBeUndefined()
+  expect(await after.find(text(/Editando/))).toBeUndefined()
+  expect(await after.find(text(/O rascunho de Rápido \(plugin\) era de antes de o plugin ser recarregado/))).toBeDefined()
+  expect(w.disk.get(`${DIR}/rapido.json`)).toBe(before)
+  // a new edit starts from the file, and its save is this load's
+  await after.press({ key: 'wf-edit' })
+  expect(await after.find(text(/Nenhuma mudança ainda/))).toBeDefined()
+  await after.press({ key: 'wf-step:planejar' })
+  await after.select({ key: 'wf-agent:planejar', value: 'executor' })
+  await after.press({ key: 'wf-save' })
+  expect(await after.find(text(/Salvo em \.orquestrador\/flows\/rapido\.json/))).toBeDefined()
+  await after.unmount()
+
+  // the "Salvo em" of the earlier load is not shown again after a reload
+  await reload($)
+  const later = await mount($)
+  expect(await later.find(text(/Salvo em/))).toBeUndefined()
+  await later.unmount()
+})
+
+test('Salvar writes only what changed: the agent alone, in the file\'s order, merge and deploy still following the project', async ($, on) => {
+  const w = world(on)
+  repoRapido(w)
+  const ui = await mount($)
+  await ui.press({ key: 'wf-open:rapido' })
+  await ui.press({ key: 'wf-edit' })
+  await ui.press({ key: 'wf-step:planejar' })
+  await ui.select({ key: 'wf-agent:planejar', value: 'executor' })
+  await ui.press({ key: 'wf-save' })
+  const want = repoCopy()
+  want.steps[0]!.agent = 'executor'
+  expect(w.disk.get(`${DIR}/rapido.json`)).toBe(`${JSON.stringify(want, null, 2)}\n`)
+
+  // what the project supplies stays the project's: the saved file reads it from config.json still
+  const saved = parseFlow(file(w, 'rapido'), 'rapido.json', PROJECT)
+  if ('error' in saved) throw new Error(saved.error)
+  expect(saved.steps.find(s => s.id === 'merge')?.merge?.fromProject).toEqual(['auto'])
+  expect(saved.steps.find(s => s.id === 'deploy')?.deploy?.fromProject).toEqual(expect.arrayContaining(['auto', 'commands']))
+
+  // a merge field changed is the only one the block gains; method and auto stay out
+  await ui.press({ key: 'wf-edit' })
+  await ui.press({ key: 'wf-step:merge' })
+  await ui.input({ key: 'wf-merge-branch:merge', text: 'dev' })
+  await ui.press({ key: 'wf-save' })
+  want.steps.find(s => s.id === 'merge')!.merge = { branch: 'dev' }
+  expect(w.disk.get(`${DIR}/rapido.json`)).toBe(`${JSON.stringify(want, null, 2)}\n`)
+  await ui.unmount()
+})
+
+test('draftFile: a whole workflow opened from its file and saved unchanged is the file itself, no default nor inherited value added', () => {
+  const t = workflowsText(undefined)
+  const flow = parseFlow(RAPIDO_REPO, 'rapido.json', PROJECT)
+  if ('error' in flow) throw new Error(flow.error)
+  const draft = draftOf(flow, undefined, false)
+  const out = draftFile(draft, raw => parseFlow(raw, 'rapido.json', PROJECT), t, PROJECT, RAPIDO_REPO as Record<string, unknown>)
+  if ('error' in out) throw new Error(out.error)
+  expect(JSON.stringify(out.raw, null, 2)).toBe(JSON.stringify(RAPIDO_REPO, null, 2))
+  // with no file to follow, the defaults still stay out
+  const fresh = draftFile(draft, raw => parseFlow(raw, 'rapido.json', PROJECT), t, PROJECT)
+  if ('error' in fresh) throw new Error(fresh.error)
+  const text$ = JSON.stringify(fresh.raw)
+  for (const field of ['"maxAttempts":3', '"requiresEvidence":false', '"cleanup":false', '"method":"squash"']) expect(text$).not.toContain(field)
 })

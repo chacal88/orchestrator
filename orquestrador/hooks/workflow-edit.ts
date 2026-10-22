@@ -1,5 +1,5 @@
 import type { FlowDef, FlowDeploy, FlowDetect, FlowMerge, ProjectSettings, WorkflowDraft, WorkflowDraftStep, WorkflowForms } from '../types'
-import { FLOW_END, PRODUCTION_STEP, asWritten, ownDetect, resolveProjectFlows } from './flow'
+import { DEFAULT_MAX_ATTEMPTS, FLOW_END, PRODUCTION_STEP, asWritten, ownDetect, resolveProjectFlows } from './flow'
 import type { FlowSource } from './flow'
 import { LIBRARY, NEXT_STEP, libraryStep } from './flows/library'
 import { localize, parseLocalized } from './i18n'
@@ -39,6 +39,87 @@ const fileStep = (step: RawStep): RawStep => {
   return out
 }
 const outcomesOf = (step: RawStep): Outcomes => (step.outcomes ?? {}) as Outcomes
+const isRecord = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v)
+const fromOf = (block: unknown): string[] => (isRecord(block) && Array.isArray(block.fromProject) ? (block.fromProject as string[]) : [])
+
+/** What parseFlow gives a step field the file leaves out: written or not, the step reads the same. */
+const STEP_DEFAULTS: Record<string, unknown> = { maxAttempts: DEFAULT_MAX_ATTEMPTS, requiresEvidence: false, cleanup: false }
+
+/** A step no file holds yet, as written: `fileStep`, less every field at the value parseFlow would give it anyway. */
+const leanStep = (step: RawStep, project: ProjectSettings): RawStep => {
+  const out = fileStep(step)
+  for (const [key, value] of Object.entries(STEP_DEFAULTS)) if (same(out[key], value)) delete out[key]
+  out.outcomes = Object.fromEntries(
+    Object.entries(outcomesOf(out)).map(([name, o]) => [name, o.label === name ? { next: o.next } : o]),
+  )
+  const merge = out.merge as Record<string, unknown> | undefined
+  if (merge?.method === 'squash' && project.merge?.method === undefined) delete merge.method
+  const deploy = out.deploy as Record<string, unknown> | undefined
+  if (deploy?.ci === false && project.deploy?.ci === undefined) delete deploy.ci
+  return out
+}
+
+/** `raw`'s keys in the order `like` has them, the others after. */
+const orderLike = (raw: RawStep, like: RawStep | undefined): RawStep =>
+  like === undefined
+    ? raw
+    : Object.fromEntries([...Object.keys(like).filter(k => k in raw), ...Object.keys(raw).filter(k => !(k in like))].map(k => [k, raw[k]]))
+
+/**
+ * A merge or deploy block the owner changed, against the file's: a value the project supplies stays
+ * out (it keeps following the project), one the file wrote is written, and one the file left out is
+ * written only when the owner changed it or made it the step's own.
+ */
+const keptBlock = (block: unknown, written: unknown, opened: unknown): Record<string, unknown> => {
+  const values = valuesOf(block) ?? {}
+  const from = fromOf(block)
+  const raw = isRecord(written) ? written : {}
+  const was = valuesOf(opened)
+  const out: Record<string, unknown> = {}
+  for (const key of [...new Set([...Object.keys(raw), ...Object.keys(values)])]) {
+    if (key === 'fromProject' || values[key] === undefined || from.includes(key)) continue
+    if (key in raw || was === undefined || fromOf(opened).includes(key) || stable(values[key]) !== stable(was[key])) out[key] = values[key]
+  }
+  return out
+}
+
+/** The outcomes as the file wrote them, each leading where the draft leads it now. */
+const keptOutcomes = (want: Outcomes, written: unknown): Record<string, unknown> => {
+  const raw = isRecord(written) ? written : {}
+  return Object.fromEntries(
+    Object.entries(want).map(([name, o]) => {
+      const was = raw[name]
+      if (was === undefined) return [name, o.label === name ? { next: o.next } : o]
+      if (!isRecord(was)) return [name, o.next]
+      return [name, { ...was, next: o.next }]
+    }),
+  )
+}
+
+/**
+ * A step the file already holds, written back as the file wrote it: a field the owner did not change
+ * keeps the file's own form, or stays out when the file left it out (a default, a value of the
+ * project's); one he changed takes the draft's value; the keys keep the file's order.
+ */
+const keptStep = (want: RawStep, written: RawStep, opened: RawStep): RawStep => {
+  const out: RawStep = {}
+  for (const key of [...new Set([...Object.keys(written), ...Object.keys(want)])]) {
+    const value = want[key]
+    if (key === 'outcomes') {
+      out.outcomes = keptOutcomes(outcomesOf(want), written.outcomes)
+      continue
+    }
+    const was = key === 'detect' ? ownDetect(opened.detect as FlowDetect | undefined) : opened[key]
+    const untouched = stable(value) === stable(was)
+    if (key === 'merge' || key === 'deploy') {
+      if (value === undefined) continue
+      out[key] = untouched && written[key] !== undefined ? written[key] : keptBlock(value, written[key], opened[key])
+    } else if (untouched) {
+      if (key in written) out[key] = written[key]
+    } else if (value !== undefined) out[key] = value
+  }
+  return out
+}
 
 export const EMPTY_FORMS: WorkflowForms = { newId: '', newBase: '', stepTitle: '', stepKind: 'session', stepAgent: '', stepCommand: '', libraryUse: '', routineFor: '' }
 
@@ -326,21 +407,43 @@ const sequenceOf = (flow: FlowDef): string => flow.steps.map(s => s.id).join(' â
 /** The fields the editor changes on a step, compared between the draft and what the mod would load. */
 const EDITABLE = ['agent', 'model', 'effort', 'merge', 'deploy', 'details'] as const
 
+/** The file's name and description: the file's own (a text per language kept) while the owner left them as opened. */
+const headOf = (draft: WorkflowDraft, original: Record<string, unknown> | undefined): RawStep => {
+  const init = draft.initial
+  const keep = (field: 'title' | 'description') => original !== undefined && init !== undefined && draft[field] === init[field]
+  const title = keep('title') && original?.title !== undefined ? original.title : draft.title.trim() || draft.id
+  const description = keep('description') ? original?.description : draft.description
+  return { id: draft.id, title, ...(description === undefined ? {} : { description }) }
+}
+
 /**
  * The file "Salvar" writes for a draft: with a base, the derived form (`remove`, `add`, `override`,
  * and `order` only when the steps moved); without one, the whole `steps`. `resolve` resolves a
  * candidate as the mod would load it; the file is returned only when it resolves to the draft.
+ * `original` is the file the draft was opened from: what the owner did not change is written as it
+ * wrote it, in its order, and no field it left out (a default, a value the project supplies) comes in.
  */
 export const draftFile = (
   draft: WorkflowDraft,
   resolve: (raw: Record<string, unknown>) => FlowDef | { error: string },
   t: WorkflowsText = workflowsText(undefined),
   project: ProjectSettings = {},
+  original?: Record<string, unknown>,
 ): { raw: Record<string, unknown>; flow: FlowDef; notice?: string } | { error: string } => {
-  const head = { id: draft.id, title: draft.title.trim() || draft.id, description: draft.description }
+  const head = headOf(draft, original)
   const desired = desiredSteps(draft)
   if (draft.base === undefined) {
-    const raw = { ...head, steps: desired.map(fileStep) }
+    const written = new Map(
+      (Array.isArray(original?.steps) ? (original.steps as unknown[]) : []).filter(isRecord).map(s => [String(s.id), s]),
+    )
+    const opened = new Map((draft.initial?.steps ?? []).map(s => [s.id, s.step]))
+    const steps = desired.map(want => {
+      const file = written.get(String(want.id))
+      const was = opened.get(String(want.id))
+      if (file === undefined) return leanStep(want, project)
+      return was === undefined ? orderLike(leanStep(want, project), file) : keptStep(want, file, was)
+    })
+    const raw = orderLike({ ...head, steps }, original)
     const flow = resolve(raw)
     if ('error' in flow) return flow
     const drift = driftOf(desired, flow, t)
@@ -406,7 +509,7 @@ export const draftFile = (
       entry.outcomes = { ...((entry.outcomes ?? {}) as Outcomes), [name]: { next: o.next } }
     }
   }
-  const finalRaw = withOverride()
+  const finalRaw = orderLike(withOverride(), original)
   const flow = resolve(finalRaw)
   if ('error' in flow) return flow
   const routes = (steps: readonly { id: unknown; outcomes: unknown }[]) =>
