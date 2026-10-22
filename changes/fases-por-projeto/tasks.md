@@ -47,3 +47,8 @@
 - [x] 7.4 Painel ⚙️: criar ou salvar não sobrescreve um arquivo de `.orquestrador/flows/` com o mesmo id ou nome, válido ou quebrado; a recusa nomeia o arquivo; teste — cx: moderate
 - [x] 7.5 Salvar resolve também os workflows do projeto que derivam do salvo; se algum deixar de resolver, recusa e lista quais; teste — cx: moderate
 - [x] 7.6 Guarda final do `draftFile` compara também os campos editáveis (agente, modelo, esforço, merge, deploy, details); edição própria do detect de `producao` avisa em vez de sumir — cx: simple
+
+## 8. Correções da 2ª revisão
+
+- [ ] 8.1 Guarda de merge falha fechada: quando o texto bruto tem `gh` e `merge` como palavras e o mod não extrai a chamada (wrapper como `xargs`, `find -exec`, `timeout`, `nice`, `env -u`, `sudo -u`, `command -p`; script por heredoc ou pipe para um shell; executável dinâmico `$G`/`"$(command -v gh)"`), recusa dizendo que não consegue ver o merge; `echo`/`printf`/`cat`/`git commit` citando o comando seguem livres; testes de cada forma — cx: moderate
+- [ ] 8.2 Deploy do dono com CI e rotinas: depois de "Deploy do CI concluído", restando só rotinas, o dono tem o botão "Deploy concluído"; teste — cx: simple
