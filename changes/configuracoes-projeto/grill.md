@@ -20,3 +20,11 @@ Rodada no chat em 2026-10-22; o dono não discordou de nenhuma recomendação (1
    → C6: nada é gravado até "Salvar"; arquivo inválido não é gravado.
 7. **Mockup.** Aprovado: https://claude.ai/artifact/Kw3TMAVuw8dVWbfK2GemvW
    → C7: as duas telas seguem o mockup; diferenças só por limite do engine, registradas no evidence.md.
+
+## Rodada 2 (2026-10-22)
+
+8. **Configurações locais.** O dono quer que essas configurações fiquem `.local`, para não atrapalhar quem usa o
+   repositório sem o plugin.
+   → C8: o painel grava em `.orquestrador/config.local.json`, que não vai para o git (o mod acrescenta o padrão ao
+   `.git/info/exclude` do clone, sem mexer no `.gitignore` do projeto). A leitura junta `config.json` (do
+   repositório, se existir) e `config.local.json` (vence). O resumo e a edição dizem que o valor é só desta máquina.
