@@ -142,3 +142,40 @@ trunk — Trunk: planejar → validar → … → pr → merge → qa → produc
 
 - Portão testes: `claude plugin test orquestrador` → 213 pass, 0 fail, saída 0.
 - Portão tipos: `npx -p typescript@5.6.3 tsc -p <scratchpad>/tc/tsconfig.json` (mesmo tsconfig do § Tipos acima) → saída 0, sem mensagens.
+
+## Fase 4 — Painel ⚙️ Workflows (4.1–4.4)
+
+- 4.1 `/orquestrador-workflows` abre/fecha o pane `orquestrador-workflows` (`⚙️ Workflows`), sem tocar no 🧭. O painel está em `hooks/workflows-pane.tsx` (desenho, ações e o "Salvar"); a lógica pura de edição e gravação em `hooks/workflow-edit.ts`; `register.tsx` só registra o comando, o `command.run` e o `ui.render`. `readFlowDir`/`loadFlows`/`findAgent` saíram do `register.tsx` para `hooks/flow-files.ts` como `function` (o engine só segue o `$` passado a uma função importada quando ela é declarada assim) e servem aos dois painéis e ao `flow`, sem mudança de comportamento.
+- 4.2 Visão. Lista: cada workflow como link com o título, uma linha `id · origem · N passos` (padrão / do projeto / derivado de X) e a descrição; abaixo, "Arquivos com erro em .orquestrador/flows/" com cada erro em vermelho; no fim, "Novo workflow". Ao abrir: "← Workflows", título, `id · origem`, descrição, botão "Editar" e os passos numerados; cada passo tem uma linha `🤖 sessão · agente planejador (do plugin) · modelo · esforço` e, ao ser aberto (▸/▾), Entrada/Saída/Bloqueia, Agente com a origem (do projeto, do plugin, sem arquivo), Modelo e Esforço, Comando, "Exige evidência", e para merge `branch · método · automático` e para deploy `CI · rotinas · automático`. Tudo em coluna com quebra de linha; abaixo de 44 colunas os botões empilham. No mobile a visão é a mesma e os campos de texto dão lugar a um aviso.
+- 4.3 Edição ("Editar" ou "Novo workflow" com id e "do zero" / "a partir de X"): título e descrição; por passo aberto, "Desligar/Ligar passo", "↑ Subir", "↓ Descer", Agente (campo), Modelo e Esforço (escolhas), e em merge Branch, Método e "Merge automático: sim/não"; em deploy "Deploy pelo CI", Rotinas (uma por linha) e "Deploy automático". "Acrescentar passo" entra depois do passo aberto (ou no fim): da biblioteca (escolha) ou novo (título, quem responde — sessão, dono, mod — agente e, se automático, comando). Merge/deploy que vira automático (ou volta) é reconstruído pela biblioteca, mudando quem responde. Tudo fica em `wfDraft` no estado do mod até "Salvar" ou "Descartar"; o aviso "Rascunho: nada é gravado até Salvar" fica no topo.
+- 4.4 "Salvar" (`draftFile` + `resolveCandidate`): monta o arquivo e o resolve como o mod carregaria (com os outros arquivos do projeto); com erro, mostra "Não salvei: <erro>" e não grava. Com base grava o derivado: `remove` (passos desligados), `add` (`{ use, …só o que difere }` da biblioteca, ou o passo inteiro), `override` (campos mudados e os outcomes religados quando um passo sobe/desce) e `order` só quando a ordem mudou; confere que o resolvido sai igual ao rascunho. Do zero grava `steps` completos. Editar um padrão mostra "⚠ rapido é um workflow padrão. Salvar cria .orquestrador/flows/rapido.json, que passa a valer no lugar do padrão" e, salvo, "O workflow padrão rapido segue no mod, mas este projeto passa a usar o seu no lugar dele." Só o clique grava: nenhuma ferramenta do mod escreve workflow.
+
+Testes novos — `tests/workflows-pane.test.ts` (7):
+- 4.1 abre e fecha o próprio pane ao lado do 🧭;
+- 4.2 lista com origem e erros (desktop, terminal, mobile, 30 colunas) e um workflow passo a passo, com merge, deploy e agente;
+- 4.3 edição completa só no rascunho, que sobrevive a redesenho e some no "Descartar", sem arquivo em disco;
+- 4.4 salvar derivado (o JSON exato gravado e o `flow list` resolvendo igual);
+- 4.4 inválido sem gravar (desligar `executar`; do zero sem passos);
+- 4.4 do zero com `steps` completos;
+- 4.4 editar o padrão `rapido` com aviso; a change `demo` iniciada antes segue com o snapshot (arquivo de estado byte a byte igual, `qa` presente); editar de novo parte do arquivo do projeto.
+
+Decisões (revisáveis):
+- "Subir/descer" muda o caminho, não só a lista: os outcomes de avanço de cada passo seguem o próximo passo ligado (num derivado, via `override` dos outcomes + `order`).
+- Num passo vindo da base dá para trocar agente/modelo/esforço, não apagar (o `override` só sobrepõe); o "Salvar" diz isso em vez de gravar.
+- Os nomes dos campos do estado são `wfSelected`, `wfFocus`, `wfDraft`, `wfForms`, `wfNotice` (contrato em `types/index.d.ts`).
+
+Portões (depois da última edição):
+
+```
+$ npx -p typescript@5.6.3 tsc -p <scratchpad>/tc/tsconfig.json   # tipos do engine 2.1.308, opções do cabeçalho, hooks + types + tests
+exit 0
+
+$ PATH=".../2.1.308/a93ded4b1b47/claude.app/Contents/MacOS:$PATH" \claude plugin validate orquestrador
+  ❯ ./register.tsx hooks: …, command.run{command=orquestrador-workflows}, …
+✔ Validation passed
+
+$ PATH=".../2.1.308/a93ded4b1b47/claude.app/Contents/MacOS:$PATH" \claude plugin test orquestrador
+ 220 pass
+ 0 fail
+Ran 220 tests across 21 files.
+```

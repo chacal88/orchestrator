@@ -22,10 +22,10 @@
 
 ## 4. Painel ⚙️ Workflows
 
-- [ ] 4.1 Comando `/orquestrador-workflows` e pane `orquestrador-workflows` separado do 🧭, abrir/fechar — teste de harness — cx: moderate
-- [ ] 4.2 Visão: lista de workflows com origem e erros; passos de um workflow com toda a configuração — teste — cx: moderate
-- [ ] 4.3 Edição: novo (do zero / a partir de), ligar/desligar, acrescentar da biblioteca ou novo, reordenar, ajustar agente/modelo/esforço/merge/deploy — teste de harness — cx: complex
-- [ ] 4.4 Salvar: resolve antes de gravar; erro mostrado sem gravar; grava formato derivado; editar padrão cria o do projeto com aviso; change em andamento não muda — testes — cx: complex
+- [x] 4.1 Comando `/orquestrador-workflows` e pane `orquestrador-workflows` separado do 🧭, abrir/fechar — teste de harness — cx: moderate
+- [x] 4.2 Visão: lista de workflows com origem e erros; passos de um workflow com toda a configuração — teste — cx: moderate
+- [x] 4.3 Edição: novo (do zero / a partir de), ligar/desligar, acrescentar da biblioteca ou novo, reordenar, ajustar agente/modelo/esforço/merge/deploy — teste de harness — cx: complex
+- [x] 4.4 Salvar: resolve antes de gravar; erro mostrado sem gravar; grava formato derivado; editar padrão cria o do projeto com aviso; change em andamento não muda — testes — cx: complex
 
 ## 5. Documentação e versão
 

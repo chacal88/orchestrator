@@ -65,16 +65,13 @@ import {
   observeDeploy,
   pendingReview,
   flowView,
-  mergeFlows,
   ownerPress,
   pressedToast,
-  resolveProjectFlows,
   wakePrompt,
   startFlow,
 } from './flow'
-import type { AgentFound, FlowSource, Moved } from './flow'
+import type { Moved } from './flow'
 import { closePhase, finishLoop, isClosed, loopRefusal, loopUnits, phaseSessions, uncommitted, unitRefusal, withEvents } from './lifecycle'
-import { DEFAULT_FLOWS, defaultFlows } from './flows/index'
 import {
   MOCKUP_STEP,
   RELEASE_OUTCOME,
@@ -95,6 +92,8 @@ import {
 } from './grill'
 import { bandSummary, parseEvents, stepTimes } from './glance'
 import { renderBand, renderPane } from './pane'
+import { WORKFLOWS_PANE, drawWorkflows, toggleWorkflowsPane } from './workflows-pane'
+import { findAgent, loadFlows } from './flow-files'
 import { firstSite, issueUrl, jiraKeys, moveFor, parseIssue, parseTransitions, wishes } from './jira'
 import { changeDir, openSpecView } from './openspec'
 import {
@@ -1033,46 +1032,6 @@ const FLOW_SCHEMA = {
 
 const flowsDir = async ($: EngineInterface): Promise<string> => `${await baseDir($)}/flows`
 
-/** Every flow file of one folder as read, the ones that are not JSON named in `problems`. */
-const readFlowDir = async ($: EngineInterface, dir: string): Promise<{ files: FlowSource[]; problems: string[] }> => {
-  if (!(await $.fs.exists(dir))) return { files: [], problems: [] }
-  const entries = (await $.fs.list(dir)).filter(f => f.kind === 'file' && f.name.endsWith('.json'))
-  const files: FlowSource[] = []
-  const problems: string[] = []
-  for (const file of entries) {
-    try {
-      files.push({ source: `${dir}/${file.name}`, raw: JSON.parse(await $.fs.read(`${dir}/${file.name}`)) })
-    } catch {
-      problems.push(`${dir}/${file.name}: not valid JSON.`)
-    }
-  }
-  return { files, problems }
-}
-
-/**
- * The mod's default flows, then the project's own in `<repo>/.orquestrador/flows`, which win by id;
- * a project flow derived from another is resolved, and one that does not resolve is named in `problems`.
- */
-const loadFlows = async (
-  $: EngineInterface,
-): Promise<{ flows: Record<string, FlowDef>; problems: string[]; projectIds: Set<string> }> => {
-  const read = await readFlowDir($, `${await $.session.root()}/.orquestrador/flows`)
-  const project = resolveProjectFlows(DEFAULT_FLOWS, read.files)
-  return {
-    flows: mergeFlows(defaultFlows(), project.flows),
-    problems: [...read.problems, ...project.problems],
-    projectIds: new Set(project.flows.map(f => f.id)),
-  }
-}
-
-/** A step's agent: the project's `.orquestrador/agents/<name>.md` wins over the plugin's `agents/<name>.md`. */
-const findAgent = async ($: EngineInterface, name: string): Promise<AgentFound> => {
-  const project = `${await $.session.root()}/.orquestrador/agents/${name}.md`
-  if (await $.fs.exists(project)) return { source: 'project', path: project }
-  const plugin = `${$.plugin.root}/agents/${name}.md`
-  return (await $.fs.exists(plugin)) ? { source: 'plugin', path: plugin } : undefined
-}
-
 /** What the current step's agent, model, effort and details say, for the status of a running flow. */
 const describeAgent = async ($: EngineInterface, state: FlowState): Promise<string | undefined> => {
   if (state.status !== 'running') return undefined
@@ -1595,6 +1554,10 @@ export const register: Register = on => {
       name: 'orquestrador',
       description: 'Abre ou fecha o painel da orquestração: OpenSpec, gates, pendências e tarefas',
     })
+    await $.command.register({
+      name: 'orquestrador-workflows',
+      description: 'Abre ou fecha o painel ⚙️ Workflows: ver e editar os workflows do projeto',
+    })
     await $.tool.register({
       name: 'plano',
       description:
@@ -1630,6 +1593,28 @@ export const register: Register = on => {
             ? 'Painel do orquestrador aberto.'
             : 'Painel pronto; amplie a janela para vê-lo.',
     }
+  })
+
+  on('command.run', { command: 'orquestrador-workflows' }, async $ => {
+    const done = await toggleWorkflowsPane($)
+    return {
+      text:
+        done === 'closed'
+          ? 'Painel de workflows fechado.'
+          : done === 'opened'
+            ? 'Painel de workflows aberto.'
+            : 'Painel de workflows pronto; amplie a janela para vê-lo.',
+    }
+  })
+
+  on('ui.render', { component: 'Pane', requestId: WORKFLOWS_PANE }, async ($, e) => {
+    const { Box, Text, Button } = $.ui.resolve(e)
+    const fields = e.surface === 'mobile' ? undefined : $.ui.resolve(e)
+    return drawWorkflows(
+      $,
+      { Box, Text, Button, Input: fields?.Input, Select: fields?.Select },
+      e.props.bodyColumns,
+    )
   })
 
   on('ui.close', async ($, e, next) => {
