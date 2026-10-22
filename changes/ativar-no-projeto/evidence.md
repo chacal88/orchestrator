@@ -36,3 +36,21 @@ inativo com flow em andamento (recusa) e com flow concluído (passa), faixa em c
 **Testes antigos ajustados:** 10 testes em 4 arquivos assumiam o mod sempre ativo e agora ativam o clone com a marca no
 `settings.local.json` do mundo de teste, sem mudar o que provam: `harness.test.ts` (6), `flow-harness.test.ts` (1),
 `merge-scope-harness.test.ts` (1), `pane.test.ts` (2).
+
+## Fase 2 — Painel (2.1)
+
+**2.1 Cartão "Este projeto" nos três estados.** `workflows-pane.tsx` (`projectCard`, `setActivation`) e `i18n-workflows.ts` (`project.activation`, pt-BR e en).
+O cartão lê a ativação do `settings.local.json` a cada desenho (vale na hora, sem reiniciar):
+- inativo: pílula "inativo neste clone", a frase de que o orquestrador está quieto, as três linhas, e "Ativar neste clone" (primário) ao lado de "Configurar";
+- confirmação (abaixo do cartão, borda azul): título "Ativar o orquestrador neste clone", "Quanto ele garante" com o nível (Select; dois botões no mobile, que não tem Select), a explicação, o quadro "O que é gravado" e "Ativar" / "Cancelar";
+- ativo: pílula azul "ativo neste clone · barrar", "Configurar", "Trocar para lembrar", "Desativar neste clone" e a nota de que desativar tira só o que o "Ativar" pôs.
+Ativar, trocar e desativar gravam via `writeActivation` (preserva o resto do arquivo); um arquivo que não é JSON válido não é gravado, o cartão avisa e esconde "Ativar".
+Testes (`tests/activation-pane.test.ts`, 6, nas três superfícies onde cabe): inativo; confirmação e cancelar sem gravar; ativar grava marca e hook e mantém `permissions` e `Stop`;
+trocar de nível sem segundo hook e desativar devolve o arquivo original; JSON inválido; cartão em inglês. Os testes de `project-pane.test.ts` seguem passando sem mudança.
+
+**Onde o painel difere do mockup, e por quê**
+- "Configurar" saiu do cabeçalho e foi para a fila de botões do fim, como no mockup; as linhas Merge e Deploy continuam com a pílula "você faz" / "automático" do cartão existente (o mockup as escreveu como texto com "·"), para não reabrir o que o dono já aprovou na fase de configurações.
+- "Desativar neste clone" é um botão `plain`: o Button do motor não tem cor, então não fica vermelho como no mockup.
+- Os rótulos "Quanto ele garante" e "O que é gravado" ficam em negrito, sem caixa alta, como no mockup (as legendas "Inativo", "Ativo" e "Ao apertar…" do mockup são anotações da prancheta, não entram no painel).
+- O nível é um Select nas superfícies que têm campos e dois botões no mobile (que não tem Select); o mockup só desenhou o Select.
+- Acréscimo: com `settings.local.json` inválido o cartão mostra o aviso em vermelho e esconde "Ativar" (o mockup não previu o caso).

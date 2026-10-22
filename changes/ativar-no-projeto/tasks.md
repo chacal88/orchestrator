@@ -5,7 +5,7 @@
 
 ## 2. Painel
 
-- [ ] 2.1 Cartão "Este projeto" nos três estados do mockup (inativo, confirmação com nível e "O que é gravado", ativo com "Trocar para…" e "Desativar"); testes de harness nas superfícies — cx: moderate
+- [x] 2.1 Cartão "Este projeto" nos três estados do mockup (inativo, confirmação com nível e "O que é gravado", ativo com "Trocar para…" e "Desativar"); testes de harness nas superfícies — cx: moderate
 
 ## 3. Documentação e versão
 
