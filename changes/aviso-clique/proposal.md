@@ -12,6 +12,7 @@ painel não confirmou o clique. E o comando de instalação do README usava um `
   "Flow concluído.".
 - A sessão coordenadora não recebe mensagem automática: decisão do dono ("Só o toast"). Ela vê o novo passo
   pelo status do flow, como já fazia.
+  Substituída em 2026-10-21 a pedido do dono: ver `changes/clique-acorda-coordenacao`.
 - O README passa a instalar com `/plugin marketplace add chacal88/orquestrador` e
   `/plugin install orquestrador@orquestrador`.
 - Versão 0.7.4.

@@ -12,6 +12,7 @@ import type {
   FlowView,
 } from '../types'
 import { executedText, masksExitCode } from './gates'
+import { MOCKUP_STEP } from './grill'
 import { parseJiraTarget } from './jira'
 
 /** The pseudo-step every flow ends on. */
@@ -342,8 +343,7 @@ export const ownerPress = (state: FlowState, step: string, outcome: string, at: 
 
 /** What the owner sees after a press: the answer recorded, in their words, and where the flow went. */
 export const pressedToast = (before: FlowState, after: FlowState, step: string, outcome: string): string => {
-  const label =
-    stepOf(before.flow, step)?.outcomes[outcome]?.label ?? ESCALATION_CHOICES.find(c => c.outcome === outcome)?.label ?? outcome
+  const label = pressedLabel(before, step, outcome)
   const next =
     after.status === 'done'
       ? 'Flow concluído.'
@@ -351,6 +351,23 @@ export const pressedToast = (before: FlowState, after: FlowState, step: string, 
         ? 'Flow encerrado.'
         : `Próximo passo: ${stepOf(after.flow, after.current)?.title ?? after.current}.`
   return `Registrado: ${label}. ${next}`
+}
+
+/** The button's own words: the owner step's outcome label, or the escalation choice's. */
+const pressedLabel = (before: FlowState, step: string, outcome: string): string =>
+  stepOf(before.flow, step)?.outcomes[outcome]?.label ?? ESCALATION_CHOICES.find(c => c.outcome === outcome)?.label ?? outcome
+
+/**
+ * What the coordinator reads after an owner press, or nothing when it has nothing to do: the flow
+ * ended, waits on the owner again, or escalated. A session, automatic or loop step is the
+ * coordinator's to drive; of the owner steps only the mockup is, since it attaches a new one.
+ */
+export const wakePrompt = (before: FlowState, after: FlowState, step: string, outcome: string, note?: string): string | undefined => {
+  if (after.status !== 'running') return undefined
+  const next = currentStep(after)
+  if (next === undefined || (next.kind === 'owner' && next.id !== MOCKUP_STEP)) return undefined
+  const noted = note === undefined ? '' : ` com a nota "${note}"`
+  return `Painel: o dono apertou "${pressedLabel(before, step, outcome)}"${noted}. Próximo passo: ${next.id} (${next.title}). Siga o flow.`
 }
 
 /** Words of a declared command, matched in what the shell ran: `openspec validate` in `npx openspec validate x --strict`. */
