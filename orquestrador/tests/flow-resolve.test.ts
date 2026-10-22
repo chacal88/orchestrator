@@ -261,3 +261,18 @@ describe('resolveProjectFlows', () => {
     expect(problems).toEqual(['a/ruim.json: `remove`: "executar" runs the change\'s phases; it cannot be removed.'])
   })
 })
+
+test('resolveFlow leaves the file as it was: the same raw resolves again the same, and a step shared by two files leads after its own anchor', () => {
+  const step = { id: 'extra', title: 'Extra', kind: 'session', outcomes: { pronto: { next: '$seguinte' } } }
+  const one = { id: 'um', title: 'Um', base: 'rapido', add: [{ after: 'pr', step }] }
+  const before = JSON.stringify(one)
+  const first = ok(resolve(one))
+  expect(JSON.stringify(one)).toBe(before)
+  expect(wiring(ok(resolve(one)))).toEqual(wiring(first))
+  const after = (flow: FlowDef, id: string) => flow.steps[flow.steps.findIndex(s => s.id === id) + 1]!.id
+  expect(at(first, 'extra').outcomes.pronto!.next).toBe(after(first, 'extra'))
+  // the same step object, now after another step: it leads to the step after that one, not where the first file put it
+  const two = ok(resolve({ id: 'dois', title: 'Dois', base: 'rapido', add: [{ after: 'planejar', step }] }))
+  expect(at(two, 'extra').outcomes.pronto!.next).toBe(after(two, 'extra'))
+  expect(at(two, 'extra').outcomes.pronto!.next).not.toBe(at(first, 'extra').outcomes.pronto!.next)
+})
