@@ -4,6 +4,7 @@ import type { FlowDef } from '../types'
 import { mergeFlows, resolveProjectFlows } from './flow'
 import type { AgentFound, FlowSource } from './flow'
 import { DEFAULT_FLOWS, defaultFlows } from './flows/index'
+import { isAgentName } from './gates'
 
 // Function declarations: the engine follows `$` past an import only into one of these.
 
@@ -49,8 +50,12 @@ export async function loadFlows($: EngineInterface): Promise<LoadedFlows> {
   }
 }
 
-/** A step's agent: the project's `.orquestrador/agents/<name>.md` wins over the plugin's `agents/<name>.md`. */
+/**
+ * A step's agent: the project's `.orquestrador/agents/<name>.md` wins over the plugin's `agents/<name>.md`.
+ * A name that is not one (`../x`) builds no path: no agent.
+ */
 export async function findAgent($: EngineInterface, name: string): Promise<AgentFound> {
+  if (!isAgentName(name)) return undefined
   const project = `${await $.session.root()}/.orquestrador/agents/${name}.md`
   if (await $.fs.exists(project)) return { source: 'project', path: project }
   const plugin = `${$.plugin.root}/agents/${name}.md`

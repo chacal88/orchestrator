@@ -17,7 +17,7 @@ import type {
   FlowView,
 } from '../types'
 import { libraryStep, NEXT_STEP, overlay } from './flows/library'
-import { executedText, masksExitCode } from './gates'
+import { executedText, isAgentName, masksExitCode } from './gates'
 import { MOCKUP_STEP } from './grill'
 import { parseJiraTarget } from './jira'
 
@@ -190,6 +190,7 @@ const parseExtras = (s: Record<string, unknown>, kind: FlowStepKind): StepExtras
     if (value === undefined) return `\`${key}\` must be a name.`
     out[key] = value
   }
+  if (out.agent !== undefined && !isAgentName(out.agent)) return `\`agent\` "${out.agent}" must be lowercase words joined by hyphens (a-z, 0-9, -), the name of a file in agents/.`
   if (s.effort !== undefined) {
     if (typeof s.effort !== 'string' || !EFFORTS.includes(s.effort)) return `\`effort\` must be one of ${EFFORTS.join(', ')}.`
     out.effort = s.effort as FlowEffort

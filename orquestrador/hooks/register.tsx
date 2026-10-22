@@ -32,7 +32,6 @@ import {
   GATE_IDS,
   ARCHIVE_COMMAND,
   GH_MERGE,
-  MERGE_ADMIN,
   MAX_LIVE_SESSIONS,
   PROTECTED_DIR,
   familyCheck,
@@ -40,7 +39,7 @@ import {
   isOpenGate,
   liveSessions,
   isChangeBranch,
-  mergeSelector,
+  mergeCalls,
   mergeTarget,
   mergeWindow,
   classifyBash,
@@ -50,7 +49,7 @@ import {
   observeTool,
   phaseRefusal,
 } from './gates'
-import type { MergeTarget } from './gates'
+import type { MergeCall, MergeTarget } from './gates'
 import {
   DEFAULT_FLOW_IDS,
   applyOutcome,
@@ -868,18 +867,19 @@ const mergeHead = async ($: EngineInterface, selector: string | undefined, targe
 /**
  * Whether a merge is of the change's own PR: its number is bound to a phase session, named by
  * the plan or cited by the flow's PR step, or its head branch is a phase session's or carries
- * the change id. A PR whose head branch cannot be read is taken as the change's: the gate fails
- * closed.
+ * the change id. A PR whose head branch cannot be read is taken as the change's, and so is a
+ * GraphQL merge, which names its PR by a node id: the gate fails closed.
  */
 const mergesChangePr = async (
   $: EngineInterface,
-  command: string,
+  call: MergeCall,
   run: OrchestrationRun,
   flow: FlowState | undefined,
   family: Family | undefined,
   root: string,
 ): Promise<boolean> => {
-  const selector = mergeSelector(command)
+  if (call.via === 'graphql') return true
+  const selector = call.selector
   const target = mergeTarget(selector)
   const { numbers, branches } = changePrs(run, flow, family?.children ?? [])
   if (target.number !== undefined && numbers.has(target.number)) return true
@@ -888,23 +888,40 @@ const mergesChangePr = async (
 }
 
 /**
- * From an orchestrated checkout no merge goes with `--admin`. The change's own PR, while its flow
- * runs up to the step before the archive, also waits for the flow's PR review before that merge
- * and for the final gates; a finished or aborted flow holds back nothing but `--admin`.
+ * From an orchestrated checkout no merge goes with `--admin`, nor with an argument the mod cannot
+ * read (`$VAR`, `$(…)`). The change's own PR, while its flow runs up to the step before the
+ * archive, also waits for the flow's PR review before that merge and for the final gates; a
+ * finished or aborted flow holds back nothing but those two. Every form `mergeCalls` reads counts:
+ * `gh pr merge` with or without flags before `pr`, `gh api …/pulls/<n>/merge`, GraphQL's
+ * `mergePullRequest`, quoted, continued, or inside `bash -c`/`sh -c`/`eval`.
  */
 const refuseMerge = async ($: EngineInterface, command: string): Promise<string | undefined> => {
+  const calls = mergeCalls(command)
+  if (calls.length === 0) return undefined
   const root = await $.session.root()
   const run = await loadRun($, root)
   if (run === undefined) return undefined
   const held: string[] = []
   const reasons: string[] = []
-  if (MERGE_ADMIN.test(executedText(command))) {
+  if (calls.some(c => c.admin)) {
     held.push('--admin')
     reasons.push('`--admin` skips the branch protection (GitHub approval and green CI); merge without it, never around them.')
   }
+  const blind = calls.find(c => c.dynamic)
+  if (blind !== undefined) {
+    held.push('$')
+    reasons.push(
+      `\`${blind.text}\` takes an argument from a variable or \`$(…)\`: the mod cannot see what it carries ` +
+        '(an `--admin`, another PR). Write the PR and the flags out in the command.',
+    )
+  }
   const flow = await loadFlowState($, run.change)
   const family = await loadFamily($)
-  if ((flow === undefined || mergeWindow(flow)) && (await mergesChangePr($, command, run, flow, family, root))) {
+  let change = false
+  if (flow === undefined || mergeWindow(flow)) {
+    for (const call of calls) change ||= await mergesChangePr($, call, run, flow, family, root)
+  }
+  if (change) {
     const review = flow === undefined ? undefined : pendingReview(flow)
     if (review !== undefined) {
       held.push(review.id)
