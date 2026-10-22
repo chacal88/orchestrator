@@ -4,7 +4,8 @@ import type { Engine, TestBody } from 'claude-code/testing'
 import type { FlowState } from '../types'
 import { parseFlow, resolveFlow } from '../hooks/flow'
 import { DEFAULT_FLOWS } from '../hooks/flows/index'
-import { draftFile, draftOf } from '../hooks/workflow-edit'
+import { changesOf, draftFile, draftOf, moveStep, setStepField, toggleStep } from '../hooks/workflow-edit'
+import { listAgents } from '../hooks/flow-files'
 
 type On = Parameters<TestBody>[1]
 type Surface = 'desktop' | 'terminal' | 'mobile'
@@ -699,4 +700,76 @@ test('10.3 10.4 10.5 editing: the bar on top, compact steps with the open one in
     await ui.unmount()
   }
   expect([...w.disk.keys()].filter(k => k.startsWith(DIR) && !k.endsWith('trunk.json'))).toEqual([])
+})
+
+// 10.7 — what the review asked to see exercised
+
+const rapidoDef = () => {
+  const raw = DEFAULT_FLOWS.find(f => f.source === 'default flow rapido')!.raw
+  const def = parseFlow(raw, 'rapido')
+  if ('error' in def) throw new Error(def.error)
+  return def
+}
+const order = (draft: ReturnType<typeof draftOf>) => draft.steps.map(s => `${s.step.id}${s.on ? '' : '(off)'}`)
+
+test('10.7 Subir and Descer swap with the nearest switched-on step; a switched-off one stays put and does not move', () => {
+  const def = rapidoDef()
+  let draft = toggleStep(draftOf(def, undefined, false), 'validar')
+  const ids = def.steps.map(s => s.id)
+  expect(ids.slice(0, 3)).toEqual(['planejar', 'validar', 'executar'])
+  // executar goes up past the switched-off validar and swaps with planejar
+  draft = moveStep(draft, 'executar', -1)
+  expect(order(draft).slice(0, 3)).toEqual(['executar', 'validar(off)', 'planejar'])
+  // and back down, past validar again
+  draft = moveStep(draft, 'executar', 1)
+  expect(order(draft).slice(0, 3)).toEqual(['planejar', 'validar(off)', 'executar'])
+  // the first switched-on step cannot go up, and a switched-off step does not move at all
+  expect(moveStep(draft, 'planejar', -1)).toBe(draft)
+  expect(moveStep(draft, 'validar', 1)).toBe(draft)
+})
+
+test('10.7 the summary names each change: a step off, back on, an agent swapped, the order', () => {
+  const def = rapidoDef()
+  const opened = draftOf(def, undefined, false)
+  expect(changesOf(opened)).toEqual([])
+  let draft = toggleStep(opened, 'qa')
+  draft = setStepField(draft, 'revisao-codigo', { field: 'agent', value: 'revisor-plano' })
+  draft = moveStep(draft, 'executar', -1)
+  const said = changesOf(draft)
+  expect(said).toContain(`passo "${def.steps.find(s => s.id === 'qa')!.title}" desligado`)
+  expect(said).toContain(`passo "${def.steps.find(s => s.id === 'revisao-codigo')!.title}": agente`)
+  expect(said).toContain('ordem dos passos')
+  // switched back on, the step is no longer a change
+  expect(changesOf(toggleStep(draft, 'qa')).some(c => c.includes('desligado'))).toBe(false)
+})
+
+test('10.7 listAgents: one with no frontmatter shows without a description; a file that is no agent is left out', async () => {
+  const disk = new Map<string, string>([
+    ['/p/agents/revisor-codigo.md', '---\nname: revisor-codigo\ndescription: Do plugin.\nmodel: opus\n---\n'],
+    ['/p/agents/executor.md', '---\nname: executor\ndescription: Executa uma fase.\nmodel: sonnet\n---\n'],
+    ['/w/.orquestrador/agents/sem-cabecalho.md', '# Só o corpo, sem frontmatter\n'],
+    ['/w/.orquestrador/agents/notas.txt', 'não é agente'],
+    ['/w/.orquestrador/agents/Nome Ruim.md', '---\ndescription: nome inválido\n---\n'],
+    ['/w/.orquestrador/agents/revisor-codigo.md', '---\nname: revisor-codigo\ndescription: O revisor deste projeto.\n---\n'],
+  ])
+  const engine = {
+    plugin: { root: '/p' },
+    session: { root: async () => '/w' },
+    fs: {
+      exists: async (path: string) => [...disk.keys()].some(k => k.startsWith(`${path}/`)),
+      list: async (path: string) =>
+        [...disk.keys()]
+          .filter(k => k.startsWith(`${path}/`))
+          .map(k => ({ name: k.slice(path.length + 1), kind: 'file', size: 1, mtimeMs: 0, isLink: false })),
+      read: async (path: string) => disk.get(path) ?? '',
+    },
+  }
+  const agents = await listAgents(engine as never)
+  expect(agents.find(a => a.name === 'executor')).toMatchObject({ source: 'plugin', description: 'Executa uma fase.', model: 'sonnet' })
+  const bare = agents.find(a => a.name === 'sem-cabecalho')
+  expect(bare).toMatchObject({ source: 'project', description: '' })
+  expect(bare?.model).toBeUndefined()
+  expect(agents.some(a => a.name === 'notas' || a.name.includes(' ') || a.name === 'Nome Ruim')).toBe(false)
+  expect(agents.find(a => a.name === 'revisor-codigo')).toMatchObject({ source: 'project', description: 'O revisor deste projeto.' })
+  expect(agents.filter(a => a.name === 'revisor-codigo')).toHaveLength(1)
 })

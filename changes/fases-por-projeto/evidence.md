@@ -338,3 +338,10 @@ $ PATH=".../2.1.308/a93ded4b1b47/claude.app/Contents/MacOS:$PATH" \claude plugin
  0 fail
 Ran 251 tests across 22 files.
 ```
+
+### 10.7 — testes pedidos pela revisão (coordenação)
+
+`tests/workflows-pane.test.ts`: `moveStep` passando por um passo desligado (sobe e desce; o primeiro não sobe; o
+desligado não se move); `changesOf` depois de desligar, trocar agente e reordenar (e o passo religado deixa de ser
+mudança); `listAgents` com um `.md` sem frontmatter (aparece sem descrição nem modelo), um `.txt` e um nome inválido
+(somem) e o agente do projeto valendo uma vez só no lugar do do plugin. Suíte: 254 pass, 0 fail.
