@@ -29,12 +29,6 @@
 - Salvar: lê o arquivo de novo, troca só `language`/`merge`/`deploy`, valida com `parseConfig`, grava; erro mostra
   e não grava.
 
-## Arquivo local (rodada 2 do entendimento)
+## Arquivo local
 
-- Leitura: `.orquestrador/config.json` (compartilhado, se existir) e depois `.orquestrador/config.local.json`
-  (local), campo a campo; o local vence. Vale para `language`, `merge` e `deploy`.
-- Gravação pelo painel: sempre em `config.local.json`. Antes de gravar, se o arquivo não estiver ignorado pelo git,
-  o mod acrescenta `.orquestrador/*.local.json` ao `.git/info/exclude` do clone (local, nunca commitado); sem `.git`,
-  só grava.
-- O painel diz "Só nesta máquina (config.local.json, fora do git)" no cartão e na barra de edição; um valor que vem
-  do `config.json` compartilhado aparece como "do repositório".
+Descartado na rodada 3 do entendimento: as configurações ficam em `.orquestrador/config.json`, commitadas; o que é local (a ativação por hooks) é a próxima change.

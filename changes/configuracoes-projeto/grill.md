@@ -28,3 +28,14 @@ Rodada no chat em 2026-10-22; o dono não discordou de nenhuma recomendação (1
    → C8: o painel grava em `.orquestrador/config.local.json`, que não vai para o git (o mod acrescenta o padrão ao
    `.git/info/exclude` do clone, sem mexer no `.gitignore` do projeto). A leitura junta `config.json` (do
    repositório, se existir) e `config.local.json` (vence). O resumo e a edição dizem que o valor é só desta máquina.
+
+## Rodada 3 (2026-10-22) — substitui a rodada 2
+
+9. **O que é local.** As configurações do plugin podem ser commitadas normalmente em `.orquestrador/config.json`;
+   o que fica local são os hooks que ativam o plugin neste clone. Sem a instalação (os hooks locais), as
+   configurações commitadas não fazem efeito para ninguém.
+   → C8 (revisado): o painel grava em `.orquestrador/config.json`, sem `config.local.json` e sem mexer em
+   `.git/info/exclude`.
+10. **Ativar e desativar.** Garantir o workflow com o sistema do próprio Claude (rules, hooks), instalado só neste
+    clone, fácil de ligar e desligar, sem engessar o projeto. → fica para a próxima change, "Ativar o orquestrador
+    neste projeto".

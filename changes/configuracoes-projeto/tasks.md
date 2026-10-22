@@ -10,7 +10,6 @@
 - [ ] 2.2 Edição em rascunho: barra Salvar/Descartar/resumo; blocos Idioma, Merge, Deploy (botões que dizem o estado, seletores com explicação, rotinas com "+ rotina"/"tirar") — cx: complex
 - [ ] 2.3 "Nos workflows": estado de cada workflow e as ações "Acrescentar merge e deploy" e "Passar a usar o do projeto" pelo caminho do editor de workflows — cx: complex
 - [ ] 2.4 Salvar: só `language`/`merge`/`deploy` mudam, as outras chaves ficam; inválido não grava — cx: moderate
-- [ ] 2.6 Arquivo local: ler `config.json` + `config.local.json` (o local vence); o painel grava só no `config.local.json` e acrescenta `.orquestrador/*.local.json` ao `.git/info/exclude` quando não está ignorado; o painel diz "só nesta máquina" e "do repositório"; testes — cx: moderate
 - [ ] 2.5 Testes de harness das telas (desktop, terminal, estreito, mobile) comparando com o mockup — cx: moderate
 
 ## 3. Documentação e versão
