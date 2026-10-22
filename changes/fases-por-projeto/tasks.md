@@ -29,5 +29,5 @@
 
 ## 5. Documentação e versão
 
-- [ ] 5.1 README: workflows do projeto (derivado, biblioteca, merge/deploy automáticos, agentes) e o painel ⚙️ — cx: simple
-- [ ] 5.2 Versão 0.8.0 e evidence.md — cx: simple
+- [x] 5.1 README: workflows do projeto (derivado, biblioteca, merge/deploy automáticos, agentes) e o painel ⚙️ — cx: simple
+- [x] 5.2 Versão 0.8.0 e evidence.md — cx: simple

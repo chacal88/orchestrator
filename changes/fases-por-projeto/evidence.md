@@ -1,16 +1,43 @@
 # Evidência — fases por projeto
 
+Resultado da change inteira, na branch da coordenação (`claude/orchestrator-phases-automation-f69f0d`), com as
+fases 1, 2, 3a, 3b e 4 juntadas e a `main` 0.7.7. Binário do app 2.1.308 (o `claude` do PATH é o 2.1.227).
+
 ## Testes
 
-(a preencher: `claude plugin test orquestrador`, saída 0, com os testes novos)
+```
+$ PATH=".../2.1.308/a93ded4b1b47/claude.app/Contents/MacOS:$PATH" \claude plugin test orquestrador
+ 220 pass
+ 0 fail
+Ran 220 tests across 21 files.
+```
 
 ## Tipos
 
-(a preencher)
+```
+$ npx -p typescript@5.6.3 tsc -p <scratchpad>/tc/tsconfig.json   # tipos do engine 2.1.308, hooks + types + tests
+exit=0
+```
 
 ## Validação
 
-(a preencher: `claude plugin validate orquestrador`)
+```
+$ PATH=".../2.1.308/a93ded4b1b47/claude.app/Contents/MacOS:$PATH" \claude plugin validate orquestrador
+  ❯ ./register.tsx hooks: …, command.run{command=orquestrador-workflows}, …
+✔ Validation passed
+```
+
+## Portões pulados pelo dono
+
+- Fase 1, `lint`: o mod não reconhece o `tsc` (a checagem de tipos deste repo) como lint; o `tsc` passou com saída 0.
+- Fase 3a, `regras`: o `aidakit:reviewer-quality` aprovou na 2ª rodada (0 bloqueante/importante), mas o mod leu o
+  veredito como reprovado por o texto conter "rejected".
+
+## Fase 5 — Documentação e versão (5.1, 5.2)
+
+- 5.1 README: "Workflows do projeto" (painel ⚙️, derivado com exemplo trunk-based, dev/master, biblioteca com
+  `revisao-pr`/`merge`/`deploy`, agentes) e os itens novos em "O que ele faz".
+- 5.2 `plugin.json` 0.8.0; este arquivo com o resultado da change inteira.
 
 ## Fase 1 — Formato do workflow
 

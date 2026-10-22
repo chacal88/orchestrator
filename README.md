@@ -13,7 +13,13 @@ Plugin para o Claude Code que orquestra uma change com várias sessões em paral
 - **Dois flows prontos:**
   - `completo`: grill → mockup → plano OpenSpec → validação → revisão do plano → liberação do dono pelo plan mode → fases → revisão de código → checagem final → PR → QA → produção → arquivamento;
   - `rapido`, para correções pequenas.
-  - Um projeto pode ter flows próprios em `.orquestrador/flows/*.json`.
+  - Um projeto pode ter flows próprios em `.orquestrador/flows/*.json`, escritos do zero ou derivados de outro (veja [Workflows do projeto](#workflows-do-projeto)).
+  - Ao iniciar uma change, a coordenação sempre mostra os workflows disponíveis para você escolher.
+- **Passos descritos a fundo, com agente especialista.** Cada passo diz o que recebe, o que produz e o que bloqueia. Cada passo de sessão nomeia o agente que o executa, com modelo e esforço. O plugin traz oito agentes em `orquestrador/agents/`: planejador, revisor-plano, executor, revisor-codigo, abre-pr, publicador, merge e deploy. Um projeto troca qualquer um deles com um arquivo de mesmo nome em `.orquestrador/agents/`.
+- **Revisão do PR, merge e deploy como passos.** Servem para projetos trunk-based (um merge na `main`) e para projetos dev/master (merge em `dev` para o QA, em `master` para a produção).
+  - **Merge automático:** só acontece com o PR aprovado no GitHub, o CI verde e os portões finais passados. O mod recusa `gh pr merge` antes da revisão do PR e recusa `--admin` sempre.
+  - **Deploy:** espera o deploy do CI, roda rotinas fora do CI, ou faz os dois; pode ser automático, logo depois do merge.
+- **Painel ⚙️ Workflows (`/orquestrador-workflows`).** Fica separado do painel 🧭 e mostra os workflows disponíveis com a configuração de cada passo. Ali você também cria e edita os workflows do projeto.
 - **Gates de qualidade por fase.** São checagens como testes, lint, `check.sh`, `openspec validate`, print da tela e revisão de regras:
   - **comprovação:** o mod só aceita um gate quando vê o comando rodar e passar;
   - **validade:** editar arquivos depois da comprovação desatualiza o gate;
@@ -58,12 +64,82 @@ Depois de instalar, reinicie o app ou rode `/reload-plugins`.
 ## Uso
 
 1. Peça à sessão para orquestrar uma change, ou use a skill `change-orchestrator`.
-2. Escolha o flow (`completo` ou `rapido`) e abra o painel com `/orquestrador`.
+2. Escolha um dos workflows que a coordenação mostra e abra o painel com `/orquestrador`.
 3. Acompanhe pelo painel e responda os seus passos pelos botões.
 
-### Flows próprios
+Para ver ou editar os workflows do projeto, abra `/orquestrador-workflows`.
 
-Crie `.orquestrador/flows/<id>.json` no repositório. Um flow do projeto com o mesmo `id` de um flow padrão substitui o padrão. Formato:
+## Workflows do projeto
+
+Um projeto tem os workflows padrão (`completo`, `rapido`) e os seus, em `.orquestrador/flows/<id>.json`. Um workflow do projeto com o mesmo `id` de um padrão passa a valer no lugar dele. Uma change em andamento continua com o workflow com que começou, mesmo que o arquivo mude depois.
+
+### Pelo painel ⚙️ Workflows
+
+`/orquestrador-workflows` abre e fecha o painel. Ele pode ficar aberto ao lado do 🧭.
+
+- **Visão:** a lista de workflows, com a origem de cada um (padrão, do projeto ou derivado de outro) e os arquivos com erro. Ao abrir um workflow, você vê os passos em ordem. Cada passo mostra:
+  - quem responde e o que entra, sai e bloqueia;
+  - o agente, de onde ele vem, o modelo e o esforço;
+  - o comando, quando há;
+  - no merge, a branch, o método e se é automático;
+  - no deploy, o CI, as rotinas e se é automático.
+- **Edição:** "Novo workflow", do zero ou a partir de outro, ou "Editar" num existente. Num passo aberto você pode:
+  - ligá-lo ou desligá-lo, e subi-lo ou descê-lo;
+  - trocar o agente, o modelo e o esforço;
+  - configurar merge e deploy;
+  - acrescentar um passo depois dele, da biblioteca ou novo.
+
+  Tudo fica em rascunho até você clicar em "Salvar" ou "Descartar".
+- **Salvar:** o mod confere o workflow como se fosse carregá-lo. Se algo estiver inválido, mostra o erro e não grava nada. Com base, grava no formato derivado; do zero, grava os passos completos. Editar um padrão cria o workflow do projeto de mesmo id, com aviso.
+
+### Workflow derivado
+
+Parte de outro (padrão ou do projeto) e diz só o que muda. Exemplo de um projeto trunk-based, com revisão do PR, merge automático na `main` e deploy pelo CI com uma rotina a mais:
+
+```json
+{
+  "id": "trunk",
+  "title": "Trunk-based",
+  "base": "completo",
+  "remove": ["mockup", "qa"],
+  "add": [
+    { "after": "pr", "step": "revisao-pr" },
+    { "after": "revisao-pr", "step": { "use": "merge", "merge": { "branch": "main", "auto": true } } },
+    { "after": "merge", "step": { "use": "deploy", "deploy": { "ci": true, "commands": ["npm run migrate:prod"], "auto": true } } }
+  ],
+  "override": { "revisao-codigo": { "model": "claude-sonnet-5-5" } }
+}
+```
+
+- `remove`: os passos que saem. O mod liga o passo anterior ao seguinte. O laço `executar` não pode sair.
+- `add`: `{ "after": "<id>", "step": ... }`. O `step` pode ser:
+  - um id da biblioteca;
+  - `{ "use": "<id da biblioteca>", ...ajustes }`, com `id` próprio quando há mais de um, como `merge-dev` e `merge-main`;
+  - um passo completo.
+- `override`: campos por passo, sem mudar `id` nem `kind`.
+- `order`: os ids na ordem final, opcional.
+
+Num projeto dev/master, use dois merges: `merge-dev` (com `"branch": "dev"`), seguido do QA, e `merge-main` (com `"branch": "master"`), seguido da produção.
+
+### Biblioteca de passos
+
+- `revisao-pr`: passo do dono. Você revisa e aprova o PR no GitHub e aperta "PR aprovado". Enquanto ele não for respondido, o mod recusa o `gh pr merge` da change.
+- `merge`, com `{ "branch", "method", "auto" }`. O método padrão é `squash`.
+  - Com `auto: false`, o passo é seu: o botão, ou o mod vê o seu `gh pr merge` passar.
+  - Com `auto: true`, o passo é automático. A coordenação confere a aprovação e o CI e roda `gh pr merge --<method>` sozinha. O `--admin` é sempre recusado.
+- `deploy`, com `{ "ci", "commands", "auto" }`.
+  - `ci`: espera o deploy do CI. O botão "Deploy do CI concluído" confirma, ou o mod vê `gh run watch … --exit-status` passar.
+  - `commands`: as rotinas fora do CI, rodadas na ordem, cada uma como comando próprio.
+  - O passo só avança com tudo cumprido. As rotinas também contam como sinal do passo `producao`.
+- Também estão na biblioteca os passos dos workflows padrão, como `qa`, `producao` e `mockup`, para reaproveitar.
+
+### Agentes
+
+Cada passo pode ter `agent`, `model`, `effort` e `details` (`inputs`, `produces`, `blocks`). `flow status` diz à coordenação qual agente usar no passo atual, com o caminho do arquivo. Para trocar um agente num projeto, crie `.orquestrador/agents/<nome>.md` com o mesmo nome do agente do plugin.
+
+### Workflow do zero
+
+Formato:
 
 ```json
 {
@@ -82,7 +158,7 @@ Crie `.orquestrador/flows/<id>.json` no repositório. Um flow do projeto com o m
 }
 ```
 
-Tipos de passo: `session`, `automatic` (com `command`), `owner` e `loop` (sobre as fases do `tasks.md`). Campos opcionais: `maxAttempts` (padrão 3, depois escala para o dono), `when: "visual"`, `detect`, `cleanup` e `jira`.
+Tipos de passo: `session`, `automatic` (com `command`), `owner` e `loop` (sobre as fases do `tasks.md`). Campos opcionais: `maxAttempts` (padrão 3, depois escala para o dono), `when: "visual"`, `detect`, `cleanup`, `jira`, `details`, `agent`, `model`, `effort`, `merge` e `deploy`.
 
 ## Desenvolvimento
 
