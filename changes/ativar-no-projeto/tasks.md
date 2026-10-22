@@ -9,4 +9,4 @@
 
 ## 3. Documentação e versão
 
-- [ ] 3.1 README (ativar e desativar, o que é gravado, níveis), skill da coordenação (ativar antes de orquestrar), versão 0.10.0, evidence.md — cx: simple
+- [x] 3.1 README (ativar e desativar, o que é gravado, níveis), skill da coordenação (ativar antes de orquestrar), versão 0.10.0, evidence.md — cx: simple

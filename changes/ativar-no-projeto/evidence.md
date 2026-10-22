@@ -54,3 +54,10 @@ trocar de nível sem segundo hook e desativar devolve o arquivo original; JSON i
 - Os rótulos "Quanto ele garante" e "O que é gravado" ficam em negrito, sem caixa alta, como no mockup (as legendas "Inativo", "Ativo" e "Ao apertar…" do mockup são anotações da prancheta, não entram no painel).
 - O nível é um Select nas superfícies que têm campos e dois botões no mobile (que não tem Select); o mockup só desenhou o Select.
 - Acréscimo: com `settings.local.json` inválido o cartão mostra o aviso em vermelho e esconde "Ativar" (o mockup não previu o caso).
+
+## Fase 3 — Documentação e versão (3.1)
+
+- `README.md`: seção "Ativar neste clone" (quieto sem ativação, ativar e desativar pelo painel ⚙️, os níveis barrar e lembrar, o JSON exato que é gravado, como o hook é reconhecido, o exclude local), e o passo 0 em "Uso".
+- `orquestrador/skills/change-orchestrator/SKILL.md`: § 1, item 0: num clone inativo a coordenação pede ao dono para ativar no painel ⚙️ antes de orquestrar, e não grava o arquivo ela mesma.
+- `orquestrador/.claude-plugin/plugin.json`: versão 0.9.0 → 0.10.0.
+- Portões da fase rodados depois da última edição (tipos, validação, testes): saída 0 em cada um; 324 testes passando.
