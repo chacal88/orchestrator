@@ -1,7 +1,7 @@
 # Orquestração — fases-por-projeto
 
 Coordenação: sessão `🧭 fases-por-projeto: coordenação`, branch `claude/orchestrator-phases-automation-f69f0d`.
-Flow `rapido` (plugin). Estado: `executar` escalado ao dono (3 tentativas). Fases 1–8 fechadas (246 testes). 3ª revisão: qualidade e arquitetura aprovaram; segurança reprovou (merge escondido depois de um merge legível; git como inerte). Correção proposta: seção 9.
+Flow `rapido` (plugin). Estado: `publicar`. Revisão aprovada (3 revisores), checagem final passou (248 testes). Aguarda o ok do dono para push e PR.
 
 | Onda | Fase | Ícone | Tarefas | Sessão | Branch | Estado | Próximo passo |
 | ---- | ---- | ----- | ------- | ------ | ------ | ------ | ------------- |
@@ -13,3 +13,4 @@ Flow `rapido` (plugin). Estado: `executar` escalado ao dono (3 tentativas). Fase
 | 5 | 5 Docs e versão | 📖 | 5.1–5.2 | coordenação | esta branch (12d22d3) | fechada | — |
 | 6 | 6 Merge seguro | 🛠️ | 6.1–6.4 | fpp-merge-seguro (`local_33be0dd7`) | claude/fpp-merge-seguro-e21dc5 | fechada | — |
 | 6 | 7 Deploy e painel | 🛠️ | 7.1–7.6 | fpp-deploy-painel (`local_93970253`) | claude/fpp-deploy-painel-837674 | fechada | — |
+| 8 | 9 Merge escondido e git | 🛠️ | 9.1–9.2 | coordenação | esta branch (d1952c3) | fechada | — |

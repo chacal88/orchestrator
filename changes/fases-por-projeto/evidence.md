@@ -1,15 +1,15 @@
 # Evidência — fases por projeto
 
 Resultado da change inteira, na branch da coordenação (`claude/orchestrator-phases-automation-f69f0d`), com as
-fases 1, 2, 3a, 3b e 4 juntadas e a `main` 0.7.7. Binário do app 2.1.308 (o `claude` do PATH é o 2.1.227).
+fases 1 a 9 juntadas e a `main` 0.7.7 (checagem final do flow). Binário do app 2.1.308 (o `claude` do PATH é o 2.1.227).
 
 ## Testes
 
 ```
 $ PATH=".../2.1.308/a93ded4b1b47/claude.app/Contents/MacOS:$PATH" \claude plugin test orquestrador
- 220 pass
+ 248 pass
  0 fail
-Ran 220 tests across 21 files.
+Ran 248 tests across 22 files.
 ```
 
 ## Tipos
