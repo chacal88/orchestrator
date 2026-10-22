@@ -240,6 +240,7 @@ const pt = {
     refused: (feedback: string) => `Você recusou o último plano: ${feedback}`,
   },
   escalation: { retry: 'Tentar de novo', end: 'Encerrar o flow' },
+  deployCi: 'Deploy do CI concluído',
   toast: {
     registered: (label: string, next: string) => `Registrado: ${label}. ${next}`,
     flowDone: 'Flow concluído.',
@@ -247,6 +248,9 @@ const pt = {
     nextStep: (step: string) => `Próximo passo: ${step}.`,
     evidenceMissing: (change: string, step: string) => `Flow ${change}: ${step} passou, mas o evidence.md ainda não foi preenchido.`,
     deploySeen: (change: string, label: string) => `Flow ${change}: vi o deploy — ${label}.`,
+    deployRefused: (change: string, step: string, why: string) => `Flow ${change}: ${step} não contou o comando — ${why}`,
+    deployProgress: (change: string, step: string, word: 'failed' | 'part' | 'done') =>
+      `Flow ${change}: ${step} — ${{ failed: 'falhou', part: 'parte do deploy vista', done: 'deploy concluído' }[word]}.`,
     releaseFromPlanMode: 'A liberação vem do plan mode: aprove o plano de execução no diálogo do app.',
     notRecorded: (why: string) => `Não consegui registrar: ${why}`,
     severalReleases: 'Vários flows esperam a liberação; aprovação do plano não registrada.',
@@ -265,6 +269,10 @@ const pt = {
     closed: 'Painel do orquestrador fechado.',
     opened: 'Painel do orquestrador aberto.',
     waiting: 'Painel pronto; amplie a janela para vê-lo.',
+    workflowsDescription: 'Abre ou fecha o painel ⚙️ Workflows: ver e editar os workflows do projeto',
+    workflowsClosed: 'Painel de workflows fechado.',
+    workflowsOpened: 'Painel de workflows aberto.',
+    workflowsWaiting: 'Painel de workflows pronto; amplie a janela para vê-lo.',
   },
   warning: {
     noSessions: 'Sessões filhas indisponíveis: o app não expõe a lista de sessões aqui.',
@@ -440,6 +448,7 @@ const en: UiText = {
     refused: feedback => `You refused the last plan: ${feedback}`,
   },
   escalation: { retry: 'Try again', end: 'End the flow' },
+  deployCi: 'CI deploy finished',
   toast: {
     registered: (label, next) => `Recorded: ${label}. ${next}`,
     flowDone: 'Flow finished.',
@@ -447,6 +456,9 @@ const en: UiText = {
     nextStep: step => `Next step: ${step}.`,
     evidenceMissing: (change, step) => `Flow ${change}: ${step} passed, but evidence.md is not filled in yet.`,
     deploySeen: (change, label) => `Flow ${change}: saw the deploy — ${label}.`,
+    deployRefused: (change, step, why) => `Flow ${change}: ${step} did not count the command — ${why}`,
+    deployProgress: (change, step, word) =>
+      `Flow ${change}: ${step} — ${{ failed: 'failed', part: 'part of the deploy seen', done: 'deploy finished' }[word]}.`,
     releaseFromPlanMode: "The release comes from plan mode: approve the execution plan in the app's dialog.",
     notRecorded: why => `Could not record: ${why}`,
     severalReleases: 'Several flows wait on the release; plan approval not recorded.',
@@ -465,6 +477,10 @@ const en: UiText = {
     closed: 'Orchestrator panel closed.',
     opened: 'Orchestrator panel opened.',
     waiting: 'Panel ready; widen the window to see it.',
+    workflowsDescription: "Opens or closes the ⚙️ Workflows panel: view and edit the project's workflows",
+    workflowsClosed: 'Workflows panel closed.',
+    workflowsOpened: 'Workflows panel opened.',
+    workflowsWaiting: 'Workflows panel ready; widen the window to see it.',
   },
   warning: {
     noSessions: 'Child sessions unavailable: the app does not expose the session list here.',

@@ -1,6 +1,6 @@
 # Evidência: idioma por projeto
 
-- Gate testes: `claude plugin test orquestrador` (binário 2.1.304 do app) na raiz do repo, 175 pass, 0 fail, saída 0 (após juntar a main com o 0.7.7).
+- Gate testes: `claude plugin test orquestrador` (binário 2.1.304 do app) na raiz do repo, 259 pass, 0 fail, saída 0 (após juntar a main com as fases por projeto, 0.8.0).
   Os 10 testes novos ficam em `orquestrador/tests/language.test.ts`.
 - Gate lint/tipos: `tsc` 5.6.3 sobre hooks, types e tests com os tipos do engine, sem erros.
 - `claude plugin validate orquestrador`: Validation passed.
@@ -13,3 +13,7 @@
 - Sem o arquivo, o painel continua em português. Com `"language": "fr"`, ele avisa
   `config.json: language must be pt-BR or en` e fica em português.
 - Não verificado: o painel no app desktop real (só no harness de testes).
+- Depois de juntar com as fases por projeto, um flow derivado (`base` + `override`) mantém as traduções
+  do flow base, e o `override` de um título vale por cima delas (teste em `language.test.ts`).
+- Ainda só em pt-BR: o painel ⚙️ Workflows e os passos da biblioteca (`flows/library.ts`). Com `ui: en`,
+  os passos da biblioteca aparecem com o texto em português.

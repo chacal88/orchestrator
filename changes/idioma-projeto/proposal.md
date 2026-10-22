@@ -23,4 +23,4 @@ que prefere o painel em inglês e os textos da change em português, não tinha 
   os textos que tinha.
 - Não muda: as mensagens para o modelo continuam em inglês, e os ids de passos e de respostas
   (`passou`, `falhou`, `concluidas`) não se traduzem.
-- Versão 0.8.0.
+- Versão 0.8.1 (a 0.8.0 ficou com as fases por projeto, que chegaram antes na main).

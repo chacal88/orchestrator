@@ -2,8 +2,8 @@ import { describe, expect, mock, test } from 'claude-code/testing'
 import type { Engine, TestBody } from 'claude-code/testing'
 
 import type { FlowState } from '../types'
-import { flowView, parseFlow, pressedToast, startFlow } from '../hooks/flow'
-import { defaultFlows } from '../hooks/flows/index'
+import { flowView, parseFlow, pressedToast, resolveProjectFlows, startFlow } from '../hooks/flow'
+import { DEFAULT_FLOWS, defaultFlows } from '../hooks/flows/index'
 import { contentRule, localize, parseConfig, parseLanguages, uiText } from '../hooks/i18n'
 
 type On = Parameters<TestBody>[1]
@@ -181,4 +181,18 @@ test('without a config file the panel is in Portuguese, and a bad value is named
   expect(await ui.find({ type: 'Text', text: /config\.json: language must be pt-BR or en/ })).toBeDefined()
   expect(await ui.find({ type: 'Text', text: /^Tarefas$/ })).toBeDefined()
   await ui.unmount()
+})
+
+test('a project flow derived from a default keeps its translations, and its own override wins', () => {
+  const { flows, problems } = resolveProjectFlows(DEFAULT_FLOWS, [
+    { source: 'mine', raw: { id: 'curto', base: 'completo', remove: ['mockup'], override: { pr: { title: 'Abrir o PR' } } } },
+  ])
+  expect(problems).toEqual([])
+  const curto = flows[0]!
+  expect(curto.titles?.en).toBe('Full')
+  const state = startFlow(curto, { change: 'demo', coordinatorCwd: '/w', visual: false }, 1).state
+  const view = flowView(state, { ui: 'en', content: 'en' })
+  expect(view.current?.title).toBe('Understanding')
+  expect(view.ownerChoices[0]?.label).toBe('Understanding settled')
+  expect(view.steps.find(s => s.id === 'pr')?.title).toBe('Abrir o PR')
 })
