@@ -54,3 +54,51 @@ Ran 180 tests across 17 files.
 $ npx -p typescript@5.6.3 tsc -p <scratchpad>/tc/tsconfig.json   # tipos do engine 2.1.308, opções do cabeçalho
 exit 0
 ```
+
+## Fase 2 — Merge e deploy
+
+Branch `claude/cool-ardinghelli-20969e` (sobre `claude/orchestrator-phases-automation-f69f0d` com a fase 1, mais a
+`main` com o 0.7.7, cuja recusa de merge esta fase estende). Tarefas 2.1–2.4.
+
+- 2.1 `merge` da biblioteca: `auto: false` → passo do dono com `detect: gh pr merge`; `auto: true` → automático com
+  `gh pr merge`. A descrição do passo diz o método (`O PR da change entra em main por rebase.`) e o `describeFlow`
+  também: no automático, conferir aprovação e CI com `gh pr view --json reviewDecision,statusCheckRollup`, rodar
+  `gh pr merge <pr> --<method>` sozinho, nunca `--admin`. Testes em `tests/merge-deploy.test.ts` § merge.
+- 2.2 `refuseMerge` (`hooks/register.tsx`): numa checkout orquestrada, `gh pr merge … --admin` é recusado para
+  qualquer PR (`MERGE_ADMIN` em `gates.ts`); para o PR da própria change, na janela de merge, soma-se ao portão final
+  a revisão do PR ainda não respondida antes do próximo merge (`pendingReview` em `flow.ts`, que acerta o caso
+  dev/master: a revisão antes do merge em dev não segura o merge em main). A mensagem diz cada motivo e o log de
+  portões registra `gates: ["revisao-pr", "--admin", …]`. Harness em `tests/merge-scope-harness.test.ts` (revisão
+  pendente, `--admin`, permitido com o flow andando para o deploy) e unitários em § pendingReview.
+- 2.3 Deploy com sub-estados em `FlowState.progress[<passo>] = { ci, commands }` (ao lado de `records`, que guarda
+  só o outcome final): `ci` confirmado pelo botão "Deploy do CI concluído" (`DEPLOY_CI_OUTCOME`, em
+  `ownerChoices` enquanto falta) ou por `gh run watch|view … --exit-status` passando; cada rotina de `commands`
+  conta só depois do CI e só como a próxima da ordem; saída mascarada não conta (`masksExitCode`). Com tudo
+  cumprido o mod avança o passo (`passou` por `automatic`, ou o outcome do dono por `mod`); ninguém reporta o
+  avanço antes disso. Rotina falhando: automático → `falhou` e tenta de novo guardando o que já passou; do dono →
+  segura. Voltar de um passo posterior zera o progresso. `describeFlow`: `auto: true` → "Deploy by yourself right
+  after the merge, without waiting on the owner"; `auto: false` → espera o dono. `observeFlows` encaminha o passo
+  de deploy para `observeDeploy` e registra no log do flow o que não contou. Testes: só CI, só rotinas, os dois,
+  rotina falhando, ordem errada, volta; harness do mod vendo o deploy pela Bash.
+- 2.4 `parseFlow` junta os `commands` dos passos de deploy ao `detect` de `producao` quando os dois existem.
+  Testes em § the deploy's routines answer production.
+
+Decisões (revisáveis):
+
+- Os sub-estados ficam em `FlowState.progress`, não dentro de `FlowStepRecord`: o registro só existe depois do
+  outcome, e o `enter` já sabe descartar o que fica do passo em diante.
+- `--admin` é recusado em qualquer `gh pr merge` de uma checkout com run, não só no PR da change.
+- O comando do deploy automático da biblioteca virou `gh run watch` (ou a primeira rotina sem CI); ele só nomeia
+  onde o passo começa — quem decide é `observeDeploy`.
+
+Portões (depois da última edição):
+
+```
+$ PATH="$HOME/Library/Application Support/Claude/claude-code/2.1.308/a93ded4b1b47/claude.app/Contents/MacOS:$PATH" \claude plugin test orquestrador
+ 207 pass
+ 0 fail
+Ran 207 tests across 19 files.
+
+$ npx -p typescript@5.6.3 tsc -p <scratchpad>/tc/tsconfig.json   # tipos do engine 2.1.308 (plugin-authoring), opções do cabeçalho
+exit 0
+```
