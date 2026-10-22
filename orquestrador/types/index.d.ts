@@ -524,6 +524,19 @@ export type WorkflowDraft = {
   initial?: { title: string; description: string; steps: { id: string; step: Record<string, unknown>; on: boolean }[] }
 }
 
+/** The project settings being edited: kept in the mod's state until "Salvar" or "Descartar". */
+export type ConfigDraft = {
+  languages: Languages
+  merge: ProjectMerge
+  deploy: ProjectDeploy
+  /** What the file held when the edit opened: the settings are compared with it. */
+  initial: { languages: Languages; merge: ProjectMerge; deploy: ProjectDeploy }
+  error?: string
+}
+
+/** An action on a workflow from "Nos workflows", waiting for the owner's confirmation. */
+export type ConfigAsk = { what: 'add' | 'use'; id: string }
+
 /** The "Novo workflow" and "Acrescentar passo" fields, as the owner fills them. */
 export type WorkflowForms = {
   newId: string
@@ -567,6 +580,10 @@ declare module 'claude-code' {
       wfForms: WorkflowForms
       /** Workflows panel: what the last save did, for the owner to read. */
       wfNotice: string | null
+      /** Workflows panel: the project settings edit in progress. */
+      wfCfgDraft: ConfigDraft | null
+      /** Workflows panel: the "Nos workflows" action awaiting confirmation. */
+      wfCfgAsk: ConfigAsk | null
     }
   }
 }
