@@ -292,3 +292,15 @@ Ran 229 tests across 21 files.
 - 9.2 `git` saiu de `INERT`: `gitRuns` recusa `-c alias.*=!…`, `rebase --exec`/`-x`, `filter-branch` e `bisect run`
   quando a linha cita `gh` e `merge`; `git commit`/`log`/`add`/`push` seguem livres.
 - Testes em `tests/merge-safe.test.ts` (2). Restos registrados na fase 8 seguem como estão.
+
+## Revisão de código — resultado final
+
+- Arquitetura: aprovado (1ª rodada). Qualidade: aprovado (3ª rodada; nits 7 e 8 abertos, não bloqueiam).
+  Segurança: aprovado (4ª rodada, depois do "Tentar de novo" do dono).
+- Risco residual que o revisor de segurança deixa para o dono aceitar ou mandar fechar:
+  - Nome do `gh` e do verbo montados por variável depois de um merge legível na mesma linha
+    (`G=gh; M=merge; gh pr merge 6 --squash; timeout 5 $G pr $M 5 --admin`). Exige ofuscação deliberada;
+    sem o merge de isca, é recusado.
+  - `git -c core.pager=…`/`core.sshCommand=…`/`core.fsmonitor=…` rodando um merge. Exótico.
+  - Script gravado numa chamada e executado em outra; `git push` direto e `--admin` por API com token. A trava
+    real é a proteção de branch do GitHub, que precisa incluir administradores.
