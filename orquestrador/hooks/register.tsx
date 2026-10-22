@@ -100,7 +100,7 @@ import { DEFAULT_LANGUAGES, contentRule, uiText } from './i18n'
 import type { UiText } from './i18n'
 import { renderBand, renderPane } from './pane'
 import { readActivation, registryDir } from './activation'
-import { WORKFLOWS_PANE, drawWorkflows, toggleWorkflowsPane } from './workflows-pane'
+import { WORKFLOWS_PANE, drawWorkflows, startWorkflowsLoad, toggleWorkflowsPane } from './workflows-pane'
 import { findAgent, loadConfig as loadProjectConfig, loadFlows } from './flow-files'
 import { firstSite, issueUrl, jiraKeys, moveFor, parseIssue, parseTransitions, wishes } from './jira'
 import { changeDir, openSpecView } from './openspec'
@@ -1693,6 +1693,7 @@ const restoreActivity = async ($: EngineInterface): Promise<void> => {
 export const register: Register = on => {
   on('session.start', async ($, e, next) => {
     await restoreActivity($).catch(() => undefined)
+    await startWorkflowsLoad($)
     await $.command.register({
       name: 'orquestrador',
       description: (await textNow($)).command.description,

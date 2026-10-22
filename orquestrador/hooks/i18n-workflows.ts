@@ -142,6 +142,8 @@ const pt = {
     replacesDefault: (id: string) =>
       `⚠ ${id} é um workflow padrão. Salvar cria .orquestrador/flows/${id}.json, que passa a valer no lugar do padrão neste projeto.`,
     runningKeep: 'Changes em andamento seguem com o workflow com que começaram.',
+    staleDraft: (title: string) =>
+      `O rascunho de ${title} era de antes de o plugin ser recarregado e foi deixado de lado; nada foi gravado. Use "Editar" para começar de novo.`,
     nameAndDescription: 'Nome e descrição',
     nameLabel: 'Nome',
     descriptionLabel: 'Descrição',
@@ -346,6 +348,7 @@ const pt = {
       `já existe ${path} com o id ou o nome ${id}; nada foi gravado. Corrija ou apague esse arquivo, ou use outro id.`,
     broken: (id: string, named: string) => `os workflows que derivam de ${id} deixariam de resolver; nada foi gravado. ${named}`,
     at: (path: string) => `Salvo em ${path}.`,
+    unchanged: (path: string) => `Nada mudou: ${path} ficou como estava.`,
     replacing: (path: string, id: string) =>
       `Salvo em ${path}. O workflow padrão ${id} segue no mod, mas este projeto passa a usar o seu no lugar dele.`,
     runningKeep: ' Changes em andamento seguem com o workflow com que começaram.',
@@ -515,6 +518,7 @@ const en: WorkflowsText = {
     replacesDefault: id =>
       `⚠ ${id} is a default workflow. Saving creates .orquestrador/flows/${id}.json, which takes the default's place in this project.`,
     runningKeep: 'Changes in progress keep the workflow they started with.',
+    staleDraft: title => `The draft of ${title} was from before the plugin was reloaded and was set aside; nothing was written. Use "Edit" to start again.`,
     nameAndDescription: 'Name and description',
     nameLabel: 'Name',
     descriptionLabel: 'Description',
@@ -716,6 +720,7 @@ const en: WorkflowsText = {
     taken: (path, id) => `${path} already holds the id or the name ${id}; nothing was written. Fix or delete that file, or use another id.`,
     broken: (id, named) => `the workflows that derive from ${id} would stop resolving; nothing was written. ${named}`,
     at: path => `Saved in ${path}.`,
+    unchanged: path => `Nothing changed: ${path} was left as it was.`,
     replacing: (path, id) => `Saved in ${path}. The default workflow ${id} stays in the mod, but this project now uses yours instead.`,
     runningKeep: ' Changes in progress keep the workflow they started with.',
   },

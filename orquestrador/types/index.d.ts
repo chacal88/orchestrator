@@ -522,6 +522,8 @@ export type WorkflowDraft = {
   error?: string
   /** The draft as it was opened (title, description and each step), for the summary of what changed. */
   initial?: { title: string; description: string; steps: { id: string; step: Record<string, unknown>; on: boolean }[] }
+  /** The load of the mod's code that opened it: one kept from before a reload is not offered again. */
+  load?: string
 }
 
 /** The project settings being edited: kept in the mod's state until "Salvar" or "Descartar". */
@@ -535,7 +537,7 @@ export type ConfigDraft = {
 }
 
 /** An action on a workflow from "Nos workflows", waiting for the owner's confirmation. */
-export type ConfigAsk = { what: 'add' | 'use'; id: string }
+export type ConfigAsk = { what: 'add' | 'use'; id: string; load?: string }
 
 /** How much the mod does in a clone where the owner activated it: bar what leaves the flow, or only remind. */
 export type ActivationLevel = 'barrar' | 'lembrar'
@@ -587,11 +589,13 @@ declare module 'claude-code' {
       wfDraft: WorkflowDraft | null
       wfForms: WorkflowForms
       /** Workflows panel: what the last save did, for the owner to read. */
-      wfNotice: string | null
+      wfNotice: { text: string; load: string } | string | null
       /** Workflows panel: the project settings edit in progress. */
       wfCfgDraft: ConfigDraft | null
       /** Workflows panel: the "Nos workflows" action awaiting confirmation. */
       wfCfgAsk: ConfigAsk | null
+      /** Workflows panel: this load of the mod's code, set at each `session.start`. */
+      wfLoad: string | null
       /** Workflows panel: the "Ativar neste clone" confirmation, with its level. */
       wfActivate: ActivationAsk | null
     }

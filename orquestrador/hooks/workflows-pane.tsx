@@ -90,6 +90,29 @@ const OWNER = '#C2410C'
 const MOD = '#6B6A66'
 const MODELS = ['claude-opus-5-5', 'claude-sonnet-5-5', 'claude-haiku-5-5', 'claude-fable-5-1']
 const EFFORTS = ['low', 'medium', 'high', 'xhigh', 'max']
+const LOAD = { plugin: 'orquestrador', key: 'wfLoad' } as const
+
+/**
+ * This load of the mod's code. The host keeps the pane's state through a reload of the code
+ * (`/reload-plugins`, an update), and `session.start` fires again at each load: a draft, a
+ * confirmation or a notice of an earlier load is not offered again, so a press there (an Enter on
+ * the first button, "Salvar") never writes what the owner did not open in this load.
+ */
+async function loadId($: EngineInterface): Promise<string> {
+  const { value } = await $.state.get(LOAD)
+  return value ?? ''
+}
+/** `session.start`: a new load of the mod's code begins. */
+export async function startWorkflowsLoad($: EngineInterface): Promise<void> {
+  const now = await $.clock.now()
+  await $.state.set(LOAD, `load-${now}`)
+}
+/** A notice for the owner, of this load. */
+async function noticeOf($: EngineInterface, text: string): Promise<void> {
+  const load = await loadId($)
+  await $.state.set(NOTICE, { text, load })
+}
+
 /** A Select's "nothing chosen": its options' values must be words. */
 const NONE = '-'
 /** "+ passo aqui" open at the end of a workflow that has no step yet. */
@@ -1277,7 +1300,8 @@ export async function drawWorkflows(
   const languages = loaded.config.languages
   const project = loaded.config.project
   const t = workflowsText(languages.ui)
-  const [selected, focus, insert, draft, forms, notice, cfgDraft, cfgAsk, actAsk] = await Promise.all([
+  const load = await loadId($)
+  const [selected, focus, insert, kept, forms, notice, cfgDraft, cfgAsk, actAsk] = await Promise.all([
     $.state.get(SELECTED),
     $.state.get(FOCUS),
     $.state.get(INSERT),
@@ -1289,6 +1313,11 @@ export async function drawWorkflows(
     $.state.get(ACT),
   ])
   const activation = await readActivation($)
+  // what an earlier load of the code left in the state is set aside, never offered to save
+  const draft = { value: kept.value != null && kept.value.load === load ? kept.value : null }
+  const stale = kept.value != null && draft.value === null ? kept.value : null
+  const said = typeof notice.value === 'object' && notice.value !== null && notice.value.load === load ? notice.value.text : null
+  const asked = cfgAsk.value != null && cfgAsk.value.load === load ? cfgAsk.value : null
   const defaults = defaultsById()
   const entries = Object.values(loaded.flows).map(flow => ({
     flow,
@@ -1317,7 +1346,7 @@ export async function drawWorkflows(
     insert: insert.value ?? null,
     draft: draft.value ?? null,
     forms: { ...EMPTY_FORMS, ...(forms.value ?? {}) },
-    notice: notice.value ?? null,
+    notice: said ?? (stale === null ? null : t.edit.staleDraft(stale.title)),
     agents,
     agentList: await listAgents($),
     narrow: columns < NARROW_COLUMNS,
@@ -1326,7 +1355,7 @@ export async function drawWorkflows(
       project,
       problems: loaded.config.problems,
       draft: cfgDraft.value ?? null,
-      ask: cfgAsk.value ?? null,
+      ask: asked,
       states: entries.map(e => workflowState(e.flow, project)),
       activation: { level: activation.level, invalid: activation.invalid, tampered: activation.tampered, ask: actAsk.value ?? null },
     },
@@ -1352,7 +1381,7 @@ export async function drawWorkflows(
     return { ...draftOf(flow, base, defaults[id] !== undefined), ...(source === undefined ? {} : { source }) }
   }
   const W = t.project.workflows
-  const say = (text$: string) => $.state.set(NOTICE, text$)
+  const say = (text$: string) => noticeOf($, text$)
   /** "Acrescentar merge e deploy" / "Passar a usar o do projeto", written through the editor's own save. */
   const runAsk = async (ask: ConfigAsk): Promise<void> => {
     const flow = loaded.flows[ask.id]
@@ -1396,6 +1425,10 @@ export async function drawWorkflows(
       await stop(written.error)
       return
     }
+    if (written.unchanged) {
+      await stop(W.nothing)
+      return
+    }
     await Promise.all([say(W.done(name, written.relative)), $.state.set(ASK, null)])
   }
 
@@ -1416,7 +1449,7 @@ export async function drawWorkflows(
         $.ui.toast(d)
         return
       }
-      void Promise.all([$.state.set(DRAFT, d), $.state.set(FOCUS, null), $.state.set(INSERT, null), $.state.set(NOTICE, null)]).catch(fail('edit'))
+      void Promise.all([$.state.set(DRAFT, { ...d, load }), $.state.set(FOCUS, null), $.state.set(INSERT, null), $.state.set(NOTICE, null)]).catch(fail('edit'))
     },
     form: field => value => {
       void update($, FORMS, f => ({ ...EMPTY_FORMS, ...(f ?? {}), [field]: value })).catch(fail('field'))
@@ -1440,7 +1473,7 @@ export async function drawWorkflows(
             return
           }
           return Promise.all([
-            $.state.set(DRAFT, newDraft(id, base, name)),
+            $.state.set(DRAFT, { ...newDraft(id, base, name), load }),
             $.state.set(FORMS, { ...forms$, newId: '', newBase: '' }),
             $.state.set(FOCUS, null),
             $.state.set(INSERT, null),
@@ -1491,7 +1524,7 @@ export async function drawWorkflows(
       void Promise.all([$.state.set(CFG, null), $.state.set(ASK, null), $.state.set(NOTICE, null)]).catch(fail('discard'))
     },
     ask: (what, id) => () => {
-      void $.state.set(ASK, { what, id }).catch(fail('open'))
+      void $.state.set(ASK, { what, id, load }).catch(fail('open'))
     },
     confirm: () => {
       const ask = view.config?.ask
@@ -1531,7 +1564,11 @@ export async function drawWorkflows(
  * The draft resolved as the mod would load it and, when it does, written. With an error nothing is
  * written. Only "Salvar" and the project settings' two workflow actions write a workflow file, here.
  */
-async function writeDraft($: EngineInterface, t: WorkflowsText, draft: WorkflowDraft): Promise<{ error: string } | { relative: string; target: string; notice?: string }> {
+async function writeDraft(
+  $: EngineInterface,
+  t: WorkflowsText,
+  draft: WorkflowDraft,
+): Promise<{ error: string } | { relative: string; target: string; notice?: string; unchanged?: true }> {
   const { files, dir, config } = await loadFlows($)
   const relative = (path: string) => `.orquestrador/flows/${path.slice(dir.length + 1)}`
   // only the file the draft was opened from may be written over; any other of the same id or name stays
@@ -1540,8 +1577,11 @@ async function writeDraft($: EngineInterface, t: WorkflowsText, draft: WorkflowD
     const taken = await takenBy($, files, dir, draft.id)
     if (taken !== undefined) return { error: t.saved.taken(taken, draft.id) }
   }
-  const result = draftFile(draft, raw => resolveCandidate(DEFAULT_FLOWS, files, target, raw, t, config.project), t, config.project)
+  // the file as the owner wrote it: what the draft did not change is written back as it was
+  const original = files.find(f => f.source === target)?.raw as Record<string, unknown> | undefined
+  const result = draftFile(draft, raw => resolveCandidate(DEFAULT_FLOWS, files, target, raw, t, config.project), t, config.project, original)
   if ('error' in result) return { error: result.error }
+  if (original !== undefined && sameFile(result.raw, original)) return { relative: relative(target), target, unchanged: true }
   const broken = brokenDependents(DEFAULT_FLOWS, files, target, result.raw, config.project)
   if (broken.length > 0) {
     const named = broken.map(p => p.split(`${dir}/`).join('.orquestrador/flows/'))
@@ -1551,10 +1591,13 @@ async function writeDraft($: EngineInterface, t: WorkflowsText, draft: WorkflowD
   return { relative: relative(target), target, ...(result.notice === undefined ? {} : { notice: result.notice }) }
 }
 
-/** "Salvar": the draft written by `writeDraft`; with an error it stays on the draft. */
+/**
+ * "Salvar": the draft written by `writeDraft`; with an error it stays on the draft. A draft of an
+ * earlier load of the code is not written, and one that changes nothing leaves the file untouched.
+ */
 async function saveDraft($: EngineInterface, t: WorkflowsText): Promise<void> {
   const { value: draft } = await $.state.get(DRAFT)
-  if (draft == null) return
+  if (draft == null || draft.load !== (await loadId($))) return
   const written = await writeDraft($, t, draft)
   if ('error' in written) {
     await $.state.set(DRAFT, { ...draft, error: written.error })
@@ -1564,11 +1607,13 @@ async function saveDraft($: EngineInterface, t: WorkflowsText): Promise<void> {
   await $.state.set(SELECTED, draft.id)
   await $.state.set(FOCUS, null)
   await $.state.set(INSERT, null)
-  await $.state.set(
-    NOTICE,
-    (draft.replacesDefault ? t.saved.replacing(written.relative, draft.id) : t.saved.at(written.relative)) +
-      t.saved.runningKeep +
-      (written.notice === undefined ? '' : ` ${written.notice}`),
+  await noticeOf(
+    $,
+    written.unchanged
+      ? t.saved.unchanged(written.relative)
+      : (draft.replacesDefault ? t.saved.replacing(written.relative, draft.id) : t.saved.at(written.relative)) +
+          t.saved.runningKeep +
+          (written.notice === undefined ? '' : ` ${written.notice}`),
   )
 }
 
@@ -1581,7 +1626,7 @@ async function saveConfig($: EngineInterface, t: WorkflowsText): Promise<void> {
   if (draft == null) return
   const refuse = (error: string) => $.state.set(CFG, { ...draft, error })
   if (!configChanged(draft)) {
-    await Promise.all([$.state.set(CFG, null), $.state.set(NOTICE, t.project.edit.nothingToSave)])
+    await Promise.all([$.state.set(CFG, null), noticeOf($, t.project.edit.nothingToSave)])
     return
   }
   const config = await loadConfig($)
@@ -1591,7 +1636,7 @@ async function saveConfig($: EngineInterface, t: WorkflowsText): Promise<void> {
     return
   }
   await $.fs.write(`${await $.session.root()}/${CONFIG_PATH}`, next.text)
-  await Promise.all([$.state.set(CFG, null), $.state.set(ASK, null), $.state.set(NOTICE, t.project.edit.saved)])
+  await Promise.all([$.state.set(CFG, null), $.state.set(ASK, null), noticeOf($, t.project.edit.saved)])
 }
 
 /** Writes the clone's activation (or takes it back) and says what happened: the file is the owner's, so a broken one is left as it is. */
@@ -1599,7 +1644,7 @@ async function setActivation($: EngineInterface, t: WorkflowsText, level: Activa
   const A = t.project.activation
   const written = await writeActivation($, level)
   const say = async (text: string) => {
-    await Promise.all([$.state.set(ACT, null), $.state.set(NOTICE, text)])
+    await Promise.all([$.state.set(ACT, null), noticeOf($, text)])
     $.ui.toast(text)
   }
   if (!written.ok) {
@@ -1611,6 +1656,13 @@ async function setActivation($: EngineInterface, t: WorkflowsText, level: Activa
 }
 
 const idOf = (raw: unknown): unknown => (raw as { id?: unknown } | null)?.id
+
+/** Two flow files that say the same, whatever the order of their keys. */
+const sameFile = (a: unknown, b: unknown): boolean => {
+  const sorted = (v: unknown): unknown =>
+    Array.isArray(v) ? v.map(sorted) : typeof v === 'object' && v !== null ? Object.fromEntries(Object.keys(v).sort().map(k => [k, sorted((v as Record<string, unknown>)[k])])) : v
+  return JSON.stringify(sorted(a)) === JSON.stringify(sorted(b))
+}
 
 /** The project file, as the owner reads its path, that already holds `id`: by its id, or by its name `<id>.json`, valid or broken. */
 async function takenBy($: EngineInterface, files: readonly FlowSource[], dir: string, id: string): Promise<string | undefined> {
