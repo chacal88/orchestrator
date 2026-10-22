@@ -8,10 +8,10 @@
 
 ## 2. Merge e deploy
 
-- [ ] 2.1 Merge `auto: false` vira passo do dono com detect `gh pr merge`; `auto: true` vira automático com `gh pr merge` — teste — cx: moderate
-- [ ] 2.2 Recusa de `gh pr merge` antes da `revisao-pr` respondida e com `--admin` (somada aos portões finais que já existem) — teste de harness — cx: complex
-- [ ] 2.3 Deploy: sub-estados `ci` e `commands` no registro do passo; avança só com todos; `auto` decide se a coordenação segue sozinha — testes — cx: complex
-- [ ] 2.4 Comandos de deploy entram no detect de `producao` quando o workflow tem os dois — teste — cx: simple
+- [x] 2.1 Merge `auto: false` vira passo do dono com detect `gh pr merge`; `auto: true` vira automático com `gh pr merge` — teste — cx: moderate
+- [x] 2.2 Recusa de `gh pr merge` antes da `revisao-pr` respondida e com `--admin` (somada aos portões finais que já existem) — teste de harness — cx: complex
+- [x] 2.3 Deploy: sub-estados `ci` e `commands` no registro do passo; avança só com todos; `auto` decide se a coordenação segue sozinha — testes — cx: complex
+- [x] 2.4 Comandos de deploy entram no detect de `producao` quando o workflow tem os dois — teste — cx: simple
 
 ## 3. Agentes e coordenação
 

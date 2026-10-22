@@ -32,6 +32,7 @@ import {
   GATE_IDS,
   ARCHIVE_COMMAND,
   GH_MERGE,
+  MERGE_ADMIN,
   MAX_LIVE_SESSIONS,
   PROTECTED_DIR,
   familyCheck,
@@ -57,7 +58,10 @@ import {
   currentStep,
   describeFlow,
   detectedOutcome,
+  executedTextShort,
   noteOwnerStep,
+  observeDeploy,
+  pendingReview,
   flowView,
   mergeFlows,
   ownerPress,
@@ -883,25 +887,44 @@ const mergesChangePr = async (
 }
 
 /**
- * The final gates hold back only the change's own PR, and only while its flow runs up to the
- * step before the archive; a finished or aborted flow gates nothing.
+ * From an orchestrated checkout no merge goes with `--admin`. The change's own PR, while its flow
+ * runs up to the step before the archive, also waits for the flow's PR review before that merge
+ * and for the final gates; a finished or aborted flow holds back nothing but `--admin`.
  */
 const refuseMerge = async ($: EngineInterface, command: string): Promise<string | undefined> => {
   const root = await $.session.root()
   const run = await loadRun($, root)
-  if (run === undefined || run.finalGates === undefined) return undefined
+  if (run === undefined) return undefined
+  const held: string[] = []
+  const reasons: string[] = []
+  if (MERGE_ADMIN.test(executedText(command))) {
+    held.push('--admin')
+    reasons.push('`--admin` skips the branch protection (GitHub approval and green CI); merge without it, never around them.')
+  }
   const flow = await loadFlowState($, run.change)
-  if (flow !== undefined && !mergeWindow(flow)) return undefined
   const family = await loadFamily($)
-  if (!(await mergesChangePr($, command, run, flow, family, root))) return undefined
-  const open = await finalOpenGates($, run, family)
-  if (open.length === 0) return undefined
-  await logGateEvent($, run.change, { kind: 'refused', action: 'merge', gates: open.map(v => v.gate) })
-  return (
-    `final gates of ${run.change} not passed: ${open.map(v => `${v.gate} (${v.state})`).join(', ')}. ` +
-    'Run them once on the integrated code; only the owner can skip one, from the panel. ' +
-    `(Only a merge of ${run.change}'s own PR waits for them, until its flow reaches the archive.)`
-  )
+  if ((flow === undefined || mergeWindow(flow)) && (await mergesChangePr($, command, run, flow, family, root))) {
+    const review = flow === undefined ? undefined : pendingReview(flow)
+    if (review !== undefined) {
+      held.push(review.id)
+      const press = Object.values(review.outcomes)[0]?.label ?? review.id
+      reasons.push(
+        `the PR review "${review.id}" (${review.title}) of ${run.change} is not answered yet: the owner approves the PR ` +
+          `on GitHub and presses "${press}" in the panel before it merges.`,
+      )
+    }
+    const open = run.finalGates === undefined ? [] : await finalOpenGates($, run, family)
+    if (open.length > 0) {
+      held.push(...open.map(v => v.gate))
+      reasons.push(
+        `final gates of ${run.change} not passed: ${open.map(v => `${v.gate} (${v.state})`).join(', ')}. ` +
+          'Run them once on the integrated code; only the owner can skip one, from the panel.',
+      )
+    }
+  }
+  if (reasons.length === 0) return undefined
+  await logGateEvent($, run.change, { kind: 'refused', action: 'merge', gates: held })
+  return `${reasons.join(' ')} (Only a merge of ${run.change}'s own PR waits for the review and the gates, until its flow reaches the archive.)`
 }
 
 /**
@@ -1282,7 +1305,6 @@ const hasEvidence = async ($: EngineInterface, state: FlowState): Promise<boolea
   return EVIDENCE_OK.has(openSpecView({ tasks: undefined, proposal: undefined, evidence }).evidence)
 }
 
-const executedTextShort = (command: string): string => `comando: ${command.replace(/\s+/g, ' ').trim().slice(0, 80)}`
 
 /** An automatic step moves only when the mod itself sees its command finish, never on a session's word. */
 const observeFlows = async ($: EngineInterface, command: string, failed: boolean): Promise<void> => {
@@ -1291,6 +1313,23 @@ const observeFlows = async ($: EngineInterface, command: string, failed: boolean
     if (state.status !== 'running' || !ownsFlow(state, root)) continue
     const step = currentStep(state)
     if (step === undefined) continue
+    if (step.deploy !== undefined) {
+      const seen = observeDeploy(state, command, failed, await $.clock.now())
+      if (seen === undefined) continue
+      if ('error' in seen) {
+        await logFlowRefusal($, state, step.id, 'detect', seen.error)
+        $.ui.toast(`Flow ${state.change}: ${step.title} não contou o comando — ${seen.error}`)
+        continue
+      }
+      await saveFlow($, seen.state, seen.events)
+      const word = seen.events.some(e => e.outcome === 'falhou')
+        ? 'falhou'
+        : seen.state.current === step.id
+          ? 'parte do deploy vista'
+          : 'deploy concluído'
+      $.ui.toast(`Flow ${state.change}: ${step.title} — ${word}.`)
+      continue
+    }
     const detected = detectedOutcome(step, command, failed)
     if (detected !== undefined) {
       const seen = applyOutcome(

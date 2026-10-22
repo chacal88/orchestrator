@@ -361,6 +361,8 @@ export const liveSessions = <T extends CeilingRow>(
       })
 
 export const GH_MERGE = /\bgh\s+pr\s+merge\b/
+/** A merge that skips the branch protection (approval and CI): never the change's way in. */
+export const MERGE_ADMIN = /\bgh\s+pr\s+merge\b[^;&|\n]*\s--admin\b/
 export const ARCHIVE_COMMAND = /\bopenspec(\.js)?\s+archive\b/
 export const PROTECTED_DIR = '/.claude/orquestrador/'
 

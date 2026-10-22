@@ -3,6 +3,7 @@ import type {
   FlowChoice,
   FlowDef,
   FlowDeploy,
+  FlowDeployProgress,
   FlowDetect,
   FlowEffort,
   FlowEvent,
@@ -115,6 +116,7 @@ export const parseFlow = (raw: unknown, source: string): FlowDef | { error: stri
       ...extras,
     })
   }
+  watchRoutines(steps)
   const ids = new Set(steps.map(s => s.id))
   for (const step of steps) {
     for (const [name, o] of Object.entries(step.outcomes)) {
@@ -124,6 +126,18 @@ export const parseFlow = (raw: unknown, source: string): FlowDef | { error: stri
     }
   }
   return { id, title, description: text(raw.description) ?? '', steps }
+}
+
+/** The step that says the change reached production; it also sees the deploy's routines. */
+export const PRODUCTION_STEP = 'producao'
+
+/** A flow with a deploy and the production step: the deploy's routines also answer production. */
+const watchRoutines = (steps: FlowStep[]): void => {
+  const routines = steps.flatMap(s => s.deploy?.commands ?? [])
+  const production = steps.find(s => s.id === PRODUCTION_STEP)
+  if (production === undefined || routines.length === 0) return
+  const commands = [...new Set([...(production.detect?.commands ?? []), ...routines])]
+  production.detect = { commands, outcome: production.detect?.outcome ?? Object.keys(production.outcomes)[0]! }
 }
 
 /**
@@ -410,6 +424,10 @@ const enter = (state: FlowState, target: string, by: FlowActor, cause: { from: s
   const records = Object.fromEntries(
     Object.entries(state.records).filter(([sid]) => indexOf(state.flow, sid) < from),
   )
+  // a deploy that retries itself keeps what it saw done; coming back from a later step starts it over
+  const progress = Object.fromEntries(
+    Object.entries(state.progress ?? {}).filter(([sid]) => indexOf(state.flow, sid) < from || (sid === id && cause.from === id)),
+  )
   // going back keeps why (e.g. QA's request), until the flow reaches that step again
   const cause_ = state.records[cause.from]
   const source = stepOf(state.flow, cause.from)
@@ -426,8 +444,12 @@ const enter = (state: FlowState, target: string, by: FlowActor, cause: { from: s
       : state.reopened !== undefined && id !== state.reopened.step
         ? state.reopened
         : undefined
-  const { reopened: _drop, ...rest } = state
-  state = reopened === undefined ? rest : { ...rest, reopened }
+  const { reopened: _drop, progress: _progress, ...rest } = state
+  state = {
+    ...rest,
+    ...(reopened === undefined ? {} : { reopened }),
+    ...(Object.keys(progress).length === 0 ? {} : { progress }),
+  }
   const attempts = state.attempts[id] ?? 0
   if (by !== 'owner' && attempts >= step.maxAttempts) {
     const escalation = { step: id, from: cause.from, outcome: cause.outcome, attempts }
@@ -523,30 +545,144 @@ export const applyOutcome = (
   if (detected && report.outcome !== asked.detect?.outcome) {
     return { error: `step "${asked.id}": a detected command gives only ${asked.detect?.outcome}.` }
   }
-  const outcome = asked.outcomes[report.outcome]
-  if (outcome === undefined) {
+  if (asked.outcomes[report.outcome] === undefined) {
     return { error: `step "${asked.id}" has no outcome "${report.outcome}"; it declares ${Object.keys(asked.outcomes).join(', ')}.` }
   }
-  const note = report.note ?? state.pendingNote
-  const record = { outcome: report.outcome, by: report.by, at, ...(note === undefined ? {} : { note }) }
+  if (asked.deploy !== undefined && report.outcome !== 'falhou') {
+    return {
+      error:
+        `step "${asked.id}" (${asked.title}) moves on by itself once the mod saw the whole deploy: ` +
+        `${deployWaits(state, asked)}.`,
+    }
+  }
+  return settle(state, asked, report.outcome, report.by, report.note, at)
+}
+
+/** Records a step's outcome and enters where it leads. */
+const settle = (state: FlowState, step: FlowStep, name: string, by: FlowActor, given: string | undefined, at: number): Moved => {
+  const outcome = step.outcomes[name] as FlowOutcome
+  const note = given ?? state.pendingNote
+  const record = { outcome: name, by, at, ...(note === undefined ? {} : { note }) }
   const reported: FlowEvent = {
     seq: state.seq + 1,
     at,
     kind: 'outcome',
-    step: asked.id,
-    by: report.by,
-    outcome: report.outcome,
+    step: step.id,
+    by,
+    outcome: name,
     ...(note === undefined ? {} : { note }),
   }
   const { pendingNote: _used, ...unnoted } = state
   const moved = enter(
-    { ...unnoted, records: { ...state.records, [asked.id]: record }, seq: state.seq + 1 },
+    { ...unnoted, records: { ...state.records, [step.id]: record }, seq: state.seq + 1 },
     outcome.next,
-    report.by,
-    { from: asked.id, outcome: report.outcome },
+    by,
+    { from: step.id, outcome: name },
     at,
   )
   return { state: moved.state, events: [reported, ...moved.events] }
+}
+
+/** The owner's button on a deploy step that waits on the CI. */
+export const DEPLOY_CI_OUTCOME = 'ci-concluido'
+export const DEPLOY_CI_LABEL = 'Deploy do CI concluído'
+
+/** `gh run watch` / `gh run view` that fail with the run: only `--exit-status` makes their exit code the run's. */
+const CI_WATCH = /\bgh\s+run\s+(?:watch|view)\b(?=[^;&|\n]*\s--exit-status\b)/
+
+const progressOf = (state: FlowState, step: FlowStep): FlowDeployProgress =>
+  state.progress?.[step.id] ?? { ci: false, commands: [] }
+
+/** What a deploy step still waits on: the CI's deploy, then its routines in order. */
+export const deployPending = (state: FlowState, step: FlowStep): FlowDeployProgress => {
+  const done = progressOf(state, step)
+  return { ci: step.deploy?.ci === true && !done.ci, commands: (step.deploy?.commands ?? []).slice(done.commands.length) }
+}
+
+const deployWaits = (state: FlowState, step: FlowStep): string => {
+  const pending = deployPending(state, step)
+  const parts = [
+    ...(pending.ci ? ["the CI's deploy"] : []),
+    ...(pending.commands.length > 0 ? [`the routines ${pending.commands.map(c => `\`${c}\``).join(', ')}`] : []),
+  ]
+  return parts.length === 0 ? 'nothing is left' : `it still waits on ${parts.join(', then ')}`
+}
+
+/** One more thing the deploy saw done; with nothing left, the step moves on. */
+const tick = (state: FlowState, step: FlowStep, done: FlowDeployProgress, by: FlowActor, note: string, at: number): Moved => {
+  const progressed: FlowState = { ...state, progress: { ...state.progress, [step.id]: done }, seq: state.seq + 1, updatedAt: at }
+  const event: FlowEvent = { seq: state.seq + 1, at, kind: 'progress', step: step.id, by, note }
+  const pending = deployPending(progressed, step)
+  if (pending.ci || pending.commands.length > 0) return { state: progressed, events: [event] }
+  const forward = step.kind === 'automatic' ? 'passou' : Object.keys(step.outcomes)[0]!
+  const moved = settle(progressed, step, forward, step.kind === 'automatic' ? 'automatic' : 'mod', undefined, at)
+  return { state: moved.state, events: [event, ...moved.events] }
+}
+
+/** The owner confirms the CI's deploy from the panel. */
+export const confirmDeployCi = (state: FlowState, stepId: string, at: number): Moved | { error: string } => {
+  const step = currentStep(state)
+  if (state.status !== 'running' || step === undefined || step.id !== stepId) return { error: `the flow of ${state.change} is not on "${stepId}".` }
+  if (step.deploy?.ci !== true) return { error: `step "${step.id}" does not wait on the CI.` }
+  const done = progressOf(state, step)
+  if (done.ci) return { error: `the CI's deploy of "${step.id}" is already confirmed.` }
+  return tick(state, step, { ...done, ci: true }, 'owner', DEPLOY_CI_LABEL, at)
+}
+
+/**
+ * One finished Bash command, read by the deploy step the flow is on: `gh run watch|view
+ * --exit-status` passing confirms the CI's deploy; a routine passing counts only after the CI
+ * (when the step waits on it) and only as the next one in order. A masked exit code proves
+ * nothing. A failure fails an automatic deploy; an owner's deploy holds. Undefined when the
+ * command is none of the deploy's; an error when it is one but does not count.
+ */
+export const observeDeploy = (state: FlowState, command: string, failed: boolean, at: number): Moved | { error: string } | undefined => {
+  const step = currentStep(state)
+  if (state.status !== 'running' || step?.deploy === undefined) return undefined
+  const code = executedText(command)
+  const routines = step.deploy.commands.map(commandPattern)
+  const routine = routines.findIndex(p => p.test(code))
+  const pattern = routine === -1 ? (CI_WATCH.test(code) ? CI_WATCH : undefined) : routines[routine]!
+  if (pattern === undefined) return undefined
+  const what = routine === -1 ? "the CI's deploy" : `the routine \`${step.deploy.commands[routine]}\``
+  if (failed) {
+    return step.kind === 'automatic'
+      ? settle(state, step, 'falhou', 'automatic', `${what} failed`, at)
+      : { error: `${what} failed; the deploy holds until it passes.` }
+  }
+  if (masksExitCode(code, pattern)) return { error: `${what} ran with its exit code hidden; run it alone for it to count.` }
+  const done = progressOf(state, step)
+  if (routine === -1) {
+    if (!step.deploy.ci || done.ci) return undefined
+    return tick(state, step, { ...done, ci: true }, 'detect', executedTextShort(command), at)
+  }
+  if (step.deploy.ci && !done.ci) return { error: `${what} ran before the CI's deploy was confirmed; it does not count.` }
+  const expected = done.commands.length
+  if (routine < expected) return { error: `${what} already passed.` }
+  if (routine > expected) {
+    return { error: `${what} ran out of order; \`${step.deploy.commands[expected]}\` comes first, so it does not count.` }
+  }
+  return tick(state, step, { ...done, commands: [...done.commands, step.deploy.commands[routine]!] }, 'detect', executedTextShort(command), at)
+}
+
+export const executedTextShort = (command: string): string => `comando: ${command.replace(/\s+/g, ' ').trim().slice(0, 80)}`
+
+/** The PR review step: no merge of the change's PR before the owner approved it. */
+export const REVIEW_STEP = 'revisao-pr'
+
+/**
+ * The PR review the flow has not answered yet and comes before its next merge (the merge step it
+ * is on, or the first one after); with no merge step ahead, any unanswered review. A finished or
+ * aborted flow waits on none.
+ */
+export const pendingReview = (state: FlowState): FlowStep | undefined => {
+  if (state.status === 'done' || state.status === 'aborted') return undefined
+  const steps = state.flow.steps
+  const at = Math.max(0, indexOf(state.flow, state.current))
+  const merge = steps.findIndex((s, i) => i >= at && s.merge !== undefined)
+  return steps
+    .slice(0, merge === -1 ? steps.length : merge)
+    .find(s => (s.id === REVIEW_STEP || s.id.startsWith(`${REVIEW_STEP}-`)) && state.records[s.id] === undefined)
 }
 
 /** The owner's answer to an escalation: go again with a fresh count, or end the flow. */
@@ -573,7 +709,9 @@ export const resolveEscalation = (state: FlowState, choice: string, at: number):
 export const ownerPress = (state: FlowState, step: string, outcome: string, at: number, note?: string): Moved | { error: string } =>
   state.status === 'escalated' && state.escalation?.step === step
     ? resolveEscalation(state, outcome, at)
-    : applyOutcome(state, { step, outcome, by: 'owner', ...(note === undefined ? {} : { note }) }, at)
+    : outcome === DEPLOY_CI_OUTCOME
+      ? confirmDeployCi(state, step, at)
+      : applyOutcome(state, { step, outcome, by: 'owner', ...(note === undefined ? {} : { note }) }, at)
 
 /** What the owner sees after a press: the answer recorded, in their words, and where the flow went. */
 export const pressedToast = (before: FlowState, after: FlowState, step: string, outcome: string): string => {
@@ -589,7 +727,9 @@ export const pressedToast = (before: FlowState, after: FlowState, step: string, 
 
 /** The button's own words: the owner step's outcome label, or the escalation choice's. */
 const pressedLabel = (before: FlowState, step: string, outcome: string): string =>
-  stepOf(before.flow, step)?.outcomes[outcome]?.label ?? ESCALATION_CHOICES.find(c => c.outcome === outcome)?.label ?? outcome
+  stepOf(before.flow, step)?.outcomes[outcome]?.label ??
+  ESCALATION_CHOICES.find(c => c.outcome === outcome)?.label ??
+  (outcome === DEPLOY_CI_OUTCOME ? DEPLOY_CI_LABEL : outcome)
 
 /**
  * What the coordinator reads after an owner press, or nothing when it has nothing to do: the flow
@@ -619,7 +759,7 @@ const commandPattern = (command: string): RegExp =>
  * A run whose exit code a pipe, `|| true` or a later `; cmd` hides proves a failure, never a pass.
  */
 export const automaticOutcome = (step: FlowStep, command: string, failed: boolean): 'passou' | 'falhou' | undefined => {
-  if (step.kind !== 'automatic' || step.command === undefined) return undefined
+  if (step.kind !== 'automatic' || step.command === undefined || step.deploy !== undefined) return undefined
   const code = executedText(command)
   const pattern = commandPattern(step.command)
   if (!pattern.test(code)) return undefined
@@ -682,9 +822,13 @@ export const flowView = (state: FlowState): FlowView => {
   const ownerChoices: FlowChoice[] =
     state.status === 'escalated'
       ? [...ESCALATION_CHOICES]
-      : step?.kind === 'owner'
-        ? Object.entries(step.outcomes).map(([outcome, o]) => ({ outcome, label: o.label }))
-        : []
+      : step?.deploy !== undefined
+        ? deployPending(state, step).ci
+          ? [{ outcome: DEPLOY_CI_OUTCOME, label: DEPLOY_CI_LABEL }]
+          : []
+        : step?.kind === 'owner'
+          ? Object.entries(step.outcomes).map(([outcome, o]) => ({ outcome, label: o.label }))
+          : []
   return {
     change: state.change,
     flowId: state.flow.id,
@@ -716,6 +860,16 @@ export const describeFlow = (state: FlowState): string => {
 }
 
 const describeStep = (state: FlowState, step: FlowStep, where: string, outcomes: string): string => {
+  if (step.deploy !== undefined) return describeDeploy(state, step, where)
+  if (step.merge?.auto === true) {
+    return (
+      `${where}. Merge the change's PR into ${step.merge.branch} yourself, by ${step.merge.method}: first check with ` +
+      '`gh pr view <pr> --json reviewDecision,statusCheckRollup` that it is approved on GitHub and its CI is green; ' +
+      'if anything is missing, do not merge — tell the owner. Then run ' +
+      `\`gh pr merge <pr> --${step.merge.method}\` alone, never with --admin; the mod reads its exit code ` +
+      `(exit 0 → ${step.outcomes.passou?.next}, otherwise → ${step.outcomes.falhou?.next}). It cannot be reported.`
+    )
+  }
   switch (step.kind) {
     case 'session':
       return `${where}. Do the step, then report one of its outcomes with action "report": ${outcomes}.`
@@ -741,7 +895,31 @@ const describeStep = (state: FlowState, step: FlowStep, where: string, outcomes:
         'no session can answer it, but action "note" leaves a note that joins the answer' +
         (step.detect === undefined
           ? '.'
-          : `. The mod also answers ${step.detect.outcome} when it sees ${step.detect.commands.map(c => `\`${c}\``).join(' or ')} succeed.`)
+          : `. The mod also answers ${step.detect.outcome} when it sees ${step.detect.commands.map(c => `\`${c}\``).join(' or ')} succeed.`) +
+        (step.merge === undefined ? '' : ` The owner merges into ${step.merge.branch} by ${step.merge.method}; never with --admin.`)
       )
   }
+}
+
+/** A deploy step: who starts it, what it still waits on, and how the mod sees each part done. */
+const describeDeploy = (state: FlowState, step: FlowStep, where: string): string => {
+  const deploy = step.deploy as FlowDeploy
+  const pending = deployPending(state, step)
+  const who = deploy.auto
+    ? `${where}. Deploy by yourself right after the merge, without waiting on the owner.`
+    : `${where}. Waits on the owner: do not start the deploy unless they ask; they confirm and run it.`
+  const ci = pending.ci
+    ? ` The CI's deploy: wait for it with \`gh run watch <run> --exit-status\` (or \`gh run view <run> --exit-status\`) run alone, or the owner presses "${DEPLOY_CI_LABEL}".`
+    : deploy.ci
+      ? " The CI's deploy is confirmed."
+      : ''
+  const routines =
+    pending.commands.length > 0
+      ? ` Routines left, each as its own command and in this order${pending.ci ? ', after the CI' : ''}: ${pending.commands.map(c => `\`${c}\``).join(', ')}.`
+      : ''
+  const fails = step.kind === 'automatic' ? `a failure → ${step.outcomes.falhou?.next}` : 'a failure holds the step'
+  return (
+    `${who}${ci}${routines} The mod ticks each part it sees pass (a hidden exit code does not count) and moves on ` +
+    `(→ ${Object.values(step.outcomes)[0]?.next}) once all are done; ${fails}. It cannot be reported.`
+  )
 }

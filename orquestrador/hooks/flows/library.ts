@@ -29,7 +29,7 @@ const merge: Build = changes => {
   const shared = {
     id,
     title: `Merge em ${String(config.branch)}`,
-    description: `O PR da change entra em ${String(config.branch)}.`,
+    description: `O PR da change entra em ${String(config.branch)} por ${String(config.method)}.`,
     agent: 'merge',
     merge: config,
     details: {
@@ -53,7 +53,10 @@ const merge: Build = changes => {
       }
 }
 
-/** The deploy after the merge, by the CI and/or routines; its sub-states come with the coordinator's run of it. */
+/**
+ * The deploy after the merge, by the CI and/or routines. The mod ticks each part it sees done and
+ * moves the step on with all of them; `command` only names where an automatic one starts.
+ */
 const deploy: Build = changes => {
   const config = { ci: true, commands: [] as unknown[], auto: false, ...(isRecord(changes.deploy) ? changes.deploy : {}) }
   const commands = Array.isArray(config.commands) ? config.commands : [config.commands]
@@ -74,7 +77,7 @@ const deploy: Build = changes => {
     ? {
         ...shared,
         kind: 'automatic',
-        command: typeof commands[0] === 'string' ? commands[0] : 'gh run watch',
+        command: config.ci === false && typeof commands[0] === 'string' ? commands[0] : 'gh run watch',
         outcomes: { passou: { label: 'Publicado', next: NEXT_STEP }, falhou: { label: 'Falhou', next: id } },
       }
     : { ...shared, kind: 'owner', outcomes: { publicado: { label: 'Deploy concluído', next: NEXT_STEP } } }
