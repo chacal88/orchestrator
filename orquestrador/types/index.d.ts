@@ -443,6 +443,44 @@ export type PanelView = {
   flowTimes?: Record<string, StepTime>
 }
 
+/** One step of a workflow the owner edits in the Workflows panel. */
+export type WorkflowDraftStep = {
+  /** The step as it will be written; its forward outcomes lead to "$seguinte", the step after it in the list. */
+  step: Record<string, unknown>
+  /** base: a step of the base workflow (orig is it as the base has it); added: one the owner added. */
+  from: 'base' | 'added'
+  orig?: Record<string, unknown>
+  /** The library step an added one was built from. */
+  use?: string
+  on: boolean
+}
+
+/** A workflow being edited: kept in the mod's state until "Salvar" or "Descartar". */
+export type WorkflowDraft = {
+  id: string
+  title: string
+  description: string
+  /** The workflow this one derives from; absent, the file is written with its whole `steps`. */
+  base?: string
+  /** The base's step ids, so a step left out is written as removed. */
+  baseIds: string[]
+  /** The workflow edited is a default of the mod: the project's file of the same id replaces it. */
+  replacesDefault: boolean
+  steps: WorkflowDraftStep[]
+  /** Why the last "Salvar" wrote nothing. */
+  error?: string
+}
+
+/** The "Novo workflow" and "Acrescentar passo" fields, as the owner fills them. */
+export type WorkflowForms = {
+  newId: string
+  newBase: string
+  stepTitle: string
+  stepKind: 'session' | 'owner' | 'automatic'
+  stepAgent: string
+  stepCommand: string
+}
+
 declare module 'claude-code' {
   interface PluginState {
     orquestrador: {
@@ -461,6 +499,15 @@ declare module 'claude-code' {
       paneOpen: boolean
       /** What the owner has typed so far in the grill's answer fields, by question text. */
       grillDrafts: Record<string, string>
+      /** Workflows panel: the workflow open in the panel, by id. */
+      wfSelected: string | null
+      /** Workflows panel: the step whose details are open (an added step goes after it). */
+      wfFocus: string | null
+      /** Workflows panel: the edit in progress, until saved or discarded. */
+      wfDraft: WorkflowDraft | null
+      wfForms: WorkflowForms
+      /** Workflows panel: what the last save did, for the owner to read. */
+      wfNotice: string | null
     }
   }
 }
