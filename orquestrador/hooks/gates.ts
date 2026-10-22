@@ -360,9 +360,12 @@ export const liveSessions = <T extends CeilingRow>(
         return why === undefined ? [] : [{ session: row, why }]
       })
 
-export const GH_MERGE = /\bgh\s+pr\s+merge\b/
-/** A merge that skips the branch protection (approval and CI): never the change's way in. */
-export const MERGE_ADMIN = /\bgh\s+pr\s+merge\b[^;&|\n]*\s--admin\b/
+/**
+ * A command that may merge a PR through `gh`, in any form: the cheap test that sends it to the
+ * merge guard, which reads it word by word (`mergeCalls`). Raw text on purpose: a quoted, wrapped
+ * or continued merge still goes to the guard, and the guard holds when the mod fails.
+ */
+export const GH_MERGE = /\bgh\b[\s\S]*merge/i
 export const ARCHIVE_COMMAND = /\bopenspec(\.js)?\s+archive\b/
 export const PROTECTED_DIR = '/.claude/orquestrador/'
 
@@ -383,17 +386,195 @@ export const mergeWindow = (state: Pick<FlowState, 'status' | 'current' | 'flow'
 /** `gh pr merge` flags that take a value, so the value is not read as the PR. */
 const MERGE_VALUE_FLAGS = new Set(['-b', '--body', '-F', '--body-file', '-t', '--subject', '-A', '--author-email', '--match-head-commit', '-R', '--repo'])
 
-/** The PR a `gh pr merge` names (a number, URL or branch); undefined for the current branch's. */
-export const mergeSelector = (command: string): string | undefined => {
-  const args = executedText(command).match(/\bgh\s+pr\s+merge\b([^;&|\n]*)/)?.[1] ?? ''
-  const words = args.trim().split(/\s+/).filter(w => w !== '')
-  for (let i = 0; i < words.length; i++) {
-    const word = words[i]!
-    if (!word.startsWith('-')) return word
-    if (MERGE_VALUE_FLAGS.has(word)) i += 1
+/** `gh` flags before the command that take a value. */
+const GH_VALUE_FLAGS = new Set(['-R', '--repo', '--hostname'])
+
+/** One word as the shell hands it to the program, and whether a `$` or `` ` `` makes it unknowable here. */
+type Word = { text: string; dynamic: boolean }
+
+/** The commands a command line runs, each as its words, and the scripts of its `$(…)` and `` `…` ``. */
+const splitWords = (code: string): { commands: Word[][]; nested: string[] } => {
+  const commands: Word[][] = []
+  const nested: string[] = []
+  let words: Word[] = []
+  let word: Word | undefined
+  const add = (text: string, dynamic = false): void => {
+    word ??= { text: '', dynamic: false }
+    word.text += text
+    word.dynamic ||= dynamic
+  }
+  const endWord = (): void => {
+    if (word !== undefined) words.push(word)
+    word = undefined
+  }
+  const endCommand = (): void => {
+    endWord()
+    if (words.length > 0) commands.push(words)
+    words = []
+  }
+  /** The text up to the `)` that closes the `$(` before `from`, and where it ends. */
+  const substitution = (from: number): [string, number] => {
+    let depth = 1
+    let i = from
+    for (; i < code.length && depth > 0; i++) {
+      if (code[i] === '(') depth += 1
+      else if (code[i] === ')') depth -= 1
+    }
+    return [code.slice(from, i - 1), i]
+  }
+  let i = 0
+  while (i < code.length) {
+    const c = code[i]!
+    if (c === '\\') {
+      if (code[i + 1] !== '\n') add(code[i + 1] ?? '')
+      i += 2
+    } else if (c === "'") {
+      const end = code.indexOf("'", i + 1)
+      add(code.slice(i + 1, end === -1 ? code.length : end))
+      i = end === -1 ? code.length : end + 1
+    } else if (c === '"') {
+      add('')
+      i += 1
+      while (i < code.length && code[i] !== '"') {
+        const d = code[i]!
+        if (d === '\\' && i + 1 < code.length) {
+          if (code[i + 1] !== '\n') add('"\\$`'.includes(code[i + 1]!) ? code[i + 1]! : `\\${code[i + 1]}`)
+          i += 2
+        } else if (d === '$' && code[i + 1] === '(') {
+          const [inner, end] = substitution(i + 2)
+          nested.push(inner)
+          add(code.slice(i, end), true)
+          i = end
+        } else if (d === '`') {
+          const end = code.indexOf('`', i + 1)
+          nested.push(code.slice(i + 1, end === -1 ? code.length : end))
+          add(code.slice(i, end === -1 ? code.length : end + 1), true)
+          i = end === -1 ? code.length : end + 1
+        } else {
+          add(d, d === '$')
+          i += 1
+        }
+      }
+      i += 1
+    } else if (c === '$' && code[i + 1] === '(') {
+      const [inner, end] = substitution(i + 2)
+      nested.push(inner)
+      add(code.slice(i, end), true)
+      i = end
+    } else if (c === '`') {
+      const end = code.indexOf('`', i + 1)
+      nested.push(code.slice(i + 1, end === -1 ? code.length : end))
+      add(code.slice(i, end === -1 ? code.length : end + 1), true)
+      i = end === -1 ? code.length : end + 1
+    } else if (c === '#' && word === undefined) {
+      const end = code.indexOf('\n', i)
+      i = end === -1 ? code.length : end
+    } else if (c === ' ' || c === '\t') {
+      endWord()
+      i += 1
+    } else if (c === '&' && (/[<>]$/.test(word?.text ?? '') || code[i + 1] === '>')) {
+      add(c) // `2>&1`, `&>`: a redirection, not a separator
+      i += 1
+    } else if (';&|\n()'.includes(c)) {
+      endCommand()
+      i += 1
+    } else {
+      add(c, c === '$')
+      i += 1
+    }
+  }
+  endCommand()
+  return { commands, nested }
+}
+
+/** Words that run the command after them: `env`, `time`, `command`, a `VAR=value` before it… */
+const PREFIX_WORDS = new Set(['{', '!', 'if', 'then', 'else', 'elif', 'while', 'until', 'do', 'time', 'command', 'exec', 'nohup', 'env', 'sudo'])
+const SHELLS = /(^|\/)(ba|z|da|k)?sh$/
+
+/**
+ * Every command a command line runs, as its words: across line continuations and quotes, and
+ * into the scripts `bash -c`/`sh -c`/`eval` run and the `$(…)` it substitutes. A heredoc body is
+ * text, not commands.
+ */
+export const commandsRun = (command: string, depth = 0): Word[][] => {
+  if (depth > 4) return []
+  const code = command.replace(/<<-?\s*(['"]?)(\w+)\1[^\n]*\n[\s\S]*?\n\s*\2\b/g, '<<heredoc')
+  const { commands, nested } = splitWords(code)
+  const out: Word[][] = []
+  for (const words of commands) {
+    let at = 0
+    while (at < words.length && (PREFIX_WORDS.has(words[at]!.text) || /^[A-Za-z_]\w*=/.test(words[at]!.text))) at += 1
+    const run = words.slice(at)
+    const head = run[0]?.text ?? ''
+    if (head === 'eval') {
+      out.push(...commandsRun(run.slice(1).map(w => w.text).join(' '), depth + 1))
+      continue
+    }
+    if (SHELLS.test(head)) {
+      const flag = run.findIndex((w, i) => i > 0 && /^-[a-zA-Z]*c[a-zA-Z]*$/.test(w.text))
+      const script = flag === -1 ? undefined : run[flag + 1]
+      if (script !== undefined) {
+        out.push(...commandsRun(script.text, depth + 1))
+        continue
+      }
+    }
+    if (run.length > 0) out.push(run)
+  }
+  for (const inner of nested) out.push(...commandsRun(inner, depth + 1))
+  return out
+}
+
+/**
+ * A PR merge one command runs: `gh pr merge`, `gh api …/pulls/<n>/merge` or `gh api graphql` with
+ * `mergePullRequest`. `selector` is the PR it names (number, URL or branch; for the API, `<n>`);
+ * a GraphQL merge names its PR by node id, which the mod cannot read. `dynamic` is set when an
+ * argument carries a `$` the mod cannot see through.
+ */
+export type MergeCall = {
+  via: 'pr' | 'api' | 'graphql'
+  selector: string | undefined
+  admin: boolean
+  dynamic: boolean
+  text: string
+}
+
+const mergeCall = (words: readonly Word[]): MergeCall | undefined => {
+  if (!/(^|\/)gh$/.test(words[0]?.text ?? '')) return undefined
+  let at = 1
+  while (at < words.length && words[at]!.text.startsWith('-')) at += GH_VALUE_FLAGS.has(words[at]!.text) ? 2 : 1
+  const sub = words[at]?.text
+  const args = words.slice(at + 1)
+  const text = words.map(w => w.text).join(' ').replace(/\s+/g, ' ').slice(0, 80)
+  const dynamic = args.some(w => w.dynamic)
+  if (sub === 'pr') {
+    let verb = 0
+    while (verb < args.length && args[verb]!.text.startsWith('-')) verb += GH_VALUE_FLAGS.has(args[verb]!.text) ? 2 : 1
+    if (args[verb]?.text !== 'merge') return undefined
+    const rest = args.slice(verb + 1)
+    let selector: string | undefined
+    for (let i = 0; i < rest.length && selector === undefined; i++) {
+      const word = rest[i]!.text
+      if (!word.startsWith('-')) selector = word
+      else if (MERGE_VALUE_FLAGS.has(word)) i += 1
+    }
+    const admin = rest.some(w => w.text === '--admin' || w.text.startsWith('--admin='))
+    return { via: 'pr', selector, admin, dynamic, text }
+  }
+  if (sub !== 'api') return undefined
+  const pull = args.map(w => w.text.match(/(?:^|\/)pulls\/([^/\s]+)\/merge\b/)?.[1]).find(n => n !== undefined)
+  if (pull !== undefined) return { via: 'api', selector: pull, admin: false, dynamic, text }
+  if (args.some(w => w.text === 'graphql') && args.some(w => /mergePullRequest/.test(w.text))) {
+    return { via: 'graphql', selector: undefined, admin: false, dynamic, text }
   }
   return undefined
 }
+
+/** The PR merges a command runs, in any of the forms `commandsRun` reaches. */
+export const mergeCalls = (command: string): MergeCall[] =>
+  commandsRun(command).flatMap(words => mergeCall(words) ?? [])
+
+/** The PR a `gh pr merge` names (a number, URL or branch); undefined for the current branch's. */
+export const mergeSelector = (command: string): string | undefined => mergeCalls(command)[0]?.selector
 
 export type MergeTarget = { number: number | undefined; branch: string | undefined }
 
@@ -409,3 +590,7 @@ export const citedPrs = (text: string | undefined): number[] =>
 /** A head branch is the change's when a phase session works on it or its name carries the change id. */
 export const isChangeBranch = (branch: string, change: string, branches: ReadonlySet<string>): boolean =>
   branches.has(branch) || branch.toLowerCase().includes(change.toLowerCase())
+
+/** A step's agent names a file: lowercase words joined by hyphens, never a path. */
+export const AGENT_NAME = /^[a-z0-9]+(-[a-z0-9]+)*$/
+export const isAgentName = (name: string): boolean => AGENT_NAME.test(name)

@@ -34,10 +34,10 @@
 
 ## 6. Correções da revisão — merge seguro
 
-- [ ] 6.1 `--admin` recusado sobre o texto bruto do comando: entre aspas, dentro de `bash -c`/`sh -c`/`eval`, depois de continuação de linha (`\` + quebra) e vindo de variável (`$`) num comando de merge; um teste por forma — cx: complex
-- [ ] 6.2 As outras formas de merge passam pela mesma recusa (revisão do PR pendente, portões finais, `--admin`): flags globais antes de `pr` (`gh -R o/r pr merge`), `gh api` com `pulls/<n>/merge` ou `mergePullRequest`; teste de cada uma. `git merge` + `git push` na branch protegida fica com a proteção do GitHub (registrar no evidence.md) — cx: complex
-- [ ] 6.3 Nome de agente validado (`^[a-z0-9]+(-[a-z0-9]+)*$`) no `parseFlow` e no `findAgent`; teste com `../x` — cx: simple
-- [ ] 6.4 Skill: as recusas de `--admin` e de merge sem revisão já existem (verbo no presente) — cx: simple
+- [x] 6.1 `--admin` recusado sobre o texto bruto do comando: entre aspas, dentro de `bash -c`/`sh -c`/`eval`, depois de continuação de linha (`\` + quebra) e vindo de variável (`$`) num comando de merge; um teste por forma — cx: complex
+- [x] 6.2 As outras formas de merge passam pela mesma recusa (revisão do PR pendente, portões finais, `--admin`): flags globais antes de `pr` (`gh -R o/r pr merge`), `gh api` com `pulls/<n>/merge` ou `mergePullRequest`; teste de cada uma. `git merge` + `git push` na branch protegida fica com a proteção do GitHub (registrar no evidence.md) — cx: complex
+- [x] 6.3 Nome de agente validado (`^[a-z0-9]+(-[a-z0-9]+)*$`) no `parseFlow` e no `findAgent`; teste com `../x` — cx: simple
+- [x] 6.4 Skill: as recusas de `--admin` e de merge sem revisão já existem (verbo no presente) — cx: simple
 
 ## 7. Correções da revisão — deploy e painel
 

@@ -204,9 +204,15 @@ passo do dono? O `ScheduleWakeup` longo está agendado?
      passo, padrão `squash`). O deploy confirma o do CI quando `ci` (`gh run watch <id>
      --exit-status`) e roda cada rotina de `commands`, na ordem, como comando próprio; a que
      falhar segura o passo para o dono decidir.
-   - Não rode `gh pr merge` antes da revisão do PR respondida nem com `--admin` (o mod passará a
-     recusar). Se faltar aprovação ou CI, ou uma rotina de deploy falhar, não repita em laço:
-     avise o dono com o diagnóstico e espere a decisão dele.
+   - Não rode `gh pr merge` antes da revisão do PR respondida nem com `--admin`: o mod recusa.
+     Recusa `--admin` em qualquer PR e, no PR da change, o merge com a revisão pendente ou os
+     portões finais abertos, em todas as formas que lê: `gh pr merge`, com flags antes de `pr`
+     (`gh -R dono/repo pr merge`), `gh api …/pulls/<n>/merge` (qualquer método), `gh api graphql`
+     com `mergePullRequest`; entre aspas, depois de `\` + quebra de linha, dentro de
+     `bash -c`/`sh -c`/`eval` ou de `$(…)`. Um merge com `$VAR` ou `$(…)` nos argumentos é
+     recusado: o mod não vê o que a variável carrega; escreva o PR e as flags por extenso. Se
+     faltar aprovação ou CI, ou uma rotina de deploy falhar, não repita em laço: avise o dono com
+     o diagnóstico e espere a decisão dele.
    - Merge e deploy automáticos não levam `flow report`: o mod avança pelo código de saída.
 5. **Em produção** (dono): botão **"Está em produção"**, ou o mod detecta o comando de
    deploy sozinho.
