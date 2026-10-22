@@ -61,6 +61,16 @@ claude plugin install orquestrador@orquestrador
 
 Depois de instalar, reinicie o app ou rode `/reload-plugins`.
 
+## Instalar num projeto
+
+Num projeto novo, rode na sessão:
+
+```
+/orquestrador:instalar
+```
+
+A skill `instalar` analisa o projeto (CI, testes, cobertura, lint, tipos, build, formatação, OpenSpec, branch padrão e proteção), roda cada comando candidato uma vez e recomenda só os que passam. Depois pergunta, um bloco por vez e sempre com a recomendação: o workflow base, os portões, o merge, o deploy e o idioma. Com o seu ok, grava `.orquestrador/config.json` e `.orquestrador/flows/<id>.json`, confere que o mod os carrega e commita numa branch, sem push. Ela nunca ativa o orquestrador: no fim, abra `/orquestrador-workflows` e aperte "Ativar neste clone" no cartão "Este projeto" (veja [Ativar neste clone](#ativar-neste-clone)).
+
 ## Uso
 
 0. Instalado, o plugin fica quieto até você ativá-lo no clone (veja [Ativar neste clone](#ativar-neste-clone)).
