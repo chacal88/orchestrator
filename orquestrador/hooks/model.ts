@@ -1,6 +1,7 @@
 import type {
   ActivityRecord,
   Attention,
+  FlowState,
   GateView,
   OrchestrationRun,
   OwnerQuestion,
@@ -11,7 +12,7 @@ import type {
   SessionCard,
   SessionRow,
 } from '../types'
-import { FINAL_SCOPE, GATES, familyCheck, gateViews, isOpenGate, parseGates } from './gates'
+import { FINAL_SCOPE, GATES, citedPrs, familyCheck, gateViews, isOpenGate, parseGates } from './gates'
 import { normalizeKey } from './jira'
 
 export const PHASE_STATUSES: readonly PhaseStatus[] = [
@@ -182,6 +183,46 @@ export const phaseViews = (
           : cards.find(card => matches(card, phase.session ?? '')),
     })),
   )
+
+/**
+ * Sessions whose work is over for the ceiling: every phase session of a change whose flow is done
+ * or aborted, and the session of a phase the plan marks done or the loop closed.
+ */
+export const finishedSessionIds = (
+  changes: readonly { run: OrchestrationRun | undefined; flow: Pick<FlowState, 'status' | 'closed'> | undefined }[],
+  cards: readonly SessionCard[],
+): Set<string> => {
+  const ids = new Set<string>()
+  for (const { run, flow } of changes) {
+    if (run === undefined) continue
+    const over = flow?.status === 'done' || flow?.status === 'aborted'
+    for (const phase of phaseViews(run, cards).flat()) {
+      if (phase.card !== undefined && (over || phase.status === 'done' || flow?.closed?.[phase.id] !== undefined)) {
+        ids.add(phase.card.sessionId)
+      }
+    }
+  }
+  return ids
+}
+
+/**
+ * What ties a PR to a change: the PRs bound to its phase sessions, the ones its plan's questions
+ * name, the ones the flow's PR step cites in its note; and the branches its phase sessions work on.
+ */
+export const changePrs = (
+  run: OrchestrationRun,
+  flow: Pick<FlowState, 'flow' | 'records'> | undefined,
+  cards: readonly SessionCard[],
+): { numbers: Set<number>; branches: Set<string> } => {
+  const sessions = phaseViews(run, cards).flatMap(phases => phases.flatMap(p => (p.card === undefined ? [] : [p.card])))
+  const prSteps = (flow?.flow.steps ?? []).filter(s => /^(pr|merge)$/i.test(s.id))
+  const numbers = [
+    ...sessions.flatMap(c => (c.prNumber === undefined ? [] : [c.prNumber])),
+    ...run.ownerQuestions.flatMap(q => (q.pr === undefined ? [] : [q.pr])),
+    ...prSteps.flatMap(s => citedPrs(flow?.records[s.id]?.note)),
+  ]
+  return { numbers: new Set(numbers), branches: new Set(sessions.flatMap(c => (c.branch === undefined ? [] : [c.branch]))) }
+}
 
 export const phaseCounts = (
   run: OrchestrationRun,
