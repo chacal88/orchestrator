@@ -83,12 +83,56 @@ export type FlowStep = {
   cleanup: boolean
   /** The Jira state this step implies for the change's issue: a target, or false for none; absent, the default of the step id. */
   jira?: JiraTarget | false
+  /** What the step reads, what it hands on and what it holds back (pt-BR), for the owner and the session. */
+  details?: FlowStepDetails
+  /** session or loop (or a merge/deploy step, which a session carries out): the specialist agent that runs it. */
+  agent?: string
+  /** The model suggested for the session that runs the step. */
+  model?: string
+  /** The effort suggested for the session that runs the step. */
+  effort?: FlowEffort
+  /** The step merges the change's PR. */
+  merge?: FlowMerge
+  /** The step deploys the change after the merge. */
+  deploy?: FlowDeploy
 }
 
-/** Commands whose success answers a step, and the outcome they give it; logged with actor "detect". */
-export type FlowDetect = { commands: string[]; outcome: string }
+export type FlowStepDetails = { inputs?: string; produces?: string; blocks?: string }
 
-export type FlowDef = { id: string; title: string; description: string; steps: FlowStep[] }
+export type FlowEffort = 'low' | 'medium' | 'high' | 'xhigh' | 'max'
+
+/** auto: the coordinator merges by itself (an automatic step); otherwise the owner merges (an owner step). */
+export type FlowMerge = { branch: string; method: 'squash' | 'merge' | 'rebase'; auto: boolean }
+
+/** ci: the merge's CI deploys and the step waits for it; commands: routines run after the merge, in order. */
+export type FlowDeploy = { ci: boolean; commands: string[]; auto: boolean }
+
+/** How far a deploy step got: the CI's deploy confirmed, and the routines seen passing, in order. */
+export type FlowDeployProgress = { ci: boolean; commands: string[] }
+
+/**
+ * Commands whose success answers a step, and the outcome they give it; logged with actor "detect".
+ * routines: the deploy's routines the mod joined into production's commands, not the step's own.
+ */
+export type FlowDetect = { commands: string[]; outcome: string; routines?: string[] }
+
+/** base: the flow a derived project flow was resolved from. */
+export type FlowDef = { id: string; title: string; description: string; steps: FlowStep[]; base?: string }
+
+/** A step added to a derived flow: a library id, `{ use: <library id>, ...changes }`, or a whole step. */
+export type FlowAdd = { after: string; step: string | Record<string, unknown> }
+
+/** A project flow written as changes to another: `.orquestrador/flows/<id>.json` with `base` instead of `steps`. */
+export type FlowDerived = {
+  id: string
+  title?: string
+  description?: string
+  base: string
+  remove?: string[]
+  add?: FlowAdd[]
+  override?: Record<string, Record<string, unknown>>
+  order?: string[]
+}
 
 /** mod: the mod closing a loop; detect: the mod seeing a step's detect command succeed. */
 export type FlowActor = 'session' | 'automatic' | 'owner' | 'mod' | 'detect'
@@ -120,6 +164,8 @@ export type FlowState = {
   reopened?: FlowReopen
   /** A note a session left for the owner step that waits; it joins the owner's answer when pressed. */
   pendingNote?: string
+  /** deploy: what each deploy step already saw done, by step id; kept while the step retries itself. */
+  progress?: Record<string, FlowDeployProgress>
   seq: number
   startedAt: number
   updatedAt: number
@@ -151,6 +197,8 @@ export type FlowEvent = {
     | 'session-archived'
     | 'noted'
     | 'cleanup'
+    /** A deploy step saw the CI's deploy confirmed or one of its routines pass. */
+    | 'progress'
     /** The owner moved a Jira issue from the panel. */
     | 'jira-moved'
   step: string
@@ -398,6 +446,46 @@ export type PanelView = {
   flowTimes?: Record<string, StepTime>
 }
 
+/** One step of a workflow the owner edits in the Workflows panel. */
+export type WorkflowDraftStep = {
+  /** The step as it will be written; its forward outcomes lead to "$seguinte", the step after it in the list. */
+  step: Record<string, unknown>
+  /** base: a step of the base workflow (orig is it as the base has it); added: one the owner added. */
+  from: 'base' | 'added'
+  orig?: Record<string, unknown>
+  /** The library step an added one was built from. */
+  use?: string
+  on: boolean
+}
+
+/** A workflow being edited: kept in the mod's state until "Salvar" or "Descartar". */
+export type WorkflowDraft = {
+  id: string
+  title: string
+  description: string
+  /** The workflow this one derives from; absent, the file is written with its whole `steps`. */
+  base?: string
+  /** The base's step ids, so a step left out is written as removed. */
+  baseIds: string[]
+  /** The workflow edited is a default of the mod: the project's file of the same id replaces it. */
+  replacesDefault: boolean
+  steps: WorkflowDraftStep[]
+  /** The project file the draft was opened from, the only one "Salvar" may write over. */
+  source?: string
+  /** Why the last "Salvar" wrote nothing. */
+  error?: string
+}
+
+/** The "Novo workflow" and "Acrescentar passo" fields, as the owner fills them. */
+export type WorkflowForms = {
+  newId: string
+  newBase: string
+  stepTitle: string
+  stepKind: 'session' | 'owner' | 'automatic'
+  stepAgent: string
+  stepCommand: string
+}
+
 declare module 'claude-code' {
   interface PluginState {
     orquestrador: {
@@ -416,6 +504,15 @@ declare module 'claude-code' {
       paneOpen: boolean
       /** What the owner has typed so far in the grill's answer fields, by question text. */
       grillDrafts: Record<string, string>
+      /** Workflows panel: the workflow open in the panel, by id. */
+      wfSelected: string | null
+      /** Workflows panel: the step whose details are open (an added step goes after it). */
+      wfFocus: string | null
+      /** Workflows panel: the edit in progress, until saved or discarded. */
+      wfDraft: WorkflowDraft | null
+      wfForms: WorkflowForms
+      /** Workflows panel: what the last save did, for the owner to read. */
+      wfNotice: string | null
     }
   }
 }

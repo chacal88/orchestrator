@@ -2,8 +2,8 @@ import { expect, mock, test } from 'claude-code/testing'
 import type { Engine, TestBody } from 'claude-code/testing'
 
 import type { ActivityRecord, FlowState, OrchestrationRun } from '../types'
-import { startFlow } from '../hooks/flow'
-import { defaultFlows } from '../hooks/flows/index'
+import { resolveFlow, startFlow } from '../hooks/flow'
+import { DEFAULT_FLOWS, defaultFlows } from '../hooks/flows/index'
 import { sessionActivityKey } from '../hooks/model'
 
 type On = Parameters<TestBody>[1]
@@ -224,4 +224,89 @@ test('the ceiling ignores finished sessions and names why each counted one count
   expect(await start()).toMatch(
     /3 phase sessions are alive: fase-a \(running now\), perguntando \(waiting on the owner \(question\)\), pendente \(2 open tasks in its list\); the ceiling is 3/,
   )
+})
+
+/** A trunk-based project flow: rapido without QA, with the PR review, an automatic merge and a deploy. */
+const trunkFlow = (deploy: Record<string, unknown> = { ci: true, commands: ['npm run migrate:prod'], auto: true }) => {
+  const resolved = resolveFlow(
+    {
+      id: 'trunk', title: 'Trunk', base: 'rapido', remove: ['qa'],
+      add: [
+        { after: 'pr', step: 'revisao-pr' },
+        { after: 'revisao-pr', step: { use: 'merge', merge: { branch: 'main', auto: true } } },
+        { after: 'merge', step: { use: 'deploy', deploy } },
+      ],
+    },
+    'trunk.json',
+    id => DEFAULT_FLOWS.find(f => (f.raw as { id: string }).id === id),
+  )
+  if ('error' in resolved) throw new Error(resolved.error)
+  return resolved
+}
+
+/** The trunk flow parked at `current`, every earlier step answered, the PR step citing #801. */
+const trunkAt = (w: World, current: string, deploy?: Record<string, unknown>) => {
+  const def = trunkFlow(deploy)
+  const { state } = startFlow(def, { change: 'demo', coordinatorCwd: '/w', changePath: 'openspec/changes/demo', visual: false }, 1)
+  const before = def.steps.slice(0, def.steps.findIndex(s => s.id === current))
+  const records = Object.fromEntries(before.map(s => [s.id, { outcome: Object.keys(s.outcomes)[0]!, by: 'owner', at: 5 }]))
+  const parked: FlowState = { ...state, current, attempts: { [current]: 1 }, records: { ...records, pr: { outcome: 'aberto', by: 'session', at: 5, note: 'PR aberto #801' } } }
+  w.disk.set(`${BASE}/flows/demo.json`, JSON.stringify(parked))
+}
+
+const flowOf = (w: World) => JSON.parse(w.disk.get(`${BASE}/flows/demo.json`) ?? '{}') as FlowState
+
+test("the change's merge waits for the PR review the flow has not answered, and the refusal says so", async ($, on) => {
+  const w = world(on)
+  setup(w, { finalGates: undefined })
+  trunkAt(w, 'revisao-pr')
+  expect(await merge($, 'gh pr merge 801 --squash')).toBe(
+    'Orchestrator gate: the PR review "revisao-pr" (Revisão do PR) of demo is not answered yet: the owner approves the PR ' +
+      'on GitHub and presses "PR aprovado" in the panel before it merges. ' +
+      "(Only a merge of demo's own PR waits for the review and the gates, until its flow reaches the archive.)",
+  )
+  // an unrelated PR is not the review's to hold
+  w.heads = { '805': 'claude/product-feed-purpose' }
+  expect(await merge($, 'gh pr merge 805 --squash')).toBeUndefined()
+  // the review and the final gates both open: both reasons
+  setup(w)
+  expect(await merge($, 'gh pr merge 801 --squash')).toMatch(/the PR review "revisao-pr" .* final gates of demo not passed: check \(pending\), openspec \(pending\)/)
+  expect(w.disk.get(`${BASE}/gates/demo.ndjson`) ?? '').toContain('"gates":["revisao-pr","check","openspec"]')
+})
+
+test('a merge with --admin is refused from an orchestrated checkout, for any PR', async ($, on) => {
+  const w = world(on)
+  setup(w, { finalGates: undefined })
+  trunkAt(w, 'merge')
+  w.heads = { '805': 'claude/product-feed-purpose' }
+  const admin = /`--admin` skips the branch protection \(GitHub approval and green CI\); merge without it, never around them\./
+  expect(await merge($, 'gh pr merge 801 --squash --admin')).toMatch(admin)
+  expect(await merge($, 'gh pr merge 805 --admin --squash')).toMatch(admin)
+  expect(await merge($, 'echo "gh pr merge 801 --admin"')).toBeUndefined()
+})
+
+test('with the review answered and the final gates passed, the automatic merge runs and the flow moves on', async ($, on) => {
+  const w = world(on)
+  setup(w)
+  trunkAt(w, 'merge')
+  await passFinalGates($)
+  expect(await merge($, 'gh pr merge 801 --squash')).toBeUndefined()
+  expect(flowOf(w)).toMatchObject({ current: 'deploy', records: { merge: { outcome: 'passou', by: 'automatic' } } })
+})
+
+test('the mod ticks the deploy it sees, refuses a routine out of order, and moves on with the last one', async ($, on) => {
+  const w = world(on)
+  setup(w, { finalGates: undefined })
+  trunkAt(w, 'deploy', { ci: true, commands: ['npm run migrate:prod', 'npm run seed:prod'], auto: true })
+  await bash($, 'npm run migrate:prod')
+  expect(flowOf(w).progress).toBeUndefined()
+  expect(w.disk.get(`${BASE}/flows/demo.ndjson`) ?? '').toContain("ran before the CI's deploy was confirmed")
+
+  await bash($, 'gh run watch 4242 --exit-status')
+  expect(flowOf(w).progress?.deploy).toEqual({ ci: true, commands: [] })
+  await bash($, 'npm run seed:prod')
+  expect(flowOf(w).progress?.deploy?.commands).toEqual([])
+  await bash($, 'npm run migrate:prod')
+  await bash($, 'npm run seed:prod')
+  expect(flowOf(w)).toMatchObject({ current: 'producao', records: { deploy: { outcome: 'passou', by: 'automatic' } } })
 })

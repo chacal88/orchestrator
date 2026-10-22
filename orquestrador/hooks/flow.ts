@@ -2,16 +2,22 @@ import type {
   FlowActor,
   FlowChoice,
   FlowDef,
+  FlowDeploy,
+  FlowDeployProgress,
   FlowDetect,
+  FlowEffort,
   FlowEvent,
+  FlowMerge,
   FlowOutcome,
   FlowState,
   FlowStep,
+  FlowStepDetails,
   FlowStepKind,
   FlowStepView,
   FlowView,
 } from '../types'
-import { executedText, masksExitCode } from './gates'
+import { libraryStep, NEXT_STEP, overlay } from './flows/library'
+import { executedText, isAgentName, masksExitCode } from './gates'
 import { MOCKUP_STEP } from './grill'
 import { parseJiraTarget } from './jira'
 
@@ -91,6 +97,8 @@ export const parseFlow = (raw: unknown, source: string): FlowDef | { error: stri
     if (typeof detect === 'string') return fail(`step "${stepId}": ${detect}`)
     const jira = parseJiraTarget(s.jira)
     if (typeof jira === 'string') return fail(`step "${stepId}": ${jira}`)
+    const extras = parseExtras(s, kind)
+    if (typeof extras === 'string') return fail(`step "${stepId}": ${extras}`)
     steps.push({
       id: stepId,
       title: stepTitle,
@@ -105,8 +113,10 @@ export const parseFlow = (raw: unknown, source: string): FlowDef | { error: stri
       detect,
       cleanup: s.cleanup === true,
       ...(jira === undefined ? {} : { jira }),
+      ...extras,
     })
   }
+  watchRoutines(steps)
   const ids = new Set(steps.map(s => s.id))
   for (const step of steps) {
     for (const [name, o] of Object.entries(step.outcomes)) {
@@ -116,6 +126,29 @@ export const parseFlow = (raw: unknown, source: string): FlowDef | { error: stri
     }
   }
   return { id, title, description: text(raw.description) ?? '', steps }
+}
+
+/** The step that says the change reached production; it also sees the deploy's routines. */
+export const PRODUCTION_STEP = 'producao'
+
+/**
+ * A flow with a deploy and the production step: the deploy's routines also answer production. The
+ * ones joined are kept apart in `routines`, so a derived flow starts again from production's own.
+ */
+const watchRoutines = (steps: FlowStep[]): void => {
+  const production = steps.find(s => s.id === PRODUCTION_STEP)
+  const own = production?.detect?.commands ?? []
+  const routines = [...new Set(steps.flatMap(s => s.deploy?.commands ?? []))].filter(c => !own.includes(c))
+  if (production === undefined || routines.length === 0) return
+  production.detect = { commands: [...own, ...routines], outcome: production.detect?.outcome ?? Object.keys(production.outcomes)[0]!, routines }
+}
+
+/** A detect without the deploy's routines the mod joined in: the step's own, or nothing when it had none. */
+export const ownDetect = (detect: FlowDetect | undefined): FlowDetect | undefined => {
+  if (detect === undefined) return undefined
+  const joined = detect.routines ?? []
+  const commands = detect.commands.filter(c => !joined.includes(c))
+  return commands.length === 0 ? undefined : { commands, outcome: detect.outcome }
 }
 
 /**
@@ -136,11 +169,244 @@ const parseDetect = (raw: unknown, outcomes: Record<string, FlowOutcome>): FlowD
   return { commands, outcome }
 }
 
+const DETAIL_KEYS = ['inputs', 'produces', 'blocks'] as const
+const EFFORTS: readonly string[] = ['low', 'medium', 'high', 'xhigh', 'max']
+const MERGE_METHODS: readonly string[] = ['squash', 'merge', 'rebase']
+
+type StepExtras = Pick<FlowStep, 'details' | 'agent' | 'model' | 'effort' | 'merge' | 'deploy'>
+
+/**
+ * The fields that describe a step and who runs it: `details`, `agent`, `model`, `effort`, and the
+ * `merge` or `deploy` it carries out. An agent runs a session, a loop's phases, or a merge or deploy
+ * the coordinator carries out; a merge or deploy is the owner's, or automatic with `auto`.
+ */
+const parseExtras = (s: Record<string, unknown>, kind: FlowStepKind): StepExtras | string => {
+  const out: StepExtras = {}
+  if (s.details !== undefined) {
+    if (!isRecord(s.details)) return '`details` is an object with inputs, produces and blocks.'
+    const unknown = Object.keys(s.details).filter(k => !(DETAIL_KEYS as readonly string[]).includes(k))
+    if (unknown.length > 0) return `\`details\` takes only inputs, produces and blocks, not ${unknown.join(', ')}.`
+    const details: FlowStepDetails = {}
+    for (const key of DETAIL_KEYS) {
+      if (s.details[key] === undefined) continue
+      const value = text(s.details[key])
+      if (value === undefined) return `\`details.${key}\` must be text.`
+      details[key] = value
+    }
+    out.details = details
+  }
+  for (const key of ['agent', 'model'] as const) {
+    if (s[key] === undefined) continue
+    const value = text(s[key])
+    if (value === undefined) return `\`${key}\` must be a name.`
+    out[key] = value
+  }
+  if (out.agent !== undefined && !isAgentName(out.agent)) return `\`agent\` "${out.agent}" must be lowercase words joined by hyphens (a-z, 0-9, -), the name of a file in agents/.`
+  if (s.effort !== undefined) {
+    if (typeof s.effort !== 'string' || !EFFORTS.includes(s.effort)) return `\`effort\` must be one of ${EFFORTS.join(', ')}.`
+    out.effort = s.effort as FlowEffort
+  }
+  if (s.merge !== undefined) {
+    const merge = parseMerge(s.merge)
+    if (typeof merge === 'string') return merge
+    out.merge = merge
+  }
+  if (s.deploy !== undefined) {
+    const deploy = parseDeploy(s.deploy)
+    if (typeof deploy === 'string') return deploy
+    out.deploy = deploy
+  }
+  if (out.merge !== undefined && out.deploy !== undefined) return 'a step merges or deploys, not both.'
+  const runs = out.merge !== undefined ? 'merge' : out.deploy !== undefined ? 'deploy' : undefined
+  const auto = (out.merge ?? out.deploy)?.auto
+  if (runs !== undefined && kind !== (auto ? 'automatic' : 'owner')) {
+    return `a ${runs} step with \`auto: ${auto}\` is ${auto ? 'automatic' : 'an owner step'}, not ${kind}.`
+  }
+  if (out.agent !== undefined && kind !== 'session' && kind !== 'loop' && runs === undefined) {
+    return '`agent` goes only on a session or loop step, or on a merge or deploy step.'
+  }
+  return out
+}
+
+const flag = (v: unknown, name: string, fallback: boolean): boolean | string =>
+  v === undefined ? fallback : typeof v === 'boolean' ? v : `\`${name}\` must be true or false.`
+
+/** `merge`: the target branch, the method (squash unless said) and whether the coordinator merges by itself. */
+const parseMerge = (raw: unknown): FlowMerge | string => {
+  if (!isRecord(raw)) return '`merge` is an object with branch, method and auto.'
+  const branch = text(raw.branch)
+  if (branch === undefined) return '`merge.branch` names the branch the PR merges into.'
+  const method = raw.method === undefined ? 'squash' : raw.method
+  if (typeof method !== 'string' || !MERGE_METHODS.includes(method)) return `\`merge.method\` must be one of ${MERGE_METHODS.join(', ')}.`
+  const auto = flag(raw.auto, 'merge.auto', false)
+  if (typeof auto === 'string') return auto
+  return { branch, method: method as FlowMerge['method'], auto }
+}
+
+/** `deploy`: the CI's deploy waited on, routines run after the merge, or both; and whether it runs by itself. */
+const parseDeploy = (raw: unknown): FlowDeploy | string => {
+  if (!isRecord(raw)) return '`deploy` is an object with ci, commands and auto.'
+  const ci = flag(raw.ci, 'deploy.ci', false)
+  if (typeof ci === 'string') return ci
+  const auto = flag(raw.auto, 'deploy.auto', false)
+  if (typeof auto === 'string') return auto
+  const list = raw.commands === undefined ? [] : typeof raw.commands === 'string' ? [raw.commands] : raw.commands
+  if (!Array.isArray(list) || list.some(c => text(c) === undefined)) return '`deploy.commands` is a list of commands.'
+  const commands = list.map(c => text(c) as string)
+  if (!ci && commands.length === 0) return '`deploy` needs `ci: true`, `commands`, or both.'
+  return { ci, commands, auto }
+}
+
 /** The flows on offer: the mod's defaults, each replaced by a project's flow of the same id. */
 export const mergeFlows = (defaults: readonly FlowDef[], project: readonly FlowDef[]): Record<string, FlowDef> => {
   const all: Record<string, FlowDef> = {}
   for (const flow of [...defaults, ...project]) all[flow.id] = flow
   return all
+}
+
+/** A flow file as read: its raw JSON and where it came from. */
+export type FlowSource = { source: string; raw: unknown }
+
+type RawStep = Record<string, unknown> & { id: string; outcomes: Record<string, { next: string }> }
+
+/** A value's own text list: undefined is empty, anything but a list of names is refused. */
+const names = (v: unknown): string[] | undefined =>
+  v === undefined ? [] : Array.isArray(v) && v.every(x => text(x) !== undefined) ? v.map(x => text(x) as string) : undefined
+
+/**
+ * A flow file whole: one with `steps` goes straight to parseFlow; one with `base` is resolved from
+ * its base (found by `find`, which may itself be derived), then `remove` (each outcome that led to a
+ * removed step leads where that step's first outcome led, through every removed one), `add` (the
+ * step enters after `after`, whose forward outcome now leads to it, and it leads where that one
+ * led), `override` (fields laid over a step, never its id or kind) and `order`, and the result goes
+ * through parseFlow like any other.
+ */
+export const resolveFlow = (
+  raw: unknown,
+  source: string,
+  find: (id: string, from: string) => FlowSource | undefined,
+  chain: readonly { id: string; source: string }[] = [],
+): FlowDef | { error: string } => {
+  if (!isRecord(raw) || raw.base === undefined) return parseFlow(raw, source)
+  const fail = (why: string) => ({ error: `${source}: ${why}` })
+  const id = text(raw.id)
+  if (id === undefined) return fail('`id` is required.')
+  if (raw.steps !== undefined) return fail('a flow has `base` or `steps`, not both.')
+  const baseId = text(raw.base)
+  if (baseId === undefined) return fail('`base` names the flow this one derives from.')
+  const path = [...chain, { id, source }]
+  const found = find(baseId, id)
+  if (found === undefined) return fail(`base "${baseId}" is no flow of the mod or of the project.`)
+  if (path.some(p => p.source === found.source)) {
+    return fail(`\`base\` goes round in a circle: ${[...path.map(p => p.id), baseId].join(' → ')}.`)
+  }
+  const base = resolveFlow(found.raw, found.source, find, path)
+  if ('error' in base) return fail(`base "${baseId}" does not resolve: ${base.error}`)
+  let steps = JSON.parse(JSON.stringify(base.steps)) as RawStep[]
+  // production's detect goes back to its own commands; parseFlow joins the routines of the deploy that stays
+  for (const step of steps) {
+    const own = ownDetect(step.detect as FlowDetect | undefined)
+    if (own === undefined) delete step.detect
+    else step.detect = own
+  }
+  const at = (sid: string) => steps.findIndex(s => s.id === sid)
+
+  const remove = names(raw.remove)
+  if (remove === undefined) return fail('`remove` is a list of step ids.')
+  for (const sid of remove) {
+    const step = steps[at(sid)]
+    if (step === undefined) return fail(`\`remove\`: "${sid}" is no step of ${baseId}.`)
+    if (step.kind === 'loop') return fail(`\`remove\`: "${sid}" runs the change's phases; it cannot be removed.`)
+  }
+  const gone = new Set(remove)
+  const through = (target: string, seen: readonly string[]): string | undefined => {
+    if (!gone.has(target)) return target
+    if (seen.includes(target)) return undefined
+    const first = Object.values(steps[at(target)]!.outcomes)[0]!.next
+    return through(first, [...seen, target])
+  }
+  const kept = steps.filter(s => !gone.has(s.id))
+  for (const step of kept) {
+    for (const [name, o] of Object.entries(step.outcomes)) {
+      const next = through(o.next, [])
+      if (next === undefined) return fail(`\`remove\`: step "${step.id}", outcome "${name}" leads only through removed steps.`)
+      o.next = next
+    }
+  }
+  steps = kept
+
+  if (raw.add !== undefined && !Array.isArray(raw.add)) return fail('`add` is a list of { after, step }.')
+  for (const [i, a] of ((raw.add ?? []) as unknown[]).entries()) {
+    const where = `add ${i + 1}`
+    if (!isRecord(a)) return fail(`${where} is not an object.`)
+    const after = text(a.after)
+    const anchor = after === undefined ? undefined : steps[at(after)]
+    if (anchor === undefined) return fail(`${where}: \`after\` "${after ?? ''}" is no step of the flow.`)
+    const step = libraryStep(a.step)
+    if (typeof step === 'string') return fail(`${where}: ${step}`)
+    const sid = text(step.id)
+    if (sid === undefined) return fail(`${where}: the step needs an \`id\`.`)
+    if (at(sid) !== -1) return fail(`${where}: step id "${sid}" is already in the flow.`)
+    const from = at(anchor.id)
+    const forward = Object.values(anchor.outcomes).find(o => o.next === FLOW_END || at(o.next) > from)
+    if (forward === undefined) return fail(`${where}: step "${anchor.id}" has no outcome that goes forward.`)
+    const outcomes = isRecord(step.outcomes) ? step.outcomes : {}
+    for (const o of Object.values(outcomes)) {
+      if (isRecord(o) && o.next === NEXT_STEP) o.next = forward.next
+    }
+    for (const [name, o] of Object.entries(outcomes)) if (o === NEXT_STEP) outcomes[name] = forward.next
+    forward.next = sid
+    steps.splice(from + 1, 0, { ...step, id: sid } as RawStep)
+  }
+
+  if (raw.override !== undefined && !isRecord(raw.override)) return fail('`override` maps step ids to the fields that change.')
+  for (const [sid, changes] of Object.entries(raw.override ?? {})) {
+    const i = at(sid)
+    if (i === -1) return fail(`\`override\`: "${sid}" is no step of the flow.`)
+    if (!isRecord(changes)) return fail(`\`override\` of "${sid}" is an object of fields.`)
+    for (const key of ['id', 'kind'] as const) {
+      if (changes[key] !== undefined && changes[key] !== steps[i]![key]) return fail(`\`override\` of "${sid}" cannot change its \`${key}\`.`)
+    }
+    steps[i] = overlay(steps[i], changes) as RawStep
+  }
+
+  const order = raw.order === undefined ? undefined : names(raw.order)
+  if (raw.order !== undefined) {
+    const ids = steps.map(s => s.id)
+    if (order === undefined || order.length !== ids.length || new Set(order).size !== ids.length || order.some(o => !ids.includes(o))) {
+      return fail(`\`order\` names every step of the flow once: ${ids.join(', ')}.`)
+    }
+    steps = order.map(o => steps[at(o)]!)
+  }
+
+  const parsed = parseFlow(
+    { id, title: text(raw.title) ?? base.title, description: text(raw.description) ?? base.description, steps },
+    source,
+  )
+  return 'error' in parsed ? parsed : { ...parsed, base: baseId }
+}
+
+/**
+ * A project's flow files resolved: a derived one finds its base among the project's other flows
+ * first, then the mod's defaults; a project flow deriving from its own id derives from the default.
+ */
+export const resolveProjectFlows = (
+  defaults: readonly FlowSource[],
+  project: readonly FlowSource[],
+): { flows: FlowDef[]; problems: string[] } => {
+  const byId = (files: readonly FlowSource[]) =>
+    Object.fromEntries(files.flatMap(f => (isRecord(f.raw) && text(f.raw.id) !== undefined ? [[text(f.raw.id) as string, f]] : [])))
+  const mine = byId(project)
+  const theirs = byId(defaults)
+  const find = (id: string, from: string) => (id === from ? undefined : mine[id]) ?? theirs[id]
+  const flows: FlowDef[] = []
+  const problems: string[] = []
+  for (const file of project) {
+    const resolved = resolveFlow(file.raw, file.source, find)
+    if ('error' in resolved) problems.push(resolved.error)
+    else flows.push(resolved)
+  }
+  return { flows, problems }
 }
 
 export type Moved = { state: FlowState; events: FlowEvent[] }
@@ -176,6 +442,10 @@ const enter = (state: FlowState, target: string, by: FlowActor, cause: { from: s
   const records = Object.fromEntries(
     Object.entries(state.records).filter(([sid]) => indexOf(state.flow, sid) < from),
   )
+  // a deploy that retries itself keeps what it saw done; coming back from a later step starts it over
+  const progress = Object.fromEntries(
+    Object.entries(state.progress ?? {}).filter(([sid]) => indexOf(state.flow, sid) < from || (sid === id && cause.from === id)),
+  )
   // going back keeps why (e.g. QA's request), until the flow reaches that step again
   const cause_ = state.records[cause.from]
   const source = stepOf(state.flow, cause.from)
@@ -192,8 +462,12 @@ const enter = (state: FlowState, target: string, by: FlowActor, cause: { from: s
       : state.reopened !== undefined && id !== state.reopened.step
         ? state.reopened
         : undefined
-  const { reopened: _drop, ...rest } = state
-  state = reopened === undefined ? rest : { ...rest, reopened }
+  const { reopened: _drop, progress: _progress, ...rest } = state
+  state = {
+    ...rest,
+    ...(reopened === undefined ? {} : { reopened }),
+    ...(Object.keys(progress).length === 0 ? {} : { progress }),
+  }
   const attempts = state.attempts[id] ?? 0
   if (by !== 'owner' && attempts >= step.maxAttempts) {
     const escalation = { step: id, from: cause.from, outcome: cause.outcome, attempts }
@@ -289,30 +563,157 @@ export const applyOutcome = (
   if (detected && report.outcome !== asked.detect?.outcome) {
     return { error: `step "${asked.id}": a detected command gives only ${asked.detect?.outcome}.` }
   }
-  const outcome = asked.outcomes[report.outcome]
-  if (outcome === undefined) {
+  if (asked.outcomes[report.outcome] === undefined) {
     return { error: `step "${asked.id}" has no outcome "${report.outcome}"; it declares ${Object.keys(asked.outcomes).join(', ')}.` }
   }
-  const note = report.note ?? state.pendingNote
-  const record = { outcome: report.outcome, by: report.by, at, ...(note === undefined ? {} : { note }) }
+  if (asked.deploy !== undefined && report.outcome !== 'falhou' && !ownerConfirms(state, asked, report.by, report.outcome)) {
+    return {
+      error:
+        `step "${asked.id}" (${asked.title}) moves on by itself once the mod saw the whole deploy: ` +
+        `${deployWaits(state, asked)}.`,
+    }
+  }
+  return settle(state, asked, report.outcome, report.by, report.note, at)
+}
+
+/** Records a step's outcome and enters where it leads. */
+const settle = (state: FlowState, step: FlowStep, name: string, by: FlowActor, given: string | undefined, at: number): Moved => {
+  const outcome = step.outcomes[name] as FlowOutcome
+  const note = given ?? state.pendingNote
+  const record = { outcome: name, by, at, ...(note === undefined ? {} : { note }) }
   const reported: FlowEvent = {
     seq: state.seq + 1,
     at,
     kind: 'outcome',
-    step: asked.id,
-    by: report.by,
-    outcome: report.outcome,
+    step: step.id,
+    by,
+    outcome: name,
     ...(note === undefined ? {} : { note }),
   }
   const { pendingNote: _used, ...unnoted } = state
   const moved = enter(
-    { ...unnoted, records: { ...state.records, [asked.id]: record }, seq: state.seq + 1 },
+    { ...unnoted, records: { ...state.records, [step.id]: record }, seq: state.seq + 1 },
     outcome.next,
-    report.by,
-    { from: asked.id, outcome: report.outcome },
+    by,
+    { from: step.id, outcome: name },
     at,
   )
   return { state: moved.state, events: [reported, ...moved.events] }
+}
+
+/** The owner's button on a deploy step that waits on the CI. */
+export const DEPLOY_CI_OUTCOME = 'ci-concluido'
+export const DEPLOY_CI_LABEL = 'Deploy do CI concluído'
+
+/** `gh run watch` / `gh run view` that fail with the run: only `--exit-status` makes their exit code the run's. */
+const CI_WATCH = /\bgh\s+run\s+(?:watch|view)\b(?=[^;&|\n]*\s--exit-status\b)/
+
+const progressOf = (state: FlowState, step: FlowStep): FlowDeployProgress =>
+  state.progress?.[step.id] ?? { ci: false, commands: [] }
+
+/** What a deploy step still waits on: the CI's deploy, then its routines in order. */
+export const deployPending = (state: FlowState, step: FlowStep): FlowDeployProgress => {
+  const done = progressOf(state, step)
+  return { ci: step.deploy?.ci === true && !done.ci, commands: (step.deploy?.commands ?? []).slice(done.commands.length) }
+}
+
+const deployWaits = (state: FlowState, step: FlowStep): string => {
+  const pending = deployPending(state, step)
+  const parts = [
+    ...(pending.ci ? ["the CI's deploy"] : []),
+    ...(pending.commands.length > 0 ? [`the routines ${pending.commands.map(c => `\`${c}\``).join(', ')}`] : []),
+  ]
+  return parts.length === 0 ? 'nothing is left' : `it still waits on ${parts.join(', then ')}`
+}
+
+/**
+ * An owner's deploy with only routines left (none from the start, or the CI's already confirmed):
+ * the owner may confirm it whole with the step's forward outcome ("Deploy concluído"), having run
+ * the routines where the mod did not see them.
+ */
+const ownerConfirms = (state: FlowState, step: FlowStep, by: FlowActor, outcome: string): boolean =>
+  step.kind === 'owner' &&
+  step.deploy !== undefined &&
+  !deployPending(state, step).ci &&
+  by === 'owner' &&
+  outcome === Object.keys(step.outcomes)[0]
+
+/** One more thing the deploy saw done; with nothing left, the step moves on. */
+const tick = (state: FlowState, step: FlowStep, done: FlowDeployProgress, by: FlowActor, note: string, at: number): Moved => {
+  const progressed: FlowState = { ...state, progress: { ...state.progress, [step.id]: done }, seq: state.seq + 1, updatedAt: at }
+  const event: FlowEvent = { seq: state.seq + 1, at, kind: 'progress', step: step.id, by, note }
+  const pending = deployPending(progressed, step)
+  if (pending.ci || pending.commands.length > 0) return { state: progressed, events: [event] }
+  const forward = step.kind === 'automatic' ? 'passou' : Object.keys(step.outcomes)[0]!
+  const moved = settle(progressed, step, forward, step.kind === 'automatic' ? 'automatic' : 'mod', undefined, at)
+  return { state: moved.state, events: [event, ...moved.events] }
+}
+
+/** The owner confirms the CI's deploy from the panel. */
+export const confirmDeployCi = (state: FlowState, stepId: string, at: number): Moved | { error: string } => {
+  const step = currentStep(state)
+  if (state.status !== 'running' || step === undefined || step.id !== stepId) return { error: `the flow of ${state.change} is not on "${stepId}".` }
+  if (step.deploy?.ci !== true) return { error: `step "${step.id}" does not wait on the CI.` }
+  const done = progressOf(state, step)
+  if (done.ci) return { error: `the CI's deploy of "${step.id}" is already confirmed.` }
+  return tick(state, step, { ...done, ci: true }, 'owner', DEPLOY_CI_LABEL, at)
+}
+
+/**
+ * One finished Bash command, read by the deploy step the flow is on: `gh run watch|view
+ * --exit-status` passing confirms the CI's deploy; a routine passing counts only after the CI
+ * (when the step waits on it) and only as the next one in order. A CI watch is read only while
+ * the step waits on the CI it has not seen yet. A masked exit code proves nothing. A failure fails an automatic deploy; an owner's deploy holds. Undefined when the
+ * command is none of the deploy's; an error when it is one but does not count.
+ */
+export const observeDeploy = (state: FlowState, command: string, failed: boolean, at: number): Moved | { error: string } | undefined => {
+  const step = currentStep(state)
+  if (state.status !== 'running' || step?.deploy === undefined) return undefined
+  const code = executedText(command)
+  const routines = step.deploy.commands.map(commandPattern)
+  const routine = routines.findIndex(p => p.test(code))
+  const pattern = routine === -1 ? (CI_WATCH.test(code) ? CI_WATCH : undefined) : routines[routine]!
+  if (pattern === undefined) return undefined
+  const what = routine === -1 ? "the CI's deploy" : `the routine \`${step.deploy.commands[routine]}\``
+  const done = progressOf(state, step)
+  // a CI watch counts, either way, only while the step still waits on the CI
+  if (routine === -1 && (!step.deploy.ci || done.ci)) return undefined
+  if (failed) {
+    return step.kind === 'automatic'
+      ? settle(state, step, 'falhou', 'automatic', `${what} failed`, at)
+      : { error: `${what} failed; the deploy holds until it passes.` }
+  }
+  if (masksExitCode(code, pattern)) return { error: `${what} ran with its exit code hidden; run it alone for it to count.` }
+  if (routine === -1) {
+    return tick(state, step, { ...done, ci: true }, 'detect', executedTextShort(command), at)
+  }
+  if (step.deploy.ci && !done.ci) return { error: `${what} ran before the CI's deploy was confirmed; it does not count.` }
+  const expected = done.commands.length
+  if (routine < expected) return { error: `${what} already passed.` }
+  if (routine > expected) {
+    return { error: `${what} ran out of order; \`${step.deploy.commands[expected]}\` comes first, so it does not count.` }
+  }
+  return tick(state, step, { ...done, commands: [...done.commands, step.deploy.commands[routine]!] }, 'detect', executedTextShort(command), at)
+}
+
+export const executedTextShort = (command: string): string => `comando: ${command.replace(/\s+/g, ' ').trim().slice(0, 80)}`
+
+/** The PR review step: no merge of the change's PR before the owner approved it. */
+export const REVIEW_STEP = 'revisao-pr'
+
+/**
+ * The PR review the flow has not answered yet and comes before its next merge (the merge step it
+ * is on, or the first one after); with no merge step ahead, any unanswered review. A finished or
+ * aborted flow waits on none.
+ */
+export const pendingReview = (state: FlowState): FlowStep | undefined => {
+  if (state.status === 'done' || state.status === 'aborted') return undefined
+  const steps = state.flow.steps
+  const at = Math.max(0, indexOf(state.flow, state.current))
+  const merge = steps.findIndex((s, i) => i >= at && s.merge !== undefined)
+  return steps
+    .slice(0, merge === -1 ? steps.length : merge)
+    .find(s => (s.id === REVIEW_STEP || s.id.startsWith(`${REVIEW_STEP}-`)) && state.records[s.id] === undefined)
 }
 
 /** The owner's answer to an escalation: go again with a fresh count, or end the flow. */
@@ -339,7 +740,9 @@ export const resolveEscalation = (state: FlowState, choice: string, at: number):
 export const ownerPress = (state: FlowState, step: string, outcome: string, at: number, note?: string): Moved | { error: string } =>
   state.status === 'escalated' && state.escalation?.step === step
     ? resolveEscalation(state, outcome, at)
-    : applyOutcome(state, { step, outcome, by: 'owner', ...(note === undefined ? {} : { note }) }, at)
+    : outcome === DEPLOY_CI_OUTCOME
+      ? confirmDeployCi(state, step, at)
+      : applyOutcome(state, { step, outcome, by: 'owner', ...(note === undefined ? {} : { note }) }, at)
 
 /** What the owner sees after a press: the answer recorded, in their words, and where the flow went. */
 export const pressedToast = (before: FlowState, after: FlowState, step: string, outcome: string): string => {
@@ -355,7 +758,9 @@ export const pressedToast = (before: FlowState, after: FlowState, step: string, 
 
 /** The button's own words: the owner step's outcome label, or the escalation choice's. */
 const pressedLabel = (before: FlowState, step: string, outcome: string): string =>
-  stepOf(before.flow, step)?.outcomes[outcome]?.label ?? ESCALATION_CHOICES.find(c => c.outcome === outcome)?.label ?? outcome
+  stepOf(before.flow, step)?.outcomes[outcome]?.label ??
+  ESCALATION_CHOICES.find(c => c.outcome === outcome)?.label ??
+  (outcome === DEPLOY_CI_OUTCOME ? DEPLOY_CI_LABEL : outcome)
 
 /**
  * What the coordinator reads after an owner press, or nothing when it has nothing to do: the flow
@@ -385,7 +790,7 @@ const commandPattern = (command: string): RegExp =>
  * A run whose exit code a pipe, `|| true` or a later `; cmd` hides proves a failure, never a pass.
  */
 export const automaticOutcome = (step: FlowStep, command: string, failed: boolean): 'passou' | 'falhou' | undefined => {
-  if (step.kind !== 'automatic' || step.command === undefined) return undefined
+  if (step.kind !== 'automatic' || step.command === undefined || step.deploy !== undefined) return undefined
   const code = executedText(command)
   const pattern = commandPattern(step.command)
   if (!pattern.test(code)) return undefined
@@ -448,9 +853,15 @@ export const flowView = (state: FlowState): FlowView => {
   const ownerChoices: FlowChoice[] =
     state.status === 'escalated'
       ? [...ESCALATION_CHOICES]
-      : step?.kind === 'owner'
-        ? Object.entries(step.outcomes).map(([outcome, o]) => ({ outcome, label: o.label }))
-        : []
+      : step?.deploy !== undefined
+        ? deployPending(state, step).ci
+          ? [{ outcome: DEPLOY_CI_OUTCOME, label: DEPLOY_CI_LABEL }]
+          : ownerConfirms(state, step, 'owner', Object.keys(step.outcomes)[0]!)
+            ? Object.entries(step.outcomes).slice(0, 1).map(([outcome, o]) => ({ outcome, label: o.label }))
+            : []
+        : step?.kind === 'owner'
+          ? Object.entries(step.outcomes).map(([outcome, o]) => ({ outcome, label: o.label }))
+          : []
   return {
     change: state.change,
     flowId: state.flow.id,
@@ -482,6 +893,16 @@ export const describeFlow = (state: FlowState): string => {
 }
 
 const describeStep = (state: FlowState, step: FlowStep, where: string, outcomes: string): string => {
+  if (step.deploy !== undefined) return describeDeploy(state, step, where)
+  if (step.merge?.auto === true) {
+    return (
+      `${where}. Merge the change's PR into ${step.merge.branch} yourself, by ${step.merge.method}: first check with ` +
+      '`gh pr view <pr> --json reviewDecision,statusCheckRollup` that it is approved on GitHub and its CI is green; ' +
+      'if anything is missing, do not merge — tell the owner. Then run ' +
+      `\`gh pr merge <pr> --${step.merge.method}\` alone, never with --admin; the mod reads its exit code ` +
+      `(exit 0 → ${step.outcomes.passou?.next}, otherwise → ${step.outcomes.falhou?.next}). It cannot be reported.`
+    )
+  }
   switch (step.kind) {
     case 'session':
       return `${where}. Do the step, then report one of its outcomes with action "report": ${outcomes}.`
@@ -507,7 +928,89 @@ const describeStep = (state: FlowState, step: FlowStep, where: string, outcomes:
         'no session can answer it, but action "note" leaves a note that joins the answer' +
         (step.detect === undefined
           ? '.'
-          : `. The mod also answers ${step.detect.outcome} when it sees ${step.detect.commands.map(c => `\`${c}\``).join(' or ')} succeed.`)
+          : `. The mod also answers ${step.detect.outcome} when it sees ${step.detect.commands.map(c => `\`${c}\``).join(' or ')} succeed.`) +
+        (step.merge === undefined ? '' : ` The owner merges into ${step.merge.branch} by ${step.merge.method}; never with --admin.`)
       )
   }
+}
+
+/** A deploy step: who starts it, what it still waits on, and how the mod sees each part done. */
+const describeDeploy = (state: FlowState, step: FlowStep, where: string): string => {
+  const deploy = step.deploy as FlowDeploy
+  const pending = deployPending(state, step)
+  const who = deploy.auto
+    ? `${where}. Deploy by yourself right after the merge, without waiting on the owner.`
+    : `${where}. Waits on the owner: do not start the deploy unless they ask; they confirm and run it.`
+  const ci = pending.ci
+    ? ` The CI's deploy: wait for it with \`gh run watch <run> --exit-status\` (or \`gh run view <run> --exit-status\`) run alone, or the owner presses "${DEPLOY_CI_LABEL}".`
+    : deploy.ci
+      ? " The CI's deploy is confirmed."
+      : ''
+  const routines =
+    pending.commands.length > 0
+      ? ` Routines left, each as its own command and in this order${pending.ci ? ', after the CI' : ''}: ${pending.commands.map(c => `\`${c}\``).join(', ')}.`
+      : ''
+  const fails = step.kind === 'automatic' ? `a failure → ${step.outcomes.falhou?.next}` : 'a failure holds the step'
+  const [forward, first] = Object.entries(step.outcomes)[0]!
+  const confirm = ownerConfirms(state, step, 'owner', forward) ? ` The owner may also press "${first.label}" once they ran the routines.` : ''
+  return (
+    `${who}${ci}${routines} The mod ticks each part it sees pass (a hidden exit code does not count) and moves on ` +
+    `(→ ${first.next}) once all are done; ${fails}.${confirm} It cannot be reported.`
+  )
+}
+
+/** Where a step's agent file was found: the project's own, the mod's plugin, or nowhere. */
+export type AgentFound = { source: 'project' | 'plugin'; path: string } | undefined
+
+const AGENT_SOURCE = { project: 'do projeto', plugin: 'do plugin' } as const
+
+/** The step as the model must run it: agent (and where it came from), model, effort and details. */
+export const describeStepAgent = (step: FlowStep, found: AgentFound): string | undefined => {
+  const lines: string[] = []
+  if (step.agent !== undefined) {
+    lines.push(
+      found === undefined
+        ? `Agente: "${step.agent}" — nenhum arquivo encontrado (nem .orquestrador/agents/${step.agent}.md no projeto nem agents/${step.agent}.md no plugin); siga a descrição do passo sem agente.`
+        : `Agente: "${step.agent}" (${AGENT_SOURCE[found.source]}). Instruções do agente: ${found.path}`,
+    )
+  }
+  if (step.model !== undefined) lines.push(`Modelo: ${step.model}`)
+  if (step.effort !== undefined) lines.push(`Esforço: ${step.effort}`)
+  const d = step.details
+  if (d?.inputs !== undefined) lines.push(`Entrada: ${d.inputs}`)
+  if (d?.produces !== undefined) lines.push(`Saída: ${d.produces}`)
+  if (d?.blocks !== undefined) lines.push(`Bloqueia: ${d.blocks}`)
+  if (lines.length === 0) return undefined
+  const head = step.kind === 'loop' ? 'Cada fase deste passo usa:' : 'Neste passo:'
+  return `${head}\n${lines.map(l => `  ${l}`).join('\n')}`
+}
+
+const ANSWERER_LABEL: Record<FlowStepKind, string> = {
+  session: 'sessão',
+  loop: 'mod',
+  automatic: 'mod',
+  owner: 'dono',
+}
+
+/** One step of the sequence with who answers it and whether merge/deploy run on their own. */
+const stepSummary = (s: FlowStep): string => {
+  const mode = (auto: boolean) => (auto ? 'automático' : 'manual')
+  const extra = [
+    s.merge === undefined ? undefined : `merge ${mode(s.merge.auto)}`,
+    s.deploy === undefined ? undefined : `deploy ${mode(s.deploy.auto)}`,
+    s.agent === undefined ? undefined : `agente ${s.agent}`,
+  ].filter((x): x is string => x !== undefined)
+  return `${s.id} (${[ANSWERER_LABEL[s.kind], ...extra].join(', ')})`
+}
+
+/** A workflow whole for the owner's choice: title, description, origin and every step with its answerer. */
+export const describeWorkflow = (flow: FlowDef, origin: 'default' | 'project'): string => {
+  const from =
+    flow.base !== undefined ? `derivado de ${flow.base}` : origin === 'project' ? 'do projeto' : 'padrão'
+  return [
+    `${flow.id} — ${flow.title}: ${flow.steps.map(s => s.id).join(' → ')} → fim`,
+    `  Descrição: ${flow.description === '' ? '(sem descrição)' : flow.description}`,
+    `  Origem: ${from}`,
+    `  Passos: ${flow.steps.map(stepSummary).join(' → ')}`,
+  ].join('\n')
 }

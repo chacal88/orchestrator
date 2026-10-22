@@ -39,7 +39,8 @@ import {
   isOpenGate,
   liveSessions,
   isChangeBranch,
-  mergeSelector,
+  mergeCalls,
+  opaqueMerge,
   mergeTarget,
   mergeWindow,
   classifyBash,
@@ -49,26 +50,28 @@ import {
   observeTool,
   phaseRefusal,
 } from './gates'
-import type { MergeTarget } from './gates'
+import type { MergeCall, MergeTarget } from './gates'
 import {
   DEFAULT_FLOW_IDS,
   applyOutcome,
   automaticOutcome,
   currentStep,
   describeFlow,
+  describeStepAgent,
+  describeWorkflow,
   detectedOutcome,
+  executedTextShort,
   noteOwnerStep,
+  observeDeploy,
+  pendingReview,
   flowView,
-  mergeFlows,
   ownerPress,
-  parseFlow,
   pressedToast,
   wakePrompt,
   startFlow,
 } from './flow'
 import type { Moved } from './flow'
 import { closePhase, finishLoop, isClosed, loopRefusal, loopUnits, phaseSessions, uncommitted, unitRefusal, withEvents } from './lifecycle'
-import { defaultFlows } from './flows/index'
 import {
   MOCKUP_STEP,
   RELEASE_OUTCOME,
@@ -89,6 +92,8 @@ import {
 } from './grill'
 import { bandSummary, parseEvents, stepTimes } from './glance'
 import { renderBand, renderPane } from './pane'
+import { WORKFLOWS_PANE, drawWorkflows, toggleWorkflowsPane } from './workflows-pane'
+import { findAgent, loadFlows } from './flow-files'
 import { firstSite, issueUrl, jiraKeys, moveFor, parseIssue, parseTransitions, wishes } from './jira'
 import { changeDir, openSpecView } from './openspec'
 import {
@@ -863,18 +868,19 @@ const mergeHead = async ($: EngineInterface, selector: string | undefined, targe
 /**
  * Whether a merge is of the change's own PR: its number is bound to a phase session, named by
  * the plan or cited by the flow's PR step, or its head branch is a phase session's or carries
- * the change id. A PR whose head branch cannot be read is taken as the change's: the gate fails
- * closed.
+ * the change id. A PR whose head branch cannot be read is taken as the change's, and so is a
+ * GraphQL merge, which names its PR by a node id: the gate fails closed.
  */
 const mergesChangePr = async (
   $: EngineInterface,
-  command: string,
+  call: MergeCall,
   run: OrchestrationRun,
   flow: FlowState | undefined,
   family: Family | undefined,
   root: string,
 ): Promise<boolean> => {
-  const selector = mergeSelector(command)
+  if (call.via === 'graphql') return true
+  const selector = call.selector
   const target = mergeTarget(selector)
   const { numbers, branches } = changePrs(run, flow, family?.children ?? [])
   if (target.number !== undefined && numbers.has(target.number)) return true
@@ -883,25 +889,71 @@ const mergesChangePr = async (
 }
 
 /**
- * The final gates hold back only the change's own PR, and only while its flow runs up to the
- * step before the archive; a finished or aborted flow gates nothing.
+ * From an orchestrated checkout no merge goes with `--admin`, nor with an argument the mod cannot
+ * read (`$VAR`, `$(…)`). The change's own PR, while its flow runs up to the step before the
+ * archive, also waits for the flow's PR review before that merge and for the final gates; a
+ * finished or aborted flow holds back nothing but those two. Every form `mergeCalls` reads counts:
+ * `gh pr merge` with or without flags before `pr`, `gh api …/pulls/<n>/merge`, GraphQL's
+ * `mergePullRequest`, quoted, continued, or inside `bash -c`/`sh -c`/`eval`. A line that names `gh`
+ * and a merge the mod cannot read as one (`opaqueMerge`) is refused: the guard fails closed.
  */
 const refuseMerge = async ($: EngineInterface, command: string): Promise<string | undefined> => {
+  const calls = mergeCalls(command)
+  const opaque = opaqueMerge(command)
+  if (calls.length === 0 && opaque === undefined) return undefined
   const root = await $.session.root()
   const run = await loadRun($, root)
-  if (run === undefined || run.finalGates === undefined) return undefined
+  if (run === undefined) return undefined
+  const held: string[] = []
+  const reasons: string[] = []
+  if (opaque !== undefined) {
+    held.push('opaque')
+    reasons.push(
+      `\`${opaque}\` runs a \`gh\` merge the mod cannot read (behind another program, from a script on stdin, or ` +
+        'under a name a variable holds), so it cannot check the review, the gates or `--admin`. Run `gh pr merge` ' +
+        'itself, with the PR and the flags written out.',
+    )
+  }
+  if (calls.some(c => c.admin)) {
+    held.push('--admin')
+    reasons.push('`--admin` skips the branch protection (GitHub approval and green CI); merge without it, never around them.')
+  }
+  const blind = calls.find(c => c.dynamic)
+  if (blind !== undefined) {
+    held.push('$')
+    reasons.push(
+      `\`${blind.text}\` takes an argument from a variable or \`$(…)\`: the mod cannot see what it carries ` +
+        '(an `--admin`, another PR). Write the PR and the flags out in the command.',
+    )
+  }
   const flow = await loadFlowState($, run.change)
-  if (flow !== undefined && !mergeWindow(flow)) return undefined
   const family = await loadFamily($)
-  if (!(await mergesChangePr($, command, run, flow, family, root))) return undefined
-  const open = await finalOpenGates($, run, family)
-  if (open.length === 0) return undefined
-  await logGateEvent($, run.change, { kind: 'refused', action: 'merge', gates: open.map(v => v.gate) })
-  return (
-    `final gates of ${run.change} not passed: ${open.map(v => `${v.gate} (${v.state})`).join(', ')}. ` +
-    'Run them once on the integrated code; only the owner can skip one, from the panel. ' +
-    `(Only a merge of ${run.change}'s own PR waits for them, until its flow reaches the archive.)`
-  )
+  let change = false
+  if (flow === undefined || mergeWindow(flow)) {
+    for (const call of calls) change ||= await mergesChangePr($, call, run, flow, family, root)
+  }
+  if (change) {
+    const review = flow === undefined ? undefined : pendingReview(flow)
+    if (review !== undefined) {
+      held.push(review.id)
+      const press = Object.values(review.outcomes)[0]?.label ?? review.id
+      reasons.push(
+        `the PR review "${review.id}" (${review.title}) of ${run.change} is not answered yet: the owner approves the PR ` +
+          `on GitHub and presses "${press}" in the panel before it merges.`,
+      )
+    }
+    const open = run.finalGates === undefined ? [] : await finalOpenGates($, run, family)
+    if (open.length > 0) {
+      held.push(...open.map(v => v.gate))
+      reasons.push(
+        `final gates of ${run.change} not passed: ${open.map(v => `${v.gate} (${v.state})`).join(', ')}. ` +
+          'Run them once on the integrated code; only the owner can skip one, from the panel.',
+      )
+    }
+  }
+  if (reasons.length === 0) return undefined
+  await logGateEvent($, run.change, { kind: 'refused', action: 'merge', gates: held })
+  return `${reasons.join(' ')} (Only a merge of ${run.change}'s own PR waits for the review and the gates, until its flow reaches the archive.)`
 }
 
 /**
@@ -1008,31 +1060,12 @@ const FLOW_SCHEMA = {
 
 const flowsDir = async ($: EngineInterface): Promise<string> => `${await baseDir($)}/flows`
 
-/** Every flow file of one folder, the ones that do not parse named in `problems`. */
-const readFlowDir = async ($: EngineInterface, dir: string): Promise<{ flows: FlowDef[]; problems: string[] }> => {
-  if (!(await $.fs.exists(dir))) return { flows: [], problems: [] }
-  const files = (await $.fs.list(dir)).filter(f => f.kind === 'file' && f.name.endsWith('.json'))
-  const flows: FlowDef[] = []
-  const problems: string[] = []
-  for (const file of files) {
-    let raw: unknown
-    try {
-      raw = JSON.parse(await $.fs.read(`${dir}/${file.name}`))
-    } catch {
-      problems.push(`${dir}/${file.name}: not valid JSON.`)
-      continue
-    }
-    const parsed = parseFlow(raw, `${dir}/${file.name}`)
-    if ('error' in parsed) problems.push(parsed.error)
-    else flows.push(parsed)
-  }
-  return { flows, problems }
-}
-
-/** The mod's default flows, then the project's own in `<repo>/.orquestrador/flows`, which win by id. */
-const loadFlows = async ($: EngineInterface): Promise<{ flows: Record<string, FlowDef>; problems: string[] }> => {
-  const project = await readFlowDir($, `${await $.session.root()}/.orquestrador/flows`)
-  return { flows: mergeFlows(defaultFlows(), project.flows), problems: project.problems }
+/** What the current step's agent, model, effort and details say, for the status of a running flow. */
+const describeAgent = async ($: EngineInterface, state: FlowState): Promise<string | undefined> => {
+  if (state.status !== 'running') return undefined
+  const step = state.flow.steps.find(s => s.id === state.current)
+  if (step === undefined) return undefined
+  return describeStepAgent(step, step.agent === undefined ? undefined : await findAgent($, step.agent))
 }
 
 const flowFile = async ($: EngineInterface, change: string, ext: 'json' | 'ndjson'): Promise<string> =>
@@ -1087,9 +1120,9 @@ const flowError = (why: string): FlowReply => ({ result: `Flow: ${why}`, isError
 const handleFlowTool = async ($: EngineInterface, input: Record<string, unknown>): Promise<FlowReply> => {
   const action = input.action
   if (action === 'list') {
-    const { flows, problems } = await loadFlows($)
-    const lines = Object.values(flows).map(f => `${f.id} — ${f.title}: ${f.steps.map(s => s.id).join(' → ')} → fim`)
-    return { result: [...lines, ...problems.map(p => `ignored: ${p}`)].join('\n') }
+    const { flows, problems, projectIds } = await loadFlows($)
+    const blocks = Object.values(flows).map(f => describeWorkflow(f, projectIds.has(f.id) ? 'project' : 'default'))
+    return { result: [...blocks, ...problems.map(p => `ignored: ${p}`)].join('\n') }
   }
   if (action === 'start') {
     const change = typeof input.change === 'string' ? input.change.trim() : ''
@@ -1283,7 +1316,6 @@ const hasEvidence = async ($: EngineInterface, state: FlowState): Promise<boolea
   return EVIDENCE_OK.has(openSpecView({ tasks: undefined, proposal: undefined, evidence }).evidence)
 }
 
-const executedTextShort = (command: string): string => `comando: ${command.replace(/\s+/g, ' ').trim().slice(0, 80)}`
 
 /** An automatic step moves only when the mod itself sees its command finish, never on a session's word. */
 const observeFlows = async ($: EngineInterface, command: string, failed: boolean): Promise<void> => {
@@ -1292,6 +1324,23 @@ const observeFlows = async ($: EngineInterface, command: string, failed: boolean
     if (state.status !== 'running' || !ownsFlow(state, root)) continue
     const step = currentStep(state)
     if (step === undefined) continue
+    if (step.deploy !== undefined) {
+      const seen = observeDeploy(state, command, failed, await $.clock.now())
+      if (seen === undefined) continue
+      if ('error' in seen) {
+        await logFlowRefusal($, state, step.id, 'detect', seen.error)
+        $.ui.toast(`Flow ${state.change}: ${step.title} não contou o comando — ${seen.error}`)
+        continue
+      }
+      await saveFlow($, seen.state, seen.events)
+      const word = seen.events.some(e => e.outcome === 'falhou')
+        ? 'falhou'
+        : seen.state.current === step.id
+          ? 'parte do deploy vista'
+          : 'deploy concluído'
+      $.ui.toast(`Flow ${state.change}: ${step.title} — ${word}.`)
+      continue
+    }
     const detected = detectedOutcome(step, command, failed)
     if (detected !== undefined) {
       const seen = applyOutcome(
@@ -1457,7 +1506,9 @@ const handlePrepAction = async ($: EngineInterface, state: FlowState, input: Rec
 /** Where the flow stands, with what the pre-execution step gathered so far. */
 const describeWithPrep = async ($: EngineInterface, state: FlowState): Promise<string> => {
   const prep = describePrep(state, await loadPrep($, state.change))
-  return prep === undefined ? describeFlow(state) : `${describeFlow(state)} ${prep}`
+  const base = prep === undefined ? describeFlow(state) : `${describeFlow(state)} ${prep}`
+  const agent = await describeAgent($, state)
+  return agent === undefined ? base : `${base}\n${agent}`
 }
 
 /**
@@ -1531,6 +1582,10 @@ export const register: Register = on => {
       name: 'orquestrador',
       description: 'Abre ou fecha o painel da orquestração: OpenSpec, gates, pendências e tarefas',
     })
+    await $.command.register({
+      name: 'orquestrador-workflows',
+      description: 'Abre ou fecha o painel ⚙️ Workflows: ver e editar os workflows do projeto',
+    })
     await $.tool.register({
       name: 'plano',
       description:
@@ -1566,6 +1621,28 @@ export const register: Register = on => {
             ? 'Painel do orquestrador aberto.'
             : 'Painel pronto; amplie a janela para vê-lo.',
     }
+  })
+
+  on('command.run', { command: 'orquestrador-workflows' }, async $ => {
+    const done = await toggleWorkflowsPane($)
+    return {
+      text:
+        done === 'closed'
+          ? 'Painel de workflows fechado.'
+          : done === 'opened'
+            ? 'Painel de workflows aberto.'
+            : 'Painel de workflows pronto; amplie a janela para vê-lo.',
+    }
+  })
+
+  on('ui.render', { component: 'Pane', requestId: WORKFLOWS_PANE }, async ($, e) => {
+    const { Box, Text, Button } = $.ui.resolve(e)
+    const fields = e.surface === 'mobile' ? undefined : $.ui.resolve(e)
+    return drawWorkflows(
+      $,
+      { Box, Text, Button, Input: fields?.Input, Select: fields?.Select },
+      e.props.bodyColumns,
+    )
   })
 
   on('ui.close', async ($, e, next) => {
