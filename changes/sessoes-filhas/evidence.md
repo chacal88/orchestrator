@@ -20,3 +20,8 @@
   do repo, como nas changes anteriores — saída 0.
   Obs.: `npx -y -p typescript@5.6.3 tsc --noEmit -p orquestrador` usa os tipos antigos do repo e já falha, antes desta
   change, só em `hooks/workflows-pane.tsx` (`size`/`weight` em `Text`); nenhum erro nos arquivos tocados aqui.
+
+## Portão de testes rodado de novo
+
+A pedido da coordenação, rodado de novo numa forma que o mod reconhece:
+`export PATH="…/claude-code/2.1.308/…/MacOS:$PATH" && command claude plugin test orquestrador` — 369 pass, 0 fail, saída 0.
