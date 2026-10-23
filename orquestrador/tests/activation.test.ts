@@ -4,7 +4,7 @@ import type { Engine, TestBody } from 'claude-code/testing'
 import type { OrchestrationRun } from '../types'
 import { startFlow } from '../hooks/flow'
 import { defaultFlows } from '../hooks/flows/index'
-import { HOOK_COMMAND, HOOK_MARK, activate, deactivate, parseSettings, readActivation, writeActivation } from '../hooks/activation'
+import { HOOK_COMMAND, HOOK_MARK, activate, deactivate, parseSettings, readActivation, readAutowake, writeActivation, writeAutowake } from '../hooks/activation'
 
 type On = Parameters<TestBody>[1]
 type Reply = { result?: unknown; isError?: boolean; deny?: string }
@@ -213,6 +213,32 @@ test('writing the activation preserves the file, refuses a broken one, and a wor
   expect(await writeActivation(engineOf(w), 'barrar')).toEqual({ ok: false, error: 'notJson' })
   expect(w.disk.get(MARK)).toBe(broken)
   expect(await readActivation(engineOf(w))).toEqual({ level: undefined, invalid: true, tampered: false })
+})
+
+test('"Seguir o flow sem clique" is off when absent, on and off as written, and off when the record is broken', async ($, on) => {
+  const w = world(on)
+  const AUTOWAKE = `${BASE}/autowake.json`
+  expect(await readAutowake(engineOf(w))).toBe(false)
+  await writeAutowake(engineOf(w), true)
+  expect(JSON.parse(w.disk.get(AUTOWAKE) ?? '')).toMatchObject({ '/w': { on: true } })
+  expect(await readAutowake(engineOf(w))).toBe(true)
+  // another repository's entry is its own
+  w.disk.set(AUTOWAKE, JSON.stringify({ ...JSON.parse(w.disk.get(AUTOWAKE) ?? ''), '/other': { on: true, at: 1 } }))
+  await writeAutowake(engineOf(w), false)
+  expect(await readAutowake(engineOf(w))).toBe(false)
+  expect(Object.keys(JSON.parse(w.disk.get(AUTOWAKE) ?? ''))).toEqual(['/other'])
+  // a broken record is off, and the panel replaces it
+  w.disk.set(AUTOWAKE, '{ "/w": ')
+  expect(await readAutowake(engineOf(w))).toBe(false)
+  w.disk.set(AUTOWAKE, JSON.stringify({ '/w': { on: 'yes' } }))
+  expect(await readAutowake(engineOf(w))).toBe(false)
+  w.disk.set(AUTOWAKE, '{ "/w": ')
+  await writeAutowake(engineOf(w), true)
+  expect(await readAutowake(engineOf(w))).toBe(true)
+  // a worktree reads the main checkout's entry
+  w.root = '/w/.claude/worktrees/x'
+  w.common = '/w/.git'
+  expect(await readAutowake(engineOf(w))).toBe(true)
 })
 
 test('a worktree activates the main checkout\'s file, the one Claude Code reads', async ($, on) => {

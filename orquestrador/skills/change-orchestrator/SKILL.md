@@ -85,6 +85,22 @@ manda uma mensagem em nome do mod, por exemplo `Painel: o dono apertou "Aprovar 
 Próximo passo: planejar (Planejar OpenSpec). Siga o flow.` Confira `flow status` e siga, sem
 esperar o dono escrever. Se o próximo passo também é do dono, ou o flow acabou, nada chega.
 
+**Com "Seguir o flow sem clique" ligada** (opção do cartão "Este projeto", painel ⚙️). Quando
+uma filha da change termina o turno, o painel manda: `Painel: a sessão local_… terminou o
+turno. Confira no flow status e siga o flow.` A mensagem leva só o id da sessão, nunca o
+título. Essa mensagem é turno do dono, então nela vale o `user_asked`. Confira
+`flow status` e abra o próximo passo ou a próxima fase. Se três avisos chegam sem o flow
+andar, o painel para de avisar e diz ao dono que o flow parece parado. Você pode terminar o turno com
+`ScheduleWakeup` para esperar o CI, mas o tick não abre sessão (propõe cartão, como hoje); o
+próximo aviso do painel refaz a corrente. O aviso pode chegar junto com o
+`<side-sessions-event>`: o segundo a chegar termina sem trabalho. Com a opção desligada, vale
+o texto acima.
+
+**Começando uma change nova numa coordenação que já conduziu outra.** Antes do `flow start`,
+arquive as filhas não arquivadas da change encerrada (com os portões passados). O app arrasta
+as filhas aninhadas quando a coordenação muda de grupo, e elas voltariam misturadas. O
+`flow start` avisa quantas sobraram.
+
 **Escalada:** depois de 3 tentativas num passo, o mod passa a decisão ao dono
 ("tentar de novo" ou "encerrar"). Não tente de novo por conta própria; leve o
 diagnóstico pronto ao dono.
@@ -208,6 +224,8 @@ diagnóstico pronto ao dono.
    e, se precisar de uma sessão, propõe o cartão (§ 2); não abre sessão. Sem fase em
    voo e esperando um passo do dono, o painel acorda você no clique; mesmo assim termine o
    turno com `ScheduleWakeup` longo (1200 s ou mais) e confira `flow status` quando disparar.
+   Com "Seguir o flow sem clique" ligada, o painel também acorda você a cada fim de turno de
+   uma filha (§ 2); esse aviso é turno do dono e permite abrir a próxima sessão com `user_asked`.
 3. **Ledger.** `<changeRoot>/orchestration.md` (fase, ícone, sessão, branch, estado,
    próximo passo) atualizado a cada transição, para qualquer sessão retomar.
 4. **Painel.** Publique com `plano` logo após montar as ondas e a cada transição:

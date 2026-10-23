@@ -137,6 +137,41 @@ export async function recordLevel($: EngineInterface, root: string, level: Activ
   await $.fs.write(`${await registryDir($)}/activation.json`, `${JSON.stringify(next, null, 2)}\n`)
 }
 
+type AutowakeRecords = Record<string, { on: boolean; at: number }>
+
+/**
+ * "Seguir o flow sem clique", by the main checkout's path, in `autowake.json` of the registry folder: local to the
+ * machine and out of the model's reach, like the activation's record. Here the safe side is off: an absent file, a
+ * file that cannot be read or parsed, or an entry that is not `on: true` all read as off.
+ */
+export async function readAutowake($: EngineInterface): Promise<boolean> {
+  try {
+    const path = `${await registryDir($)}/autowake.json`
+    if (!(await $.fs.exists(path))) return false
+    const parsed: unknown = JSON.parse(await $.fs.read(path))
+    const entry: unknown = isRecord(parsed) ? parsed[(await projectRoot($)).root] : undefined
+    return isRecord(entry) && entry.on === true
+  } catch {
+    return false
+  }
+}
+
+/** Turns the option on or off for this repository; the other repositories' entries stay, a broken file is replaced. */
+export async function writeAutowake($: EngineInterface, on: boolean): Promise<void> {
+  const path = `${await registryDir($)}/autowake.json`
+  const { root } = await projectRoot($)
+  let records: AutowakeRecords = {}
+  try {
+    const parsed: unknown = (await $.fs.exists(path)) ? JSON.parse(await $.fs.read(path)) : {}
+    if (isRecord(parsed)) records = parsed as AutowakeRecords
+  } catch {
+    // a broken record is the panel's to replace
+  }
+  const { [root]: _old, ...others } = records
+  const next = on ? { ...others, [root]: { on: true, at: Date.now() } } : others
+  await $.fs.write(path, `${JSON.stringify(next, null, 2)}\n`)
+}
+
 /** The file's text; `undefined` only when it is absent. A read that fails throws: it is not "absent". */
 async function readSettings($: EngineInterface, path: string): Promise<string | undefined> {
   return (await $.fs.exists(path)) ? await $.fs.read(path) : undefined
