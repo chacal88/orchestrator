@@ -99,7 +99,8 @@ import { bandSummary, parseEvents, stepTimes } from './glance'
 import { DEFAULT_LANGUAGES, contentRule, uiText } from './i18n'
 import type { UiText } from './i18n'
 import { renderBand, renderPane } from './pane'
-import { readActivation, registryDir } from './activation'
+import { readActivation, readAutowake, registryDir } from './activation'
+import { STOP_AS_USER, childStops, eligibleChildren, sessionTitle, stopPrompt } from './wake'
 import { WORKFLOWS_PANE, drawWorkflows, startWorkflowsLoad, toggleWorkflowsPane } from './workflows-pane'
 import { findAgent, loadConfig as loadProjectConfig, loadFlows } from './flow-files'
 import { firstSite, issueUrl, jiraKeys, moveFor, parseIssue, parseTransitions, wishes } from './jira'
@@ -157,6 +158,8 @@ const ACTIVITY_TTL_MS = 7 * 24 * 60 * 60 * 1000
 const PANE_OPEN = { plugin: 'orquestrador', key: 'paneOpen' } as const
 const REMINDED = { plugin: 'orquestrador', key: 'reminded' } as const
 const RUNNING = { plugin: 'orquestrador', key: 'running' } as const
+const AUTOWAKE_SEEN = { plugin: 'orquestrador', key: 'autowake-seen' } as const
+const AUTOWAKE_PENDING = { plugin: 'orquestrador', key: 'autowake-pending' } as const
 const GRILL_DRAFTS = { plugin: 'orquestrador', key: 'grillDrafts' } as const
 const START_SESSION = 'mcp__ccd_session__start_session'
 const TRANSITION_SUFFIX = '__transitionJiraIssue'
@@ -605,6 +608,7 @@ const refresh = async ($: EngineInterface): Promise<void> => {
   } catch (error) {
     problems.push(describeError('sessões', error))
   }
+  await wakeCoordination($, cwd, run, sessions).catch(error => $.ui.log(`orquestrador: ${describeError('aviso', error)}`))
 
   const openspec =
     run === undefined
@@ -662,6 +666,44 @@ const refreshQuietly = async ($: EngineInterface): Promise<void> => {
   } catch (error) {
     $.ui.log(`orquestrador: ${describeError('refresh', error)}`)
   }
+}
+
+/**
+ * "Seguir o flow sem clique": when a child of the flow this session coordinates ends its turn, tells the
+ * coordination with a prompt of its own, which the app takes as the owner's turn. Only with the clone active,
+ * the owner's option on, a flow `running` and this session its `coordinatorSession` (the mod of a child in the
+ * same folder stays quiet). While the coordination works, the stops wait and go in one prompt once it stops.
+ * With the option off nothing is watched, and what was kept goes, so turning it on later tells no old stop.
+ */
+const wakeCoordination = async (
+  $: EngineInterface,
+  root: string,
+  run: OrchestrationRun | undefined,
+  { self, children }: { self: SessionCard | undefined; children: SessionCard[] },
+): Promise<void> => {
+  if ((await readActivation($).catch(() => undefined))?.level === undefined) return
+  if (!(await readAutowake($))) {
+    const [seen, pending] = await Promise.all([$.state.get(AUTOWAKE_SEEN), $.state.get(AUTOWAKE_PENDING)])
+    if (seen.value != null) await $.state.set(AUTOWAKE_SEEN, null)
+    if (pending.value != null) await $.state.set(AUTOWAKE_PENDING, null)
+    return
+  }
+  if (self === undefined) return
+  const flow = await currentFlow($, root)
+  if (flow === undefined || flow.coordinatorSession !== self.sessionId) return
+  const plan = run?.change === flow.change ? run : undefined
+  const { value: seen } = await $.state.get(AUTOWAKE_SEEN)
+  const looked = childStops(seen ?? {}, eligibleChildren(plan, self.sessionId, children), await $.clock.now())
+  const { value: before } = await $.state.get(AUTOWAKE_PENDING)
+  const pending = [...new Set([...(before ?? []), ...looked.stopped.map(sessionTitle)])]
+  await $.state.set(AUTOWAKE_SEEN, asJson(looked.seen))
+  if (self.isRunning || pending.length === 0) {
+    if (pending.length !== (before ?? []).length) await $.state.set(AUTOWAKE_PENDING, pending)
+    return
+  }
+  // kept clear before the prompt goes: a refresh that overlaps this one has nothing left to tell
+  await $.state.set(AUTOWAKE_PENDING, null)
+  void $.prompt.submit({ text: stopPrompt(pending), ...(STOP_AS_USER ? { asUser: true as const } : {}) }).catch(error => $.ui.log(`orquestrador: ${describeError('aviso', error)}`))
 }
 
 /**

@@ -207,3 +207,48 @@ test('5.1 a mark the panel did not write is warned in the card, counts as "barra
   expect(await ui.find({ key: 'act-confirm-level' })).toBeUndefined()
   await ui.unmount()
 })
+
+test('2.4 "Seguir o flow sem clique": hidden in an inactive clone, off by default when active, and the button writes autowake.json', async ($, on) => {
+  const w = world(on)
+  const AUTOWAKE = `/h/.claude/${'orquestrador'}/autowake.json`
+  const ui = await mount($)
+  expect(await ui.find({ key: 'autowake' })).toBeUndefined()
+
+  await ui.press({ key: 'act-open' })
+  await ui.press({ key: 'act-confirm-go' })
+  await settle()
+  expect(await ui.find(text(/^Seguir o flow sem clique$/))).toBeDefined()
+  expect(await ui.find(text(/^desligada$/))).toBeDefined()
+  expect((await ui.find({ key: 'autowake-toggle' }))?.text).toBe('Ligar')
+  expect(await ui.find(text(/^Ligada, o painel avisa a coordenação cada vez que uma sessão do flow termina\. Assim ela abre as próximas sessões em seu nome, sem cartão para clicar\. Fica só nesta máquina\.$/))).toBeDefined()
+  expect(w.disk.has(AUTOWAKE)).toBe(false)
+
+  await ui.press({ key: 'autowake-toggle' })
+  await settle()
+  expect(json(w, AUTOWAKE)).toMatchObject({ '/w': { on: true } })
+  expect(await ui.find(text(/^ligada$/))).toBeDefined()
+  expect((await ui.find({ key: 'autowake-toggle' }))?.text).toBe('Desligar')
+
+  await ui.press({ key: 'autowake-toggle' })
+  await settle()
+  expect(json(w, AUTOWAKE)).toEqual({})
+  expect((await ui.find({ key: 'autowake-toggle' }))?.text).toBe('Ligar')
+
+  // deactivating the clone hides it again
+  await ui.press({ key: 'act-off' })
+  await settle()
+  expect(await ui.find({ key: 'autowake' })).toBeUndefined()
+  await ui.unmount()
+})
+
+test('2.4 in English the option reads "Follow the flow without clicking"', async ($, on) => {
+  world(on).disk.set(CONFIG, JSON.stringify({ language: { ui: 'en', content: 'en' } }))
+  const ui = await mount($)
+  await ui.press({ key: 'act-open' })
+  await ui.press({ key: 'act-confirm-go' })
+  await settle()
+  expect(await ui.find(text(/^Follow the flow without clicking$/))).toBeDefined()
+  expect((await ui.find({ key: 'autowake-toggle' }))?.text).toBe('Turn on')
+  expect(await ui.find(text(/opens the next sessions on your behalf/))).toBeDefined()
+  await ui.unmount()
+})

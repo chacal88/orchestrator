@@ -27,7 +27,7 @@ import type {
   WorkflowDraft,
   WorkflowForms,
 } from '../types'
-import { LEVELS, readActivation, writeActivation } from './activation'
+import { LEVELS, readActivation, readAutowake, writeActivation, writeAutowake } from './activation'
 import { findAgent, listAgents, loadConfig, loadFlows } from './flow-files'
 import type { AgentInfo } from './flow-files'
 import { DEFAULT_FLOWS, defaultFlows } from './flows/index'
@@ -162,6 +162,8 @@ export type ConfigView = {
   states: WorkflowState[]
   /** This clone's activation, read from its settings.local.json: the level (none: inactive), a broken file, the confirmation open. */
   activation: { level: ActivationLevel | undefined; invalid: boolean; tampered: boolean; ask: ActivationAsk | null }
+  /** "Seguir o flow sem clique", from the mod's own record on this machine (`autowake.json`); absent is off. */
+  autowake?: boolean
 }
 
 export type WorkflowsView = {
@@ -220,6 +222,8 @@ export type WorkflowsActions = {
   /** "Trocar para …" on an active clone. */
   actSwitch: (level: ActivationLevel) => () => void
   actOff: () => void
+  /** "Seguir o flow sem clique": turns the option on or off on this machine. */
+  autowake: (on: boolean) => () => void
 }
 
 /** A step as the pane reads it: a flow's, or a draft's raw one. */
@@ -1123,6 +1127,20 @@ export const renderWorkflows = (els: WorkflowsElements, view: WorkflowsView, act
         </Box>
       </Box>
     )
+    /** "Seguir o flow sem clique": shown only with the clone active, off until the owner turns it on. */
+    const autowakeRow = (on: boolean) => {
+      const W = A.autowake
+      return (
+        <Box key="autowake" flexDirection="column" minWidth={0}>
+          <Box flexDirection="row" alignItems="center" columnGap={1} flexWrap="wrap" minWidth={0}>
+            <Text size="footnote" weight="semibold">{W.label}</Text>
+            {pill(on ? W.on : W.off, on ? TAG_BLUE : TAG_GRAY)}
+            <Button key="autowake-toggle" onPress={actions.autowake(!on)}>{on ? W.turnOff : W.turnOn}</Button>
+          </Box>
+          <Text key="autowake-help" size="caption" color={MUTED} wrap="wrap">{W.help}</Text>
+        </Box>
+      )
+    }
     const other: ActivationLevel = level === 'lembrar' ? 'barrar' : 'lembrar'
     const levelOptions = LEVELS.map(l => ({ value: l, label: A.options[l] ?? l }))
     /** The confirmation of "Ativar neste clone": the level, and what will be written. */
@@ -1185,6 +1203,7 @@ export const renderWorkflows = (els: WorkflowsElements, view: WorkflowsView, act
                 ]),
           )}
           {level === undefined ? [] : <Text key="act-off-help" size="caption" color={MUTED} wrap="wrap">{A.deactivateHelp}</Text>}
+          {level === undefined ? [] : autowakeRow(c.autowake === true)}
           {level === undefined ? [] : <Text key="act-brake" size="caption" color={MUTED} wrap="wrap">{A.brake}</Text>}
         </Box>
         {ask === null || level !== undefined ? [] : confirm(ask)}
@@ -1313,6 +1332,7 @@ export async function drawWorkflows(
     $.state.get(ACT),
   ])
   const activation = await readActivation($)
+  const autowake = await readAutowake($)
   // what an earlier load of the code left in the state is set aside, never offered to save
   const draft = { value: kept.value != null && kept.value.load === load ? kept.value : null }
   const stale = kept.value != null && draft.value === null ? kept.value : null
@@ -1358,6 +1378,7 @@ export async function drawWorkflows(
       ask: asked,
       states: entries.map(e => workflowState(e.flow, project)),
       activation: { level: activation.level, invalid: activation.invalid, tampered: activation.tampered, ask: actAsk.value ?? null },
+      autowake,
     },
   }
 
@@ -1557,6 +1578,9 @@ export async function drawWorkflows(
     actOff: () => {
       void setActivation($, t, null, 'off').catch(fail('save'))
     },
+    autowake: on => () => {
+      void setAutowake($, t, on).catch(fail('save'))
+    },
   })
 }
 
@@ -1653,6 +1677,15 @@ async function setActivation($: EngineInterface, t: WorkflowsText, level: Activa
   }
   const named = level === null ? '' : (A.level[level] ?? level)
   await say(done === 'off' ? A.done.off : done === 'on' ? A.done.on(named) : A.done.switched(named))
+}
+
+/** Turns "Seguir o flow sem clique" on or off for this repository, on this machine, and says so. */
+async function setAutowake($: EngineInterface, t: WorkflowsText, on: boolean): Promise<void> {
+  const W = t.project.activation.autowake
+  await writeAutowake($, on)
+  const text = on ? W.done.on : W.done.off
+  await noticeOf($, text)
+  $.ui.toast(text)
 }
 
 const idOf = (raw: unknown): unknown => (raw as { id?: unknown } | null)?.id

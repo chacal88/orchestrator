@@ -47,29 +47,29 @@ Fase de código do mod. Vem depois da fase 1, porque mexe nos mesmos `register.t
 os mesmos do flow `rapido`. Arquivos: `orquestrador/hooks/wake.ts` (novo), `register.tsx`, `activation.ts`,
 `workflows-pane.tsx`, `i18n-workflows.ts` e os testes. Não mexe nos arquivos da fase 3.
 
-- [ ] 2.1 Registro da opção em `activation.ts` (ou num `autowake.ts` vizinho, se ficar mais limpo):
+- [x] 2.1 Registro da opção em `activation.ts` (ou num `autowake.ts` vizinho, se ficar mais limpo):
       `readAutowake($)` e `writeAutowake($, on)` em `~/.claude/orquestrador/autowake.json`, por `projectRoot`, no
       padrão de `recordLevel`/`recordedLevel`. Arquivo ausente ou ilegível vale como desligado. Verificação: testes em
       `activation.test.ts` para ausente, ligado, desligado e JSON quebrado (desligado) — cx: simple
-- [ ] 2.2 `hooks/wake.ts`, puro: `eligibleChildren(run, self, children)` (não arquivada, `startedBy` da coordenação ou
+- [x] 2.2 `hooks/wake.ts`, puro: `eligibleChildren(run, self, children)` (não arquivada, `startedBy` da coordenação ou
       fase do plano via `phaseViews`, não é a própria coordenação), `childStops(seen, rows, now)` (primeira vista só
       grava a linha; parada = `isRunning` era `true` ou `lastActivityAt` mudou, e agora `false`; `told` evita repetir) e
       `stopPrompt(titles)` com os dois textos do `design.md`. Verificação: `wake.test.ts` cobre primeira vista,
       running→parada, turno curto por `lastActivityAt`, a mesma parada duas vezes, arquivada, fora do plano e os
       textos de uma e de várias sessões — cx: medium
-- [ ] 2.3 `register.tsx`: no `refresh`, depois de `loadSessions`, com o clone ativo, a opção ligada, o flow
+- [x] 2.3 `register.tsx`: no `refresh`, depois de `loadSessions`, com o clone ativo, a opção ligada, o flow
       `running` e `self.sessionId === state.coordinatorSession`, roda `childStops` com `seen` do `$.state`
       (`autowake-seen`). Se a coordenação está trabalhando (`self.isRunning`), junta os títulos em `autowake-pending`;
       parada, manda um `$.prompt.submit({ text: stopPrompt(...) })` só, sem `asUser`, e limpa o pendente. Opção
       desligada não lê nem grava `seen`. Falha aqui vai para `$.ui.log`, nunca derruba o refresh. Verificação: tarefa
       2.5 — cx: medium
-- [ ] 2.4 Painel ⚙️ (`workflows-pane.tsx`), cartão "Este projeto", só com o clone ativo: linha "Seguir o flow sem
+- [x] 2.4 Painel ⚙️ (`workflows-pane.tsx`), cartão "Este projeto", só com o clone ativo: linha "Seguir o flow sem
       clique" com o estado e um botão "Ligar"/"Desligar", e o texto de ajuda, por exemplo: "Ligada, o painel avisa a
       coordenação cada vez que uma sessão do flow termina. Assim ela abre as próximas sessões em seu nome, sem cartão
       para clicar. Fica só nesta máquina." Textos em pt-BR e en em `i18n-workflows.ts`. Verificação: teste em
       `project-pane.test.ts` (ou `activation-pane.test.ts`) mostra a opção desligada por padrão, escondida sem
       ativação, e que o botão grava `autowake.json` — cx: simple
-- [ ] 2.5 Testes de harness num arquivo novo, `orquestrador/tests/autowake-harness.test.ts`, no molde de
+- [x] 2.5 Testes de harness num arquivo novo, `orquestrador/tests/autowake-harness.test.ts`, no molde de
       `flow-harness.test.ts` (mundo em memória, `prompts` capturados), avançando o relógio entre dois refreshes e
       trocando a resposta de `list_sessions`:
       - filha termina com a opção ligada → um aviso com o título;
@@ -80,11 +80,12 @@ os mesmos do flow `rapido`. Arquivos: `orquestrador/hooks/wake.ts` (novo), `regi
       - coordenação trabalhando → nenhum; no refresh seguinte, parada → um aviso com as duas filhas que pararam.
 
       Verificação: `claude plugin test orquestrador` sai com 0 — cx: medium
-- [ ] 2.6 Evidência no app real (`changes/acorda-coordenacao/evidence.md`): com a opção ligada, uma filha termina, o
-      aviso chega à coordenação e ela abre a sessão seguinte com `user_asked` sem cartão. Registrar também o que o
-      `$.prompt.submit` faz com a sessão ocupada, se der para ver. Se o app recusar o `user_asked` depois do aviso, trocar a
-      mensagem para `asUser: true` com o texto do `design.md` e repetir. Verificação: o trecho na evidência com o que
-      foi visto — cx: simple
+- [x] 2.6 Roteiro de verificação no app real, a rodar depois do deploy da 0.13.0. O app roda o mod instalado pelo
+      marketplace (0.12.3), não esta branch, e a instalação do dono não é mexida; por isso o aviso não pode ser visto ao
+      vivo antes do lançamento. O roteiro fica no `evidence.md` (fase 2): ligar a opção, uma filha termina, o aviso
+      chega, a coordenação abre a próxima com `user_asked` sem cartão; o que observar com a coordenação ocupada; e o
+      plano B com `asUser: true` (`STOP_AS_USER` em `hooks/wake.ts`). Verificação: a seção "Roteiro no app real" no
+      `evidence.md` — cx: simple
 
 ## 3. Skill, README e versão
 
