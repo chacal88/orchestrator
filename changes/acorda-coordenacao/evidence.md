@@ -16,3 +16,5 @@
 - 1.6: `orquestrador/tests/grupos-harness.test.ts`, 4 testes.
 - Portões: `claude plugin test orquestrador` saiu com 0 (375 pass, 0 fail, 31 arquivos); `tsc` (typescript 5.6.3, tipos do engine 2.1.308) saiu com 0.
 
+
+- Portão de testes rodado de novo, sozinho, depois do fim da fase 3: `claude plugin test orquestrador` saiu com 0 (375 pass, 0 fail, 31 arquivos).
