@@ -161,6 +161,26 @@ describe('the engine', () => {
     expect(ok(ownerPress(third, 'planejar', 'encerrar', 20)).state.status).toBe('aborted')
   })
 
+  test('a session step tells the coordination to open a session for it, never to do it there', () => {
+    const text = describeFlow(start(rapido))
+    expect(text).toMatch(/start_session/)
+    expect(text).toMatch(/"user_asked"/)
+    expect(text).toMatch(/do not do the step in this session/)
+    expect(text).toMatch(/propose it as a card/)
+    expect(text).toMatch(/"own_initiative"/)
+    expect(text).toMatch(/wake_when_done/)
+    expect(text).not.toMatch(/Do the step/)
+  })
+
+  test('the loop step says one session per phase', () => {
+    const atExecutar = walk(start(rapido), [
+      ['planejar', 'pronto', 'session'],
+      ['validar', 'passou', 'automatic'],
+    ])
+    expect(atExecutar.current).toBe('executar')
+    expect(describeFlow(atExecutar)).toMatch(/one session per phase/)
+  })
+
   test('QA asking for changes goes back to the phases and forgets what came after', () => {
     const atQa = walk(start(rapido), [
       ['planejar', 'pronto', 'session'],

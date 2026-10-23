@@ -33,7 +33,7 @@ Marque só com evidência real; o que não tem evidência fica aberto.
 
 ## Outcome que reporta
 
-Mensagem ao coordenador: `FASE <id>: pronta — <resumo, branch, último commit>` ou `FASE <id>: bloqueada — preciso de <X>`. Quem fecha a fase é o coordenador, com `flow close`.
+Mensagem final do turno (sem `SendMessage`; a coordenação é acordada ao fim do turno): `FASE <id>: pronta — <resumo, branch, último commit>` ou `FASE <id>: bloqueada — preciso de <X>`. Quem fecha a fase é o coordenador, com `flow close`.
 
 ## O que nunca faz
 

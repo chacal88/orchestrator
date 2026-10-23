@@ -32,6 +32,10 @@ Três coisas a empurram para isso:
   `initiation "user_asked"`) com o agente, o modelo e o esforço do passo, proíbe fazer o passo na coordenadora e manda
   reportar o resultado com `report` quando a sessão responder. O texto do passo `loop` lembra que é uma sessão por fase.
   As mensagens continuam em inglês, no estilo do arquivo.
+- **Por que o aviso é o fim do turno.** O app só aceita `user_asked` no turno que vem do próprio dono (ou no
+  `<side-sessions-event>` logo depois dele). O "FASE …: pronta" por `SendMessage` acordava a coordenação num turno de
+  mensagem, onde ela não consegue abrir a próxima sessão e acabava fazendo o trabalho sozinha. Com `wake_when_done`
+  o app a acorda quando a filha termina o turno.
 - **Testes.** Novos testes travam as frases de passo `session` e de `loop`. Nenhum teste atual casa "Do the step".
 - **Versão.** 0.12.3, em `orquestrador/.claude-plugin/plugin.json`, que é o único lugar onde a versão aparece.
 
@@ -44,5 +48,10 @@ Três coisas a empurram para isso:
    subagente. Diz também o que fica com a coordenadora e onde trabalha cada filha.
 4. Os §§ 2, 3 e 6 da skill não mandam mais a coordenadora fazer o trabalho de um passo de sessão.
 5. A versão é 0.12.3, `claude plugin test orquestrador` passa e o `tsc` passa.
+6. As filhas avisam terminando o turno (`FASE <id>: pronta/bloqueada — …`), sem `SendMessage`, e a coordenação as abre com
+   `wake_when_done: true`. Se o `start_session` for recusado (turno de mensagem de outra sessão ou de evento
+   automático, inclusive o tick do `ScheduleWakeup`), a coordenação propõe um cartão `own_initiative`, avisa o dono
+   numa linha e espera; nunca faz o passo no lugar da filha. O `flow status` do passo `session` diz isso, e um teste
+   trava a frase.
 
 Fora do escopo: o mod não recusa a coordenadora que fizer o passo sozinha. Esta change só corrige o texto.
