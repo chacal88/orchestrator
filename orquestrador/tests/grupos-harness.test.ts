@@ -31,6 +31,10 @@ type World = {
   onGroups?: () => void
   /** Runs once the given file was read, with the text read already in hand: a write between a read and its write. */
   afterRead?: (path: string) => void
+  /** Reads held by `holdRead`, each on the read of its path after `skip` others. */
+  held: { path: string; skip: number; reached: () => void; gate: Promise<void> }[]
+  /** The next write of this path throws, once. */
+  failWrite?: string
 }
 
 const row = (sessionId: string, groupId: string | undefined, extra: Partial<Row> = {}): Row => ({
@@ -43,7 +47,7 @@ const row = (sessionId: string, groupId: string | undefined, extra: Partial<Row>
  */
 const world = (on: On, rows: Row[], groups: World['groups']): World => {
   mock.store(on)
-  const w: World = { disk: new Map([ACTIVE]), rows: [{ sessionId: 'local_ee', cwd: '/w', title: 'Coordenação', groupId: 'cg-A' }, ...rows], groups, groupsFail: false, listFail: false, calls: [] }
+  const w: World = { disk: new Map([ACTIVE]), rows: [{ sessionId: 'local_ee', cwd: '/w', title: 'Coordenação', groupId: 'cg-A' }, ...rows], groups, groupsFail: false, listFail: false, calls: [], held: [] }
   on('env.get', () => ({ value: '/h' }))
   let now = 1_000
   on('clock.now', () => ({ value: (now += 10) }))
@@ -53,9 +57,20 @@ const world = (on: On, rows: Row[], groups: World['groups']): World => {
   on('fs.read', ($, e) => {
     const value = w.disk.get(e.path) ?? ''
     w.afterRead?.(e.path)
+    const held = w.held.find(h => h.path === e.path)
+    if (held !== undefined && held.skip-- === 0) {
+      w.held.splice(w.held.indexOf(held), 1)
+      // the text is read already; the read only answers once the test lets it go
+      held.reached()
+      return held.gate.then(() => ({ value }))
+    }
     return { value }
   })
   on('fs.write', ($, e) => {
+    if (w.failWrite === e.path) {
+      w.failWrite = undefined
+      throw new Error('disco cheio')
+    }
     w.disk.set(e.path, e.text)
     return { value: undefined }
   })
@@ -97,6 +112,24 @@ const world = (on: On, rows: Row[], groups: World['groups']): World => {
   on('ui.log', () => ({ value: undefined }) as never)
   on('ui.toast', () => ({ value: undefined }) as never)
   return w
+}
+
+/**
+ * Holds a read of `path`, after `skip` reads of it: the read takes the text on disk now and answers it only
+ * once `release` runs, so whatever the mod writes after that read falls in the window the test opens.
+ */
+const holdRead = (w: World, path: string, skip = 0) => {
+  let release = () => {}
+  let reached = () => {}
+  const gate = new Promise<void>(resolve => (release = resolve))
+  const at = new Promise<void>(resolve => (reached = resolve))
+  w.held.push({ path, skip, reached, gate })
+  return { reached: at, release }
+}
+
+/** A few turns of the event loop: enough for a hook to run up to where it waits. */
+const settle = async () => {
+  for (let i = 0; i < 20; i++) await new Promise(resolve => (globalThis as unknown as { setTimeout: (f: () => void, ms: number) => void }).setTimeout(() => resolve(undefined), 0))
 }
 
 const flow = ($: Engine, input: Record<string, unknown>) =>
@@ -251,4 +284,53 @@ test('a new flow of a change takes nothing from the flow of the same change that
   await flow($, { action: 'start', change: 'b', flow: 'rapido' })
   expect(saved(w, 'b').sessions).toEqual([])
   expect(saved(w, 'b').groupId).toBeUndefined()
+})
+
+test('a session adopted while the report waits between its reread and its write is kept, and so is the report', async ($, on) => {
+  const w = world(on, [], [])
+  await flow($, { action: 'start', change: 'b', flow: 'rapido' })
+  w.rows.push(row('local_b1', 'cg-A'))
+  // the report reads the flow, then saveFlow rereads it (the 2nd read): that reread waits
+  const hold = holdRead(w, `${BASE}/flows/b.json`, 1)
+  const reporting = flow($, { action: 'report', step: 'planejar', outcome: 'pronto' })
+  await hold.reached
+  // meanwhile a start_session adopts local_b1 and groups it
+  const starting = startSession($)
+  await settle()
+  hold.release()
+  await Promise.all([reporting, starting])
+  expect(saved(w, 'b')).toMatchObject({ sessions: ['local_b1'], groupId: 'cg-B' })
+  expect(saved(w, 'b').records.planejar).toMatchObject({ outcome: 'pronto' })
+})
+
+test('two refusals logged at once both stay in the flow log', async ($, on) => {
+  const w = world(on, [], [])
+  await flow($, { action: 'start', change: 'b', flow: 'rapido' })
+  const log = `${BASE}/flows/b.ndjson`
+  const refusals = () => (w.disk.get(log) ?? '').split('\n').filter(line => /"kind":"refused"/.test(line))
+  // the first refusal reads the log and waits before it writes; the second one comes in that window
+  const hold = holdRead(w, log)
+  const first = flow($, { action: 'report', step: 'validar', outcome: 'passou' })
+  await hold.reached
+  const second = flow($, { action: 'report', step: 'executar', outcome: 'pronto' })
+  await settle()
+  hold.release()
+  const answers = await Promise.all([first, second])
+  expect(answers.map(a => a.isError)).toEqual([true, true])
+  expect(refusals().map(line => (JSON.parse(line) as { step: string }).step).sort()).toEqual(['executar', 'validar'])
+})
+
+test('a flow write that fails goes back to its caller and does not stop the next write', async ($, on) => {
+  const w = world(on, [], [])
+  await flow($, { action: 'start', change: 'b', flow: 'rapido' })
+  w.failWrite = `${BASE}/flows/b.json`
+  const failed = await flow($, { action: 'report', step: 'planejar', outcome: 'pronto' }).then(
+    reply => reply.isError === true,
+    () => true,
+  )
+  expect(failed).toBe(true)
+  expect(saved(w, 'b').current).toBe('planejar')
+
+  await flow($, { action: 'report', step: 'planejar', outcome: 'pronto' })
+  expect(saved(w, 'b').records.planejar).toMatchObject({ outcome: 'pronto' })
 })

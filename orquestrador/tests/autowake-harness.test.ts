@@ -328,6 +328,51 @@ test('after 3 stops told with the flow standing still, the mod stops telling and
   expect(w.prompts).toHaveLength(4)
 })
 
+/** The coordination opens a new child of the flow: a new row in the session list, adopted in the flow's `sessions`. */
+const openChild = (w: World, id: string) => {
+  w.rows.push(child(id))
+  const now = saved(w, 'b')
+  w.disk.set(`${BASE}/flows/b.json`, JSON.stringify({ ...now, sessions: [...(now.sessions ?? []), id] }))
+}
+
+test('a coordination that opens a new child on each stop while the flow stands still is told 10 times, then not at all, with one toast', async ($, on) => {
+  const w = world(on, [child('local_n1')])
+  optionOn(w)
+  await coordinate($, w)
+  for (let i = 1; i <= 12; i++) {
+    stop(w, `local_n${i}`)
+    await w.clock.advance(REFRESH_MS)
+    // each stop makes the coordination open one more child, and nothing else moves in the flow
+    openChild(w, `local_n${i + 1}`)
+    await w.clock.advance(REFRESH_MS)
+  }
+  expect(w.prompts.map(p => p.text)).toEqual(
+    Array.from({ length: 10 }, (_, i) => `Painel: a sessão local_n${i + 1} terminou o turno. Confira no flow status e siga o flow.`),
+  )
+  const stuck = w.toasts.filter(t => /parece parado/.test(t))
+  expect(stuck).toEqual(['Orquestrador: o flow de b parece parado: 10 avisos à coordenação sem o flow andar. Parei de avisar até o flow andar.'])
+})
+
+test('after the cap, a report that moves the flow makes the next stop be told again', async ($, on) => {
+  const w = world(on, [child('local_n1')])
+  optionOn(w)
+  await coordinate($, w)
+  for (let i = 1; i <= 11; i++) {
+    stop(w, `local_n${i}`)
+    await w.clock.advance(REFRESH_MS)
+    openChild(w, `local_n${i + 1}`)
+    await w.clock.advance(REFRESH_MS)
+  }
+  expect(w.prompts).toHaveLength(10)
+
+  await flow($, { action: 'report', step: 'planejar', outcome: 'pronto' })
+  stop(w, 'local_n12')
+  await w.clock.advance(REFRESH_MS)
+  expect(w.prompts).toHaveLength(11)
+  expect(w.prompts[10]!.text).toBe('Painel: a sessão local_n12 terminou o turno. Confira no flow status e siga o flow.')
+  expect(w.toasts.filter(t => /parece parado/.test(t))).toHaveLength(1)
+})
+
 test('with the clone inactive nothing is kept, so a stop from then is not told once it is active again', async ($, on) => {
   const w = world(on, [child('local_b1')])
   optionOn(w)

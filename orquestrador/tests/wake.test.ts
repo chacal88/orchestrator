@@ -106,14 +106,16 @@ describe('what the coordination reads', () => {
   })
 })
 
-test('the flow moves for the brake when its seq, its closed phases, its adopted sessions or its plan phases done move, not when the plan is only republished', () => {
+test('the flow moves for the brake when its seq, its closed phases or its plan phases done move, not when a session is adopted or the plan is only republished', () => {
   const flow = { seq: 4, closed: { '1': {} }, sessions: ['local_a'] }
   const base = flowProgress(flow, run)
   expect(flowProgress({ ...flow }, { ...run, updatedAt: 99 })).toBe(base)
   expect(flowProgress({ ...flow, seq: 5 }, run)).not.toBe(base)
   expect(flowProgress({ ...flow, closed: { '1': {}, '2': {} } }, run)).not.toBe(base)
-  expect(flowProgress({ ...flow, sessions: ['local_a', 'local_b'] }, run)).not.toBe(base)
+  // a new child adopted is not progress: a coordination opening one on each stop would never be braked
+  const adopted = { ...flow, sessions: ['local_a', 'local_b'] }
+  expect(flowProgress(adopted, run)).toBe(base)
   const done = { ...run, waves: run.waves.map(w => ({ ...w, phases: w.phases.map(p => ({ ...p, status: 'done' as const })) })) }
   expect(flowProgress(flow, done)).not.toBe(base)
-  expect(flowProgress({ seq: 4 }, undefined)).toBe('4|0|0|0')
+  expect(flowProgress({ seq: 4 }, undefined)).toBe('4|0|0')
 })

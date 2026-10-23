@@ -593,9 +593,10 @@ declare module 'claude-code' {
       'autowake-pending': string[] | null
       /**
        * "Seguir o flow sem clique", the loop brake: how far the flow was at the last stop told (`flowProgress`), the
-       * stops told per child since, and whether the owner was already warned that the flow seems stuck.
+       * stops told per child since, the stops told to the coordination since (`sent`, any child; absent in a value
+       * from before 0.13.1) and whether the owner was already warned that the flow seems stuck.
        */
-      'autowake-brake': { key: string; told: Record<string, number>; warned: boolean } | null
+      'autowake-brake': { key: string; told: Record<string, number>; sent?: number; warned: boolean } | null
       /** Workflows panel: the workflow open in the panel, by id. */
       wfSelected: string | null
       /** Workflows panel: the step whose details are open (an added step goes after it). */
