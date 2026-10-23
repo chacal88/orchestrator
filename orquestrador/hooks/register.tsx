@@ -163,6 +163,8 @@ const AUTOWAKE_PENDING = { plugin: 'orquestrador', key: 'autowake-pending' } as 
 const AUTOWAKE_BRAKE = { plugin: 'orquestrador', key: 'autowake-brake' } as const
 /** Stops of one child told while the flow does not move (`flowProgress`), before the mod stops telling that child. */
 const AUTOWAKE_MAX_SAME_CHILD = 3
+/** Stops told to the coordination while the flow does not move, any child, before the mod stops telling at all. */
+const AUTOWAKE_MAX_SAME_PROGRESS = 10
 const GRILL_DRAFTS = { plugin: 'orquestrador', key: 'grillDrafts' } as const
 const START_SESSION = 'mcp__ccd_session__start_session'
 const TRANSITION_SUFFIX = '__transitionJiraIssue'
@@ -734,19 +736,31 @@ const wakeOnce = async (
     return
   }
   await $.state.set(AUTOWAKE_PENDING, null)
-  // a brake against a loop: the same child told a few times while the flow does not move stops being told
+  // a brake against a loop: the same child told a few times while the flow does not move stops being told,
+  // and so does any child once the coordination was told too many times (a new child on each stop is a loop too)
   const { value: brake } = await $.state.get(AUTOWAKE_BRAKE)
   const key = flowProgress(flow, plan)
   const same = brake?.key === key ? brake : undefined
   const told = same?.told ?? {}
-  const fresh = pending.filter(id => (told[id] ?? 0) < AUTOWAKE_MAX_SAME_CHILD)
+  const sent = same?.sent ?? 0
+  const capped = sent >= AUTOWAKE_MAX_SAME_PROGRESS
+  const fresh = capped ? [] : pending.filter(id => (told[id] ?? 0) < AUTOWAKE_MAX_SAME_CHILD)
   const braked = pending.filter(id => !fresh.includes(id))
   const warned = same?.warned === true || braked.length > 0
-  await $.state.set(AUTOWAKE_BRAKE, { key, told: { ...told, ...Object.fromEntries(fresh.map(id => [id, (told[id] ?? 0) + 1])) }, warned })
+  await $.state.set(AUTOWAKE_BRAKE, {
+    key,
+    told: { ...told, ...Object.fromEntries(fresh.map(id => [id, (told[id] ?? 0) + 1])) },
+    // one stop told is one, however many children it names
+    sent: sent + (fresh.length > 0 ? 1 : 0),
+    warned,
+  })
   if (braked.length > 0 && same?.warned !== true) {
     $.ui.toast(
-      `Orquestrador: o flow de ${flow.change} parece parado: ${braked.join(', ')} terminou o turno mais de ${AUTOWAKE_MAX_SAME_CHILD} ` +
-        'vezes sem o flow andar. Parei de avisar a coordenação sobre essa sessão até o flow andar.',
+      capped
+        ? `Orquestrador: o flow de ${flow.change} parece parado: ${AUTOWAKE_MAX_SAME_PROGRESS} avisos à coordenação sem o flow andar. ` +
+            'Parei de avisar até o flow andar.'
+        : `Orquestrador: o flow de ${flow.change} parece parado: ${braked.join(', ')} terminou o turno mais de ${AUTOWAKE_MAX_SAME_CHILD} ` +
+            'vezes sem o flow andar. Parei de avisar a coordenação sobre essa sessão até o flow andar.',
     )
   }
   if (fresh.length === 0) return
@@ -838,18 +852,19 @@ const groupFamily = async ($: EngineInterface, change: string, started?: string)
  * What the grouping adds to the flow, merged into the flow as it is on disk now: the sidebar calls in
  * between may let a `flow report` write it, and the grouping only owns `sessions` and `groupId`.
  */
-const keepGrouping = async ($: EngineInterface, change: string, fresh: readonly string[], groupId: string | undefined): Promise<FlowState | undefined> => {
-  const now = await loadFlowState($, change)
-  if (now === undefined) return undefined
-  const sessions = [...new Set([...(now.sessions ?? []), ...fresh])]
-  const added = sessions.length !== (now.sessions ?? []).length
-  const regrouped = groupId !== undefined && now.groupId !== groupId
-  if (!added && !regrouped) return now
-  const merged: FlowState = { ...now, ...(added ? { sessions } : {}), ...(regrouped ? { groupId } : {}) }
-  // already merged with the disk, and its groupId is the new one: written as it is
-  await writeFlow($, merged, [])
-  return merged
-}
+const keepGrouping = ($: EngineInterface, change: string, fresh: readonly string[], groupId: string | undefined): Promise<FlowState | undefined> =>
+  inFlowQueue(async () => {
+    const now = await loadFlowState($, change)
+    if (now === undefined) return undefined
+    const sessions = [...new Set([...(now.sessions ?? []), ...fresh])]
+    const added = sessions.length !== (now.sessions ?? []).length
+    const regrouped = groupId !== undefined && now.groupId !== groupId
+    if (!added && !regrouped) return now
+    const merged: FlowState = { ...now, ...(added ? { sessions } : {}), ...(regrouped ? { groupId } : {}) }
+    // already merged with the disk, and its groupId is the new one: written as it is
+    await writeFlowNow($, merged, [])
+    return merged
+  })
 
 /** One grouping at a time: two start_session at once would both miss the group and create it twice. */
 let grouping: Promise<void> = Promise.resolve()
@@ -1318,20 +1333,34 @@ const allFlowStates = async ($: EngineInterface): Promise<FlowState[]> => {
 }
 
 /**
+ * One write of a flow's state or log at a time, the read before it included: a read and its write never
+ * let another write fall in between and be lost. What runs here never calls the queue again (it would wait
+ * on itself), so it writes with `writeFlowNow`. An error goes back to the caller and the next turn still runs.
+ */
+let flowWrites: Promise<unknown> = Promise.resolve()
+
+const inFlowQueue = <T,>(fn: () => Promise<T>): Promise<T> => {
+  const turn = flowWrites.then(fn)
+  flowWrites = turn.catch(() => undefined)
+  return turn
+}
+
+/**
  * Writes a flow read earlier, keeping what the grouping added to it on disk since (`sessions`, `groupId`):
  * a session adopted while a `flow report` or `close` worked is not lost. Only the grouping owns those two
  * fields, so the disk wins for `groupId`. A flow started anew (another `startedAt`) takes nothing from the old one.
  */
-const saveFlow = async ($: EngineInterface, state: FlowState, events: readonly FlowEvent[]): Promise<void> => {
-  const disk = await loadFlowState($, state.change)
-  if (disk === undefined || disk.startedAt !== state.startedAt) return writeFlow($, state, events)
-  const sessions = [...new Set([...(state.sessions ?? []), ...(disk.sessions ?? [])])]
-  const groupId = disk.groupId ?? state.groupId
-  await writeFlow($, { ...state, ...(state.sessions === undefined && disk.sessions === undefined ? {} : { sessions }), ...(groupId === undefined ? {} : { groupId }) }, events)
-}
+const saveFlow = ($: EngineInterface, state: FlowState, events: readonly FlowEvent[]): Promise<void> =>
+  inFlowQueue(async () => {
+    const disk = await loadFlowState($, state.change)
+    if (disk === undefined || disk.startedAt !== state.startedAt) return writeFlowNow($, state, events)
+    const sessions = [...new Set([...(state.sessions ?? []), ...(disk.sessions ?? [])])]
+    const groupId = disk.groupId ?? state.groupId
+    await writeFlowNow($, { ...state, ...(state.sessions === undefined && disk.sessions === undefined ? {} : { sessions }), ...(groupId === undefined ? {} : { groupId }) }, events)
+  })
 
-/** The state file and its append-only log, both written by the mod alone. */
-const writeFlow = async ($: EngineInterface, state: FlowState, events: readonly FlowEvent[]): Promise<void> => {
+/** The state file and its append-only log, both written by the mod alone. Only from inside `inFlowQueue`. */
+const writeFlowNow = async ($: EngineInterface, state: FlowState, events: readonly FlowEvent[]): Promise<void> => {
   await $.fs.write(await flowFile($, state.change, 'json'), JSON.stringify(state))
   await $.state.set(RUNNING, { root: '', at: 0, running: false }).catch(() => undefined)
   const log = await flowFile($, state.change, 'ndjson')
@@ -1341,9 +1370,11 @@ const writeFlow = async ($: EngineInterface, state: FlowState, events: readonly 
 
 const logFlowRefusal = async ($: EngineInterface, state: FlowState, step: string, by: FlowEvent['by'], note: string): Promise<void> => {
   const log = await flowFile($, state.change, 'ndjson')
-  const prior = (await readText($, log)) ?? ''
   const event: FlowEvent = { seq: state.seq, at: await $.clock.now(), kind: 'refused', step, by, note }
-  await $.fs.write(log, `${prior}${JSON.stringify(event)}\n`)
+  await inFlowQueue(async () => {
+    const prior = (await readText($, log)) ?? ''
+    await $.fs.write(log, `${prior}${JSON.stringify(event)}\n`)
+  })
 }
 
 /** In "lembrar" a refusal only warns: it still leaves a line in the flow's log and one the panel shows. */

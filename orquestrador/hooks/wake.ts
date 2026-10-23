@@ -24,16 +24,17 @@ export const eligibleChildren = <R extends SessionRow>(
 
 /**
  * How far the flow went, for the brake against a loop: its `seq` moves only on a report, but inside the
- * `executar` loop it stands still from phase to phase, so the phases closed in the flow, the sessions it
- * adopted and the phases done in its plan count too. The plan's `updatedAt` does not: republishing the
- * same plan is not progress.
+ * `executar` loop it stands still from phase to phase, so the phases closed in the flow and the phases done
+ * in its plan count too. The sessions it adopted do not: a coordination that opens a new child on each stop
+ * would move the key forever without the flow going anywhere. Nor does the plan's `updatedAt`: republishing
+ * the same plan is not progress.
  */
 export const flowProgress = (
-  flow: { seq: number; closed?: Record<string, unknown>; sessions?: readonly string[] },
+  flow: { seq: number; closed?: Record<string, unknown> },
   run: OrchestrationRun | undefined,
 ): string => {
   const done = (run?.waves ?? []).flatMap(wave => wave.phases).filter(phase => phase.status === 'done').length
-  return [flow.seq, Object.keys(flow.closed ?? {}).length, (flow.sessions ?? []).length, done].join('|')
+  return [flow.seq, Object.keys(flow.closed ?? {}).length, done].join('|')
 }
 
 /**
