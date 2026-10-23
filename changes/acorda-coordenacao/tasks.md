@@ -91,7 +91,7 @@ os mesmos do flow `rapido`. Arquivos: `orquestrador/hooks/wake.ts` (novo), `regi
 Pode correr em paralelo com as fases 1 e 2, porque mexe só em `orquestrador/skills/change-orchestrator/SKILL.md`,
 `README.md` e `orquestrador/.claude-plugin/plugin.json`. Portões: `claude plugin test orquestrador` e `tsc`.
 
-- [ ] 3.1 Skill: no bloco do start recusado e da corrente do `user_asked` (§ "Start recusado", perto da linha 73) e no
+- [x] 3.1 Skill: no bloco do start recusado e da corrente do `user_asked` (§ "Start recusado", perto da linha 73) e no
       § 5.2 "Puxar", um parágrafo "Com 'Seguir o flow sem clique' ligada": a mensagem `Painel: a sessão "…" terminou o
       turno. Siga o flow.` é turno do dono, então nele vale o `user_asked`; a coordenação confere `flow status` e abre o
       próximo passo ou fase; pode terminar o turno com `ScheduleWakeup` para esperar CI, sabendo que o tick não abre
@@ -102,8 +102,8 @@ Pode correr em paralelo com as fases 1 e 2, porque mexe só em `orquestrador/ski
       a coordenação muda de grupo; o `flow start` avisa quantas sobraram.
       Verificação: `grep -n "Seguir o flow sem clique" orquestrador/skills/change-orchestrator/SKILL.md` acha o
       parágrafo e `grep -n "arrasta"` acha a regra do início de change — cx: simple
-- [ ] 3.2 README: uma linha na lista de recursos sobre a opção "Seguir o flow sem clique" do cartão "Este projeto"
+- [x] 3.2 README: uma linha na lista de recursos sobre a opção "Seguir o flow sem clique" do cartão "Este projeto"
       (desligada por padrão, só nesta máquina, abre as sessões em nome do dono). Verificação: `grep -n "Seguir o flow sem
       clique" README.md` — cx: simple
-- [ ] 3.3 Versão 0.13.0 em `orquestrador/.claude-plugin/plugin.json`. Verificação: `claude plugin test orquestrador`
+- [x] 3.3 Versão 0.13.0 em `orquestrador/.claude-plugin/plugin.json`. Verificação: `claude plugin test orquestrador`
       e `tsc` saem com 0 — cx: simple

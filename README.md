@@ -27,6 +27,7 @@ Plugin para o Claude Code que orquestra uma change com várias sessões em paral
 - **Painel lateral (`/orquestrador`).** Mostra o andamento da change, o OpenSpec (proposta, tarefas e evidência), os gates do flow, o que precisa de você e as tarefas de cada fase com a sessão que as executa. Uma faixa acima do campo de mensagem resume o estado.
 - **Grill com respostas no painel.** As rodadas de perguntas viram critérios de aceite, e você responde cada pergunta num campo do próprio painel.
 - **Sessões em paralelo.** Cada fase roda numa sessão própria, com teto de 3 sessões vivas. As sessões entram sozinhas no grupo da change na barra lateral e são arquivadas quando a fase fecha.
+- **Seguir o flow sem clique.** Opção do cartão "Este projeto" no painel ⚙️. Desligada por padrão e só nesta máquina. Ligada, o painel avisa a coordenação cada vez que uma sessão do flow termina, e ela abre as próximas sessões em seu nome, sem cartão para clicar.
 - **Jira com o seu ok.** O painel avisa quando uma issue deve mudar de estado e só a move depois do seu clique.
 
 A skill `change-orchestrator`, que vem junto, ensina a sessão coordenadora a seguir o flow: ela pergunta ao mod qual é o próximo passo em vez de decidir sozinha.
