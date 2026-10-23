@@ -68,10 +68,10 @@ Volta do passo `tipos`: o `tsc` saiu com 2 (`tests/grupos-harness.test.ts(132,61
 Mesmos arquivos da fase 1; uma sessão. Portões: `testes` e `tipos` (o `tsc` com o tsconfig de hooks + types + tests e
 os tipos do engine, saída 0).
 
-- [ ] 2.1 `settle` em `tests/grupos-harness.test.ts` sem depender de `setTimeout` global sem tipo (no molde de
+- [x] 2.1 `settle` em `tests/grupos-harness.test.ts` sem depender de `setTimeout` global sem tipo (no molde de
       `tests/activation.test.ts:316`). Verificação: o `tsc` sai com 0 — cx: simple
-- [ ] 2.2 O evento `jira-moved` e a gravação do `savePrep` no `.ndjson` passam pelo `inFlowQueue` (sem reentrada).
+- [x] 2.2 O evento `jira-moved` e a gravação do `savePrep` no `.ndjson` passam pelo `inFlowQueue` (sem reentrada).
       Verificação: `grep -n "inFlowQueue" orquestrador/hooks/register.tsx` acha as duas portas novas; os testes
       existentes de Jira e do grill/mockup passam — cx: simple
-- [ ] 2.3 Evidência no `evidence.md` (seção "Fase 2") com a saída dos portões `testes` e `tipos`. Verificação: a seção
+- [x] 2.3 Evidência no `evidence.md` (seção "Fase 2") com a saída dos portões `testes` e `tipos`. Verificação: a seção
       preenchida — cx: simple

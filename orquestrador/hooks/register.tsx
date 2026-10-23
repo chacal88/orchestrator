@@ -574,10 +574,12 @@ const pressJiraMove = async ($: EngineInterface, change: string, key: string, tr
   const state = await loadFlowState($, change)
   if (state !== undefined) {
     const log = await flowFile($, change, 'ndjson')
-    const prior = (await readText($, log)) ?? ''
     const note = `${key}: "${issue.status ?? '?'}" → "${hit.to ?? hit.name}" (transição "${hit.name}"), pelo clique do dono`
     const event: FlowEvent = { seq: state.seq, at: await $.clock.now(), kind: 'jira-moved', step: state.current, by: 'owner', note }
-    await $.fs.write(log, `${prior}${JSON.stringify(event)}\n`)
+    await inFlowQueue(async () => {
+      const prior = (await readText($, log)) ?? ''
+      await $.fs.write(log, `${prior}${JSON.stringify(event)}\n`)
+    })
   }
   $.ui.toast(t.jira.moved(key, hit.to ?? hit.name))
   await refreshQuietly($)
@@ -1831,8 +1833,11 @@ const savePrep = async (
   await $.fs.write(await prepFile($, state.change), JSON.stringify(prep))
   if (event !== undefined) {
     const log = await flowFile($, state.change, 'ndjson')
-    const prior = (await readText($, log)) ?? ''
-    await $.fs.write(log, `${prior}${JSON.stringify({ seq: state.seq, at: await $.clock.now(), ...event })}\n`)
+    const line = `${JSON.stringify({ seq: state.seq, at: await $.clock.now(), ...event })}\n`
+    await inFlowQueue(async () => {
+      const prior = (await readText($, log)) ?? ''
+      await $.fs.write(log, prior + line)
+    })
   }
   if (event?.kind === 'round' && state.changePath !== undefined) {
     const home = (await $.env.get('HOME')) ?? ''

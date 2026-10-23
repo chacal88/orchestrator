@@ -124,3 +124,32 @@ Com o código desta fase, os três passam (seção Testes). O `register.tsx` foi
   gravar o flow de fora da fila chama `saveFlow`.
 - **O `logFlowRefusal` lê o relógio antes de entrar na fila.** Só a leitura e a regravação do log ficam na mesma vez
   da fila; o evento já está montado quando a vez chega.
+
+# Fase 2 — tipos do teste e as duas gravações restantes do log
+
+Tarefas 2.1 a 2.3, na branch `claude/nostalgic-curran-5304fc`, a partir de ec318ca.
+
+- 2.1: `settle` em `tests/grupos-harness.test.ts` usa o `setTimeout` pela `globalThis` com cast, no molde de
+  `tests/activation.test.ts:316`; o `tsc` não acha mais o nome.
+- 2.2: o evento `jira-moved` (`register.tsx` ~579) e a gravação do log no `savePrep` (~1837) leem e regravam o
+  `.ndjson` dentro de `inFlowQueue`; o evento é montado (relógio) antes de entrar na fila. Nenhum dos dois roda dentro
+  da fila, então não há reentrada. `grep -n "inFlowQueue" orquestrador/hooks/register.tsx` acha agora seis linhas:
+  579, 858, 1356, 1376, 1837 e a definição (1344).
+
+## Testes
+
+```
+$ export PATH="…/2.1.308/…/MacOS:$PATH" && command claude plugin test orquestrador
+ 412 pass
+ 0 fail
+Ran 412 tests across 33 files. [7.74s]
+exit=0
+```
+
+## Tipos
+
+```
+$ npx -y -p typescript@5.6.3 tsc -p <scratchpad>/tc/tsconfig.json
+(sem saída)
+exit=0
+```

@@ -129,7 +129,7 @@ const holdRead = (w: World, path: string, skip = 0) => {
 
 /** A few turns of the event loop: enough for a hook to run up to where it waits. */
 const settle = async () => {
-  for (let i = 0; i < 20; i++) await new Promise(resolve => setTimeout(resolve, 0))
+  for (let i = 0; i < 20; i++) await new Promise(resolve => (globalThis as unknown as { setTimeout: (f: () => void, ms: number) => void }).setTimeout(() => resolve(undefined), 0))
 }
 
 const flow = ($: Engine, input: Record<string, unknown>) =>
