@@ -211,6 +211,11 @@ test('a loop that only reads PRs, and other readers around gh, pass', async ($, 
   // a script file written and run on the same line, with no readable merge, is still refused
   expect(await merge($, "cat > m.sh <<'EOF'\ngh pr merge 805 --admin\nEOF\nbash m.sh")).toMatch(OPAQUE)
   expect(await merge($, "cat > m.py <<'EOF'\nimport os; os.system('gh pr merge 805 --admin')\nEOF\npython3 m.py")).toMatch(OPAQUE)
+  // the other ways to run a script written on the same line stay refused
+  for (const run of ['. m.sh', 'source m.sh', 'chmod +x m.sh && ./m.sh', 'timeout 60 bash m.sh', 'env -i bash m.sh', 'sudo -u me bash m.sh', 'fish m.sh']) {
+    expect(await merge($, `cat > m.sh <<'EOF'\ngh pr merge 805 --admin\nEOF\n${run}`)).toMatch(OPAQUE)
+  }
+  expect(await merge($, `echo "gh pr merge 805 --admin" | xargs -I{} sh -c {}`)).toMatch(OPAQUE)
   // a loop that merges is still refused
   expect(await merge($, 'for n in 805; do gh pr merge $n --admin; done')).toBeDefined()
   expect(await merge($, 'for n in 805; do echo $n | xargs gh pr merge --admin; done')).toMatch(OPAQUE)
