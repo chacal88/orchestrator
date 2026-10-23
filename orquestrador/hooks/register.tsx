@@ -115,6 +115,10 @@ import {
   parseRun,
   parseSessionRows,
   findGroupId,
+  groupIds,
+  groupsLegible,
+  inPlan,
+  startedSessionId,
   groupName,
   phaseCounts,
   phaseViews,
@@ -661,29 +665,88 @@ const refreshQuietly = async ($: EngineInterface): Promise<void> => {
 }
 
 /**
- * Files the coordinator and every session it started under the change's sidebar group,
- * creating the group once. Runs on each plan publish and after each start_session, so a
- * new phase session never lands ungrouped.
+ * The change this coordination works on: the flow `running` it started (the mod of a child in the same
+ * folder is not its coordinator), else the plan published last. The flow wins: a new change has no plan yet.
  */
-const groupFamily = async ($: EngineInterface, change: string): Promise<string | undefined> => {
-  if (!(await canCall($, MOVE_SESSIONS))) return 'sidebar indisponível para agrupar'
-  const name = groupName(change)
-  let groupId = findGroupId((await callTool($, { tool: LIST_GROUPS })).text, name)
-  if (groupId === undefined) groupId = findGroupId((await callTool($, { tool: CREATE_GROUP, name })).text)
-  if (groupId === undefined) return `não consegui criar o grupo ${name}`
+const currentFlow = async ($: EngineInterface, root: string): Promise<FlowState | undefined> => {
+  const self = await selfId($).catch(() => undefined)
+  return (await allFlowStates($))
+    .filter(s => s.status === 'running' && ownsFlow(s, root) && (s.coordinatorSession === undefined || s.coordinatorSession === self))
+    .sort((a, b) => b.startedAt - a.startedAt)[0]
+}
 
+const currentChange = async ($: EngineInterface, root: string): Promise<string | undefined> =>
+  (await currentFlow($, root))?.change ?? (await loadRun($, root).catch(() => undefined))?.change
+
+/** The coordination's other changes' flows, which keep their own children and group. */
+const siblingFlows = async ($: EngineInterface, change: string, root: string): Promise<FlowState[]> =>
+  (await allFlowStates($)).filter(s => s.change !== change && ownsFlow(s, root))
+
+/**
+ * Files the coordinator and the children of this change under the change's sidebar group, creating
+ * the group once. Runs on each plan publish and after each start_session, so a new phase session
+ * never lands ungrouped. Children of other changes stay out, and the ones the app dragged along with
+ * the coordinator go back to their own group.
+ */
+const groupFamily = async ($: EngineInterface, change: string, started?: string): Promise<string | undefined> => {
+  if (!(await canCall($, MOVE_SESSIONS))) return 'sidebar indisponível para agrupar'
+  const root = await $.session.root()
   const [self] = parseSessionRows((await callTool($, { tool: GET_SESSION, session_id: 'self' })).text)
   const family = parseSessionRows((await callTool($, { tool: LIST_SESSIONS, linked: true, limit: 50 })).text)
-  const loose = family.filter(row => !row.isArchived && row.startedBy === self?.sessionId && row.groupId !== groupId)
-  const ids = [...(self?.groupId === groupId ? [] : ['self']), ...loose.map(row => row.sessionId)]
+  const children = family.filter(row => self !== undefined && !row.isArchived && row.startedBy === self.sessionId)
+
+  const flow = await loadFlowState($, change)
+  const others = await siblingFlows($, change, root)
+  let state = flow !== undefined && ownsFlow(flow, root) ? flow : undefined
+  if (state?.status === 'running') {
+    // the rows carry no creation date, so the flow keeps the children it opened: the ones no flow has claimed
+    const claimed = new Set([...others, state].flatMap(s => [...(s.sessions ?? []), ...(s.earlier ?? [])]))
+    const fresh = [...new Set([...(started === undefined ? [] : [started]), ...children.map(c => c.sessionId)])].filter(id => !claimed.has(id))
+    if (fresh.length > 0) state = { ...state, sessions: [...(state.sessions ?? []), ...fresh] }
+  }
+
+  const listed = await callTool($, { tool: LIST_GROUPS }).catch(() => ({ isError: true }) as CallResult)
+  // an error text is "do not know", never "no such group": creating one now would duplicate it
+  if (listed.isError === true || listed.deny !== undefined || !groupsLegible(listed.text)) {
+    $.ui.log(`orquestrador: list_groups não respondeu; o grupo de ${change} fica para o próximo gancho`)
+    if (state !== undefined && state !== flow) await saveFlow($, state, [])
+    return undefined
+  }
+  const name = groupName(change)
+  const known = groupIds(listed.text)
+  let groupId = state?.groupId !== undefined && known.includes(state.groupId) ? state.groupId : findGroupId(listed.text, name)
+  if (groupId === undefined) groupId = findGroupId((await callTool($, { tool: CREATE_GROUP, name })).text)
+  if (groupId === undefined) return `não consegui criar o grupo ${name}`
+  if (state !== undefined && state.groupId !== groupId) state = { ...state, groupId }
+  if (state !== undefined && state !== flow) await saveFlow($, state, [])
+
+  const run = await loadRun($, root).catch(() => undefined)
+  const plan = run?.change === change ? run : undefined
+  const mine = new Set(state?.sessions ?? [])
+  const loose = children.filter(row => (mine.has(row.sessionId) || inPlan(plan, row)) && row.groupId !== groupId)
+  const moveSelf = self?.groupId !== groupId
+  const ids = [...(moveSelf ? ['self'] : []), ...loose.map(row => row.sessionId)]
   if (ids.length > 0) await callTool($, { tool: MOVE_SESSIONS, session_ids: ids, group_id: groupId })
+
+  if (moveSelf) {
+    // the app moves the nested children with their mother: send the ones of other changes back
+    const after = parseSessionRows((await callTool($, { tool: LIST_SESSIONS, linked: true, limit: 50 })).text)
+    for (const other of others) {
+      if (other.groupId === undefined || !known.includes(other.groupId)) continue
+      const own = new Set(other.sessions ?? [])
+      const strays = after.filter(row => !row.isArchived && own.has(row.sessionId) && row.groupId !== other.groupId)
+      if (strays.length > 0) {
+        await callTool($, { tool: MOVE_SESSIONS, session_ids: strays.map(row => row.sessionId), group_id: other.groupId })
+      }
+    }
+  }
   return undefined
 }
 
-const groupQuietly = async ($: EngineInterface, change: string | undefined): Promise<void> => {
+const groupQuietly = async ($: EngineInterface, change: string | undefined, started?: string): Promise<void> => {
   if (change === undefined) return
   try {
-    const problem = await groupFamily($, change)
+    const problem = await groupFamily($, change, started)
     if (problem !== undefined) $.ui.toast(`Orquestrador: ${problem}`)
   } catch (error) {
     $.ui.log(`orquestrador: ${describeError('agrupar', error)}`)
@@ -1224,6 +1287,13 @@ const pickFlow = async ($: EngineInterface, change: unknown): Promise<FlowState 
 type FlowReply = ToolCallResult<string>
 const flowError = (why: string): FlowReply => ({ result: `Flow: ${why}`, isError: true as const })
 
+/** The unarchived children the coordination has now, by id; none when the app cannot list them. */
+const openChildren = async ($: EngineInterface, coordinator: string | undefined): Promise<string[]> => {
+  if (coordinator === undefined || !(await canCall($, LIST_SESSIONS))) return []
+  const rows = parseSessionRows((await callTool($, { tool: LIST_SESSIONS, linked: true, limit: 50 })).text)
+  return rows.filter(row => !row.isArchived && row.startedBy === coordinator).map(row => row.sessionId)
+}
+
 const handleFlowTool = async ($: EngineInterface, input: Record<string, unknown>): Promise<FlowReply> => {
   const action = input.action
   if (action === 'list') {
@@ -1256,9 +1326,18 @@ const handleFlowTool = async ($: EngineInterface, input: Record<string, unknown>
       },
       await $.clock.now(),
     )
-    await saveFlow($, started.state, started.events)
+    const coordinator = await selfId($).catch(() => undefined)
+    const earlier = await openChildren($, coordinator)
+    const state: FlowState = {
+      ...started.state,
+      ...(coordinator === undefined ? {} : { coordinatorSession: coordinator }),
+      sessions: [],
+      earlier,
+    }
+    await saveFlow($, state, started.events)
     await refreshQuietly($)
-    return { result: `Started. ${await describeWithPrep($, started.state)} ${contentRule((await loadConfig($)).languages)}` }
+    const left = earlier.length === 0 ? '' : ` ${earlier.length} unarchived child session(s) of earlier changes remain on this coordination: archive them first, once their gates passed.`
+    return { result: `Started. ${await describeWithPrep($, state)} ${contentRule((await loadConfig($)).languages)}${left}` }
   }
   const picked = await pickFlow($, input.change)
   if ('error' in picked) return flowError(picked.error)
@@ -1285,7 +1364,9 @@ const handleFlowTool = async ($: EngineInterface, input: Record<string, unknown>
     await logFlowRefusal($, picked, input.step, 'session', moved.error)
     return flowError(`refused: ${moved.error}`)
   }
-  await saveFlow($, moved.state, moved.events)
+  // flows from before the field: the coordinator is whoever reports
+  const coordinator = picked.coordinatorSession === undefined ? await selfId($).catch(() => undefined) : undefined
+  await saveFlow($, coordinator === undefined ? moved.state : { ...moved.state, coordinatorSession: coordinator }, moved.events)
   await refreshQuietly($)
   return { result: `Recorded ${input.step} → ${input.outcome}. ${await describeWithPrep($, moved.state)}` }
 }
@@ -1827,8 +1908,10 @@ export const register: Register = on => {
       return ran
     }
     if (tool.endsWith('ccd_session__start_session') && ran.deny === undefined && ran.isError !== true) {
-      const run = await loadRun($, await $.session.root()).catch(() => undefined)
-      await groupQuietly($, run?.change)
+      const change = await currentChange($, await $.session.root()).catch(() => undefined)
+      const result = ran as CallResult & { result?: unknown }
+      const text = result.text ?? (typeof result.result === 'string' ? result.result : JSON.stringify(result.result ?? ''))
+      await groupQuietly($, change, startedSessionId(text, await selfId($).catch(() => undefined)))
     }
 
     const { value: waiting } = await $.state.get(WAITING)

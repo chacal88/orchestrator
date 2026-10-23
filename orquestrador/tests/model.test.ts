@@ -3,6 +3,9 @@ import { describe, expect, test } from 'claude-code/testing'
 import {
   activityKey,
   findGroupId,
+  groupIds,
+  groupsLegible,
+  startedSessionId,
   groupName,
   latestActivity,
   applyPlanUpdate,
@@ -125,6 +128,21 @@ describe('findGroupId', () => {
     expect(findGroupId(JSON.stringify({ id: 'cg-9' }))).toBe('cg-9')
     expect(findGroupId('Created group cg-abc-123')).toBe('cg-abc-123')
     expect(findGroupId(undefined)).toBeUndefined()
+  })
+
+  test('an error text is not a list: no group is found, and the list is not legible', () => {
+    const error = 'nenhuma janela reportou os grupos'
+    expect(findGroupId(error, '🪪 b')).toBeUndefined()
+    expect(groupsLegible(error)).toBe(false)
+    expect(groupsLegible(undefined)).toBe(false)
+    expect(groupsLegible('[]')).toBe(true)
+    expect(groupIds(JSON.stringify([{ id: 'cg-1', name: 'a' }, { group_id: 'cg-2' }]))).toEqual(['cg-1', 'cg-2'])
+    expect(groupIds(error)).toEqual([])
+  })
+
+  test('the id of a started session is read from its answer, never the caller\'s own', () => {
+    expect(startedSessionId('Started local_b1 (parent local_ee)', 'local_ee')).toBe('local_b1')
+    expect(startedSessionId('ok', 'local_ee')).toBeUndefined()
   })
 
   test('groupName marks the change with its badge', () => {

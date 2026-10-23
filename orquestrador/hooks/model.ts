@@ -503,6 +503,37 @@ export const nowAndNext = (
 /** The sidebar group a change's sessions live in. */
 export const groupName = (change: string): string => `🪪 ${change}`.slice(0, 200)
 
+/** Whether list_groups answered with a readable array: an error text is "do not know", never "no such group". */
+export const groupsLegible = (text: string | undefined): boolean => {
+  if (text === undefined) return false
+  try {
+    return Array.isArray(JSON.parse(text))
+  } catch {
+    return false
+  }
+}
+
+/** The ids of the groups a readable list_groups answer holds. */
+export const groupIds = (text: string | undefined): string[] => {
+  if (!groupsLegible(text)) return []
+  return (JSON.parse(text as string) as unknown[]).flatMap(row => {
+    const r = typeof row === 'object' && row !== null ? (row as Record<string, unknown>) : {}
+    const id = r.id ?? r.group_id ?? r.groupId
+    return typeof id === 'string' ? [id] : []
+  })
+}
+
+/** The id of the session a start_session answer names, other than the caller's own. */
+export const startedSessionId = (text: string | undefined, self: string | undefined): string | undefined =>
+  text?.match(/local_[0-9a-f-]+/g)?.find(id => id !== self)
+
+/** Whether a child belongs to a plan phase, by the same matching the panel uses. */
+export const inPlan = (run: OrchestrationRun | undefined, row: SessionRow): boolean =>
+  run !== undefined &&
+  phaseViews(run, [toCard(row, undefined)])
+    .flat()
+    .some(p => p.card !== undefined)
+
 /** Reads a group id out of list_groups' array or create_group's answer, whichever shape it takes. */
 export const findGroupId = (text: string | undefined, name?: string): string | undefined => {
   if (text === undefined) return undefined

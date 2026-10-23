@@ -210,6 +210,14 @@ export type FlowState = {
   pendingNote?: string
   /** deploy: what each deploy step already saw done, by step id; kept while the step retries itself. */
   progress?: Record<string, FlowDeployProgress>
+  /** The session that started the flow (its id in the app's list): only its mod acts for the flow. */
+  coordinatorSession?: string
+  /** The sidebar group of the change, kept so a renamed or unlisted group is not looked up by name again. */
+  groupId?: string
+  /** The child sessions this change opened, the only ones its group holds. */
+  sessions?: string[]
+  /** Children that already existed when the flow started; they belong to an earlier change. */
+  earlier?: string[]
   seq: number
   startedAt: number
   updatedAt: number

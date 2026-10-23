@@ -5,31 +5,31 @@ Acréscimo do dono, pedido durante o planejamento: as filhas estão abrindo no g
 `register.tsx` e em `types/index.d.ts`. Portões: `claude plugin test orquestrador` (testes) e `tsc` (tipos). Arquivos:
 `register.tsx`, `model.ts`, `flow.ts`, `types/index.d.ts` e os testes.
 
-- [ ] 1.1 `FlowState` ganha `coordinatorSession?: string`, `groupId?: string` e `sessions?: string[]` em
+- [x] 1.1 `FlowState` ganha `coordinatorSession?: string`, `groupId?: string` e `sessions?: string[]` em
       `types/index.d.ts`. O `flow start` grava `coordinatorSession` com o id da sessão que chamou (`get_session self`),
       e o `flow report` preenche o campo quando ele falta (flows de antes da 0.13.0). Verificação: teste em
       `flow-harness.test.ts` mostra o campo gravado no start e preenchido no report de um flow antigo — cx: simple
-- [ ] 1.2 Qual change agrupar: uma função `currentChange($, root)` devolve a change do flow `running` desta coordenação
+- [x] 1.2 Qual change agrupar: uma função `currentChange($, root)` devolve a change do flow `running` desta coordenação
       (`ownsFlow`, `status === 'running'`, e `coordinatorSession` igual a `self` quando o campo existe). Só sem flow
       `running` ela cai no plano publicado mais recente (`loadRun`). O gancho do `start_session` (~linha 1829) passa a
       usar essa função no lugar de `loadRun`. Verificação: tarefa 1.6 — cx: simple
-- [ ] 1.3 Quais filhas são da change: depois de cada `start_session` aceito, o mod lê as filhas da coordenação
+- [x] 1.3 Quais filhas são da change: depois de cada `start_session` aceito, o mod lê as filhas da coordenação
       (`startedBy === self`, não arquivadas). As que ainda não estão no `sessions` de nenhum flow desta coordenação
       entram no `sessions` do flow corrente (pegar também o id do resultado do `start_session`, se ele vier). O
       `groupFamily` move para o grupo da change só essas sessões e as que casam com uma fase do plano dela, nunca todas
       as filhas da coordenação. Verificação: tarefa 1.6 — cx: medium
-- [ ] 1.4 O grupo da change pelo id: o `groupFamily` usa o `groupId` gravado no flow, quando ele existe e ainda aparece
+- [x] 1.4 O grupo da change pelo id: o `groupFamily` usa o `groupId` gravado no flow, quando ele existe e ainda aparece
       no `list_groups`. Senão procura pelo nome e grava o id que achou ou criou. O `list_groups` que volta com erro
       (`isError`, ou "nenhuma janela reportou os grupos") é "não sei": o mod **não cria** grupo nesse caso, loga e
       tenta no próximo gancho. O `create_group` só roda quando a lista veio legível e sem o nome. Verificação: teste
       em `model.test.ts` para `findGroupId` com texto de erro e teste de harness com `list_groups` falhando, sem
       `create_group` chamado — cx: simple
-- [ ] 1.5 A coordenação arrasta as filhas antigas: o app move as filhas aninhadas junto com a mãe. Depois de mover
+- [x] 1.5 A coordenação arrasta as filhas antigas: o app move as filhas aninhadas junto com a mãe. Depois de mover
       `self`, o `groupFamily` devolve ao grupo da própria change (o `groupId` gravado no flow dela) as filhas não
       arquivadas que estão no `sessions` de outro flow desta coordenação. Filha antiga sem grupo conhecido fica onde
       o app a deixou. O `flow start` diz, no texto da resposta, quantas filhas não arquivadas de outra change a
       coordenação ainda tem e manda arquivá-las antes, se os portões delas passaram. Verificação: tarefa 1.6 — cx: medium
-- [ ] 1.6 Testes de harness num arquivo novo, `orquestrador/tests/grupos-harness.test.ts`, no molde de
+- [x] 1.6 Testes de harness num arquivo novo, `orquestrador/tests/grupos-harness.test.ts`, no molde de
       `flow-harness.test.ts`, com `list_sessions`, `list_groups`, `create_group` e `move_sessions` falsos que gravam as
       chamadas:
       - com um plano publicado da change A e o flow da change B `running`, a filha nova vai para "🪪 B";
