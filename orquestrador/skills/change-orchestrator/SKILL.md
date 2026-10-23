@@ -38,8 +38,9 @@ A cada acionamento (mensagem de fase, fim de sessão, clique do dono, tick):
 
 1. `flow status` → passo atual e **quem responde** (sessão, automático ou dono).
 2. Aja **só** sobre esse passo, conforme o tipo:
-   - **Sessão** → faça ou despache o trabalho **com o agente do passo** (ver abaixo); ao
-     terminar, `flow report {step, outcome, note}` com um dos resultados que o passo declara.
+   - **Sessão** → abra uma sessão filha **com o agente do passo** (ver abaixo); quando ela
+     responder, `flow report {step, outcome, note}` com um dos resultados que o passo declara.
+     Você não faz o passo.
    - **Automático** (`validar` = `openspec validate`, `checagem` = `scripts/check.sh` com
      `evidence.md` preenchido, `arquivar` = `openspec archive`) → rode o comando numa
      sessão; o mod observa o código de saída e avança. **Nunca** informe esse passo.
@@ -55,6 +56,28 @@ papel, o que ler, critério de pronto e o que nunca fazer); o agente do projeto 
 `.orquestrador/agents/<nome>.md` **vence** o do plugin (`agents/<nome>.md` na raiz do plugin, `${CLAUDE_PLUGIN_ROOT}`); e o
 modelo e o esforço do passo valem (`set_session_model` / `set_session_effort`), no lugar da
 tabela do § 4. Passo sem agente declarado segue o prompt autocontido do § 4.
+
+**Uma sessão filha por passo de sessão e por fase.** Pedir "orquestrar" é o pedido explícito
+do dono por uma sessão para cada passo de sessão e para cada fase. Abra cada uma com
+`start_session` e `initiation: "user_asked"` e `wake_when_done: true`; nunca de primeira com
+`own_initiative` (vira cartão parado; só quando o start é recusado, abaixo) e nunca com um subagente no lugar dela. O corpo do agente vai no prompt, e a
+sessão usa o modelo e o esforço do passo. Um passo `session` nunca é feito na coordenação.
+
+- **Fica com a coordenação:** a escolha do flow, as rodadas do grill, o mockup, a liberação no
+  plan mode, `flow report`/`close`/`round`/`note` e os comandos dos passos automáticos (o mod lê
+  o código de saída na sessão que roda o comando).
+- **Onde trabalha cada filha:** as fases do `executar` em worktree própria
+  (`use_worktree: true`). Os passos únicos (planejar, revisões, PR, publicar) com
+  `use_worktree: false` quando só escrevem arquivos que a coordenação não mexe, para o PR sair
+  de uma branch só; se a escrita pode cruzar com a de outra sessão, em worktree própria.
+- **Start recusado.** O app recusa `user_asked` num turno que começou por mensagem de outra
+  sessão ou por evento automático (inclui o tick do `ScheduleWakeup`). A corrente do
+  `user_asked`: só vale no turno do dono e nos `<side-sessions-event>` que vêm em sequência
+  direta a partir dele. Qualquer turno de mensagem entre sessões ou de tick no meio quebra a
+  corrente; dali em diante toda sessão vira cartão até o dono escrever de novo. Se recusar,
+  proponha a sessão como cartão (`own_initiative`, mesmo prompt, sem `wake_when_done`, que o
+  app recusa no cartão; o app acorda a coordenação quando a filha termina mesmo assim), diga ao
+  dono numa linha que é só clicar e espere. Nunca faça o passo no lugar da filha.
 
 **Clique do dono acorda você.** Quando o dono aperta um botão do flow e o próximo passo é
 seu (sessão, automático, `executar`, ou o mockup de novo depois de "Pedir ajustes"), o painel
@@ -79,12 +102,12 @@ diagnóstico pronto ao dono.
    {artifact}`. O dono clica **"Aprovar mockup"** ou **"Pedir ajustes"** (com nota): no
    ajuste, refaça e anexe de novo. Depois do "Aprovar mockup" o próximo passo é **sempre**
    `planejar`, mesmo que os artefatos de planejamento já existam.
-3. **Planejar** (sessão). Escreva proposta, design e tarefas do OpenSpec (no `rapido`,
-   só proposta e tarefas); `flow report planejar pronto`. Se já existem, reconcilie-os com
-   o grill e o mockup aprovado antes de reportar `pronto`.
+3. **Planejar** (sessão). A sessão filha escreve proposta, design e tarefas do OpenSpec (no
+   `rapido`, só proposta e tarefas); a coordenação reporta `flow report planejar pronto`. Se já
+   existem, a filha os reconcilia com o grill e o mockup aprovado antes do `pronto`.
 4. **Validar** (automático): rode `openspec validate` numa sessão.
-5. **Revisão do plano** (sessão): revisores contra ADRs e specs; `flow report
-   revisao-plano aprovado|rejeitado`.
+5. **Revisão do plano** (sessão): uma sessão filha com os revisores contra ADRs e specs; a
+   coordenação reporta `flow report revisao-plano aprovado|rejeitado`.
 6. **Liberação do dono**: vem do **plan mode** do app. Monte as ondas (§ 4), escreva o
    plano de execução e chame `ExitPlanMode`; o dono aprova no diálogo nativo e o mod
    registra a liberação. Se ele recusar, ajuste o plano e chame de novo. Não há botão
@@ -104,7 +127,8 @@ diagnóstico pronto ao dono.
    fase fechou (ou está `done` no plano), cuja change teve o flow concluído ou encerrado,
    cujo PR foi mergeado ou fechado, nem a parada sem tarefa aberta. A recusa diz por que
    cada sessão contada conta; vaga abre quando uma delas termina o trabalho ou é arquivada.
-3. **Disparar.** Uma sessão por fase da onda corrente, sempre em worktree própria
+3. **Disparar.** Uma sessão por fase da onda corrente (`start_session`, `user_asked`,
+   `wake_when_done: true`), sempre em worktree própria
    (`use_worktree: true`), para duas fases nunca escreverem nos mesmos arquivos (o mod lê a
    atividade e os gates de cada fase pelo id da sessão, então uma fase na pasta da coordenação
    também prova seus gates). Título
@@ -146,7 +170,9 @@ diagnóstico pronto ao dono.
    as sessões rodarem e impõe os portões (publicar `done`, arquivar, `gh pr merge`); só o
    dono pula um portão, pelo painel. No prompt da fase, peça cada portão como comando
    próprio, que o código de saída decida: nada de `| tail`, `; echo $?` ou `|| true`
-   depois dele (junte com `&&`). Para pedir ao dono que libere um portão, use
+   depois dele (junte com `&&`). Rode o portão pelo nome do
+   comando, com o binário no PATH (ex. `export PATH=… && command claude plugin test …`), nunca
+   por caminho entre aspas: o mod reconhece o portão pelo nome. Para pedir ao dono que libere um portão, use
    `ownerQuestions` com `gate: {phase, gate}` (`phase: "final"` para os `finalGates`): o
    painel oferece o pulo na própria pergunta, e "Aceitar" nunca pula portão.
    Os `finalGates` seguram só o `gh pr merge` do PR da própria change, e só enquanto o
@@ -168,11 +194,18 @@ diagnóstico pronto ao dono.
 
 ## 5. Não abandonar sessões (regra de ouro)
 
-1. **Empurrar.** Todo prompt de fase termina com: "ao finalizar OU travar, envie
-   mensagem ao coordenador (`<session-id do coordenador>`) com `FASE <id>: pronta —
-   <resumo>` ou `FASE <id>: bloqueada — preciso de <X>`".
-2. **Puxar.** Com fase em voo, NUNCA termine o turno sem `ScheduleWakeup` (120 s); tick
-   sem mudança é `noop: true`. A notificação de fim de sessão não é confiável. Sem fase em
+1. **Empurrar.** Toda filha avisa **terminando o turno**, com a mensagem final `FASE <id>:
+   pronta — <resumo>` ou `FASE <id>: bloqueada — preciso de <X>`. Como a coordenação abre a
+   filha com `wake_when_done: true`, o app a acorda quando a filha termina o turno, e nesse
+   turno ela ainda pode abrir a próxima sessão. Um `SendMessage` de "pronta" acordaria a
+   coordenação num turno de mensagem, onde o app recusa abrir sessão. A filha só usa
+   `SendMessage` (ao id da coordenação, por extenso no prompt) quando precisa de resposta no
+   meio do trabalho. Todo prompt de fase termina com essa instrução.
+2. **Puxar.** Com fase em voo, NUNCA termine o turno sem `ScheduleWakeup`; tick
+   sem mudança é `noop: true`. Com filha aberta com `wake_when_done: true`, o aviso principal é o
+   fim do turno dela; o `ScheduleWakeup` é só reserva e deve ser longo (1200 s ou mais), não de
+   120 s. O tick também é evento automático: nele a coordenação só confere
+   e, se precisar de uma sessão, propõe o cartão (§ 2); não abre sessão. Sem fase em
    voo e esperando um passo do dono, o painel acorda você no clique; mesmo assim termine o
    turno com `ScheduleWakeup` longo (1200 s ou mais) e confira `flow status` quando disparar.
 3. **Ledger.** `<changeRoot>/orchestration.md` (fase, ícone, sessão, branch, estado,
@@ -192,14 +225,15 @@ diagnóstico pronto ao dono.
 5. **Jira.** Quando o passo pede mudança de estado, o painel avisa; a issue só se move
    no botão **"Mover no Jira"** do dono.
 
-Antes de encerrar qualquer turno: há fase em voo? A checagem está agendada? Espera um
-passo do dono? O `ScheduleWakeup` longo está agendado?
+Antes de encerrar qualquer turno: há fase em voo? A filha foi aberta com `wake_when_done: true`
+(ou, se virou cartão, o dono foi avisado)? Espera um passo do dono? O `ScheduleWakeup` de reserva
+(1200 s ou mais) está agendado?
 
 ## 6. Depois do PR
 
-1. **Revisão de código** (sessão) → `flow report revisao-codigo aprovado|rejeitado`.
+1. **Revisão de código** (sessão): sessão filha; a coordenação reporta `flow report revisao-codigo aprovado|rejeitado`.
 2. **Checagem** (automático) → `scripts/check.sh` numa sessão, com `evidence.md`
-   preenchido. **PR** (sessão) → `flow report pr aberto` com `note` citando o PR (`#N`).
+   preenchido. **PR** (sessão): sessão filha; a coordenação reporta `flow report pr aberto` com `note` citando o PR (`#N`).
 3. **Em QA** (dono): botões **"QA aprovou"** / **"QA pediu ajustes"**. Se souber o que
    o QA pediu, deixe com `flow note` antes do clique. Ajustes devolvem o flow às fases:
    acrescente as tarefas novas ao `tasks.md` e volte ao § 4.

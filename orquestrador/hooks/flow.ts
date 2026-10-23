@@ -1078,11 +1078,17 @@ const describeStepBody = (state: FlowState, step: FlowStep, where: string, outco
   }
   switch (step.kind) {
     case 'session':
-      return `${where}. Do the step, then report one of its outcomes with action "report": ${outcomes}.`
+      return (
+        `${where}. Open a session for this step with start_session (initiation "user_asked" with wake_when_done, the owner asked to orchestrate), ` +
+        "using the step's agent, model and effort; do not do the step in this session. If the app refuses the start in this turn " +
+        '(it was set off by another session\'s message or an automatic event), propose it as a card (initiation "own_initiative", same prompt), ' +
+        'without wake_when_done (the app refuses it on a card; it wakes you when the session ends anyway), tell the owner to click it and wait; never do the step here. The session ends its turn with its result. ' +
+        `When it answers, report one of the step's outcomes with action "report": ${outcomes}.`
+      )
     case 'loop': {
       const closed = Object.keys(state.closed ?? {})
       return (
-        `${where}. Run the phases of tasks.md; close each with action "close" and its \`phase\` id once its gates ` +
+        `${where}. Run the phases of tasks.md, one session per phase (start_session, initiation "user_asked", never this session); close each with action "close" and its \`phase\` id once its gates ` +
         'passed, its tasks are ticked and its work is committed (the mod then archives its session). The step ends ' +
         `on its own when every phase is closed (→ ${step.outcomes[LOOP_DONE]?.next}).` +
         (closed.length > 0 ? ` Closed: ${closed.join(', ')}.` : '')
