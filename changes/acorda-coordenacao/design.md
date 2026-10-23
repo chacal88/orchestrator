@@ -65,7 +65,7 @@ O título usa `name ?? title`, como o resto do painel.
 
 Como a mensagem do clique, esta vai em nome do mod (`$.prompt.submit({ text })`). É o mod contando um fato que a
 coordenação confere com `flow status`, não palavras do dono. A proposta assume, como no clique, que o app trata esse
-turno como turno do dono para o `user_asked`. O critério 10 confere isso no app real. Se o app recusar, a mensagem passa
+turno como turno do dono para o `user_asked`. O critério 11 confere isso no app real. Se o app recusar, a mensagem passa
 a `asUser: true` com o texto deixando claro que é o painel, por exemplo
 `Painel (opção "Seguir o flow sem clique" ligada por mim): …`. A troca fica numa constante só.
 
@@ -82,3 +82,26 @@ ativação (`projectRoot`, o checkout principal). É o mesmo padrão do `activat
 `activation.ts`): arquivo ausente é desligado, e arquivo ilegível é desligado também. Na dúvida, a opção fica desligada,
 que é o lado seguro aqui, ao contrário da ativação, onde o lado seguro é "barrar". Desativar o orquestrador no clone não
 apaga a opção, mas sem ativação ela não vale.
+
+## Grupo da sidebar (fase 1)
+
+**Qual change.** `currentChange($, root)`: a change do flow `running` que esta sessão coordena (`ownsFlow`, e
+`coordinatorSession === self` quando o campo existe). Sem flow `running`, cai no `loadRun`, como hoje, para quem
+publica plano sem flow. O `plano` publicado continua agrupando pela própria change dele.
+
+**Quais filhas.** A linha de `list_sessions` não traz a data de criação, então "iniciada depois do `flow start`" não é
+um critério que o mod consiga ler. **Recomendação:** registrar no próprio flow. Depois de cada `start_session` aceito, as
+filhas da coordenação (`startedBy === self`, não arquivadas) que não estão no `sessions` de nenhum flow desta
+coordenação entram no `sessions` do flow corrente. O executor confere se o resultado do `start_session` traz o id da
+sessão nova e, se trouxer, usa esse id. As filhas que já existiam antes da 0.13.0 não entram em flow nenhum e não são
+movidas. O `groupFamily` move `self` (se preciso) mais as filhas do `sessions` do flow e as que casam com uma fase do
+plano dessa change.
+
+**O arrasto do app.** Mover `self` leva junto as filhas aninhadas. Por isso, depois do `move_sessions`, o mod devolve ao
+`groupId` de cada flow antigo as filhas não arquivadas do `sessions` dele que vieram junto. Como prevenção, a skill
+manda arquivar as filhas da change encerrada antes do `flow start` seguinte, e a resposta do `flow start` conta as que
+sobraram. O mod não arquiva nada sozinho: arquivar passa pela recusa de portões que já existe (`refuseArchive`).
+
+**O grupo pelo id.** Procurar só pelo nome falha quando o dono renomeia o grupo ou quando o `list_groups` falha. O
+`groupId` gravado no flow é a referência. O nome serve só para achar ou criar o grupo na primeira vez. Antes de criar,
+o mod exige uma lista legível: com `isError`, ou com um texto que não é um array JSON, ele loga e não cria.

@@ -23,7 +23,32 @@ mecanismo já existe: quando o dono aperta um botão do flow, o `pressFlow` mand
 `$.prompt.submit` (`changes/clique-acorda-coordenacao/`), e essa mensagem entra como turno do dono, que o app aceita
 para o `user_asked`.
 
-## O que muda
+## Grupo da sidebar (acréscimo do dono)
+
+Durante o planejamento desta change, a sessão do `planejar` caiu no grupo "🪪 sessoes-filhas", da change anterior e já
+encerrada, e não em "🪪 acorda-coordenacao". O mod também criou um segundo grupo "🪪 sessoes-filhas" e levou junto as
+filhas antigas. O dono pediu que isso seja corrigido nesta change, numa fase própria, antes da fase do aviso. Há três
+causas em `orquestrador/hooks/register.tsx`:
+
+- O gancho do `start_session` agrupa pela change de `loadRun`, que é o **plano publicado** mais recente desta pasta, e
+  não pelo flow que está rodando. A change nova ainda não tinha plano publicado, então o mod usou a anterior.
+- O `groupFamily` move para o grupo **todas** as filhas não arquivadas da coordenação, de qualquer change. Além disso, o
+  app move as filhas aninhadas junto com a mãe, então mover a coordenação arrasta as filhas das changes antigas.
+- O `callTool` não olha o `isError`. Quando o `list_groups` falha (a ferramenta avisa que falha "enquanto nenhuma janela
+  reportou os grupos"), o `findGroupId` recebe o texto do erro, não acha o nome e o mod cria um grupo novo com o mesmo
+  nome. Hoje o `list_groups` devolve o array `{id, name, …}` que o `findGroupId` lê direito, então a falha transitória
+  é a explicação provável do grupo duplicado. Um grupo renomeado ou apagado à mão teria o mesmo efeito.
+
+O que muda:
+
+- O mod agrupa pela change do flow `running` desta coordenação. Só sem flow ele cai no plano publicado.
+- Cada flow guarda as filhas que abriu (`sessions`) e o id do seu grupo (`groupId`). O mod move só as filhas da change,
+  e devolve ao grupo delas as filhas de outra change que o app arrastou junto com a coordenação.
+- `list_groups` com erro é "não sei": o mod não cria grupo.
+- A skill manda arquivar as filhas da change encerrada antes de começar outra na mesma coordenação, e o `flow start`
+  avisa quantas sobraram.
+
+## O que muda no aviso
 
 - **Opção no painel ⚙️.** O cartão "Este projeto" ganha a opção "Seguir o flow sem clique", logo abaixo da ativação.
   Ela começa desligada. O texto diz ao dono, em linguagem simples, que, ligada, o painel avisa a coordenação cada vez
@@ -59,21 +84,24 @@ para o `user_asked`.
 
 ## Critérios de aceite
 
-1. O cartão "Este projeto" mostra a opção "Seguir o flow sem clique", desligada por padrão e só com o clone ativo, em
+1. Com um plano publicado da change A e o flow da change B rodando, a filha nova vai para "🪪 B", as filhas de A não
+   são movidas para "🪪 B", as que o app arrastou voltam ao grupo de A, e `list_groups` com erro não cria grupo. Testes
+   de harness.
+2. O cartão "Este projeto" mostra a opção "Seguir o flow sem clique", desligada por padrão e só com o clone ativo, em
    pt-BR e en, com o texto que diz que ela abre as sessões em nome do dono. Ligar ou desligar grava em
    `~/.claude/orquestrador/autowake.json` para a raiz do repositório e vale sem reiniciar.
-2. Com a opção ligada e um flow `running`, uma filha que passa de trabalhando a parada gera exatamente um
+3. Com a opção ligada e um flow `running`, uma filha que passa de trabalhando a parada gera exatamente um
    `$.prompt.submit` na coordenação, com o título dela e "Siga o flow". Teste de harness.
-3. Com a opção desligada, nenhum aviso. Teste de harness.
-4. A mesma parada vista em dois refreshes gera um aviso só. Teste de harness.
-5. Uma sessão fora do plano (nem `startedBy` da coordenação, nem fase do plano) ou arquivada não gera aviso. Teste de
+4. Com a opção desligada, nenhum aviso. Teste de harness.
+5. A mesma parada vista em dois refreshes gera um aviso só. Teste de harness.
+6. Uma sessão fora do plano (nem `startedBy` da coordenação, nem fase do plano) ou arquivada não gera aviso. Teste de
    harness.
-6. Só a sessão coordenadora avisa: o mod de uma filha na mesma pasta não manda nada. Teste de harness.
-7. Com a coordenação trabalhando, o aviso espera e sai uma vez quando ela para. Teste de harness.
-8. A skill diz o que muda com a opção ligada (`user_asked` depois do aviso, `ScheduleWakeup` para CI) e mantém o texto
+7. Só a sessão coordenadora avisa: o mod de uma filha na mesma pasta não manda nada. Teste de harness.
+8. Com a coordenação trabalhando, o aviso espera e sai uma vez quando ela para. Teste de harness.
+9. A skill diz o que muda com a opção ligada (`user_asked` depois do aviso, `ScheduleWakeup` para CI), manda arquivar as filhas da change encerrada antes de outra e mantém o texto
    atual para a opção desligada. O README tem a linha da opção.
-9. A versão é 0.13.0, `claude plugin test orquestrador` passa e o `tsc` passa.
-10. Na evidência, um teste no app real mostra que, depois do aviso do painel, a coordenação abre a sessão seguinte com
+10. A versão é 0.13.0, `claude plugin test orquestrador` passa e o `tsc` passa.
+11. Na evidência, um teste no app real mostra que, depois do aviso do painel, a coordenação abre a sessão seguinte com
     `user_asked` sem cartão. Se o app recusar, a fase registra isso e passa a mensagem para `asUser: true` (ver
     `design.md`).
 
