@@ -25,7 +25,10 @@ type World = {
   rows: Row[]
   groups: { id: string; name: string }[]
   groupsFail: boolean
+  listFail: boolean
   calls: Record<string, unknown>[]
+  /** Runs when list_groups is asked, between the grouping's read of the flow and its write. */
+  onGroups?: () => void
 }
 
 const row = (sessionId: string, groupId: string | undefined, extra: Partial<Row> = {}): Row => ({
@@ -38,7 +41,7 @@ const row = (sessionId: string, groupId: string | undefined, extra: Partial<Row>
  */
 const world = (on: On, rows: Row[], groups: World['groups']): World => {
   mock.store(on)
-  const w: World = { disk: new Map([ACTIVE]), rows: [{ sessionId: 'local_ee', cwd: '/w', title: 'Coordenação', groupId: 'cg-A' }, ...rows], groups, groupsFail: false, calls: [] }
+  const w: World = { disk: new Map([ACTIVE]), rows: [{ sessionId: 'local_ee', cwd: '/w', title: 'Coordenação', groupId: 'cg-A' }, ...rows], groups, groupsFail: false, listFail: false, calls: [] }
   on('env.get', () => ({ value: '/h' }))
   let now = 1_000
   on('clock.now', () => ({ value: (now += 10) }))
@@ -61,8 +64,9 @@ const world = (on: On, rows: Row[], groups: World['groups']): World => {
     const input = e as unknown as Record<string, unknown>
     w.calls.push(input)
     if (input.tool === T.get) return answer(JSON.stringify(w.rows[0]))
-    if (input.tool === T.list) return answer(JSON.stringify(w.rows))
+    if (input.tool === T.list) return w.listFail ? answer('a lista de sessões falhou', true) : answer(JSON.stringify(w.rows))
     if (input.tool === T.groups) {
+      w.onGroups?.()
       return w.groupsFail ? answer('nenhuma janela reportou os grupos', true) : answer(JSON.stringify(w.groups))
     }
     if (input.tool === T.create) {
@@ -174,4 +178,44 @@ test('a group that already carries the change name is reused, and its id is kept
   w.groups[0]!.name = 'outro nome'
   await startSession($)
   expect(creates(w)).toEqual([])
+})
+
+test('a flow report written while the grouping waits on the sidebar is kept', async ($, on) => {
+  const w = world(on, [], [])
+  await flow($, { action: 'start', change: 'b', flow: 'rapido' })
+  w.rows.push(row('local_b1', 'cg-A'))
+  // the coordination reports while the grouping, which already read the flow, waits on list_groups
+  w.onGroups = () => {
+    w.onGroups = undefined
+    const now = saved(w, 'b')
+    w.disk.set(`${BASE}/flows/b.json`, JSON.stringify({ ...now, current: 'validar', seq: now.seq + 1, records: { ...now.records, planejar: { outcome: 'pronto' } } }))
+  }
+  const before = saved(w, 'b').seq
+  await startSession($)
+  expect(saved(w, 'b')).toMatchObject({ current: 'validar', seq: before + 1, groupId: 'cg-B', sessions: ['local_b1'] })
+  expect(saved(w, 'b').records.planejar).toMatchObject({ outcome: 'pronto' })
+})
+
+test('two start_session at once create the group once', async ($, on) => {
+  const w = world(on, [], [])
+  await flow($, { action: 'start', change: 'b', flow: 'rapido' })
+  w.rows.push(row('local_b1', 'cg-A'))
+  await Promise.all([startSession($), startSession($)])
+  expect(creates(w).map(c => c.name)).toEqual(['🪪 b'])
+  expect(w.groups.map(g => g.name)).toEqual(['🪪 b'])
+})
+
+test('a session list that fails at the start is "do not know": the flow adopts only the session start_session returns', async ($, on) => {
+  const w = world(on, [row('local_a1', 'cg-A')], [])
+  w.listFail = true
+  const started = await flow($, { action: 'start', change: 'b', flow: 'rapido' })
+  expect(String(started.result)).not.toMatch(/unarchived/)
+  expect(saved(w, 'b').earlier).toBeUndefined()
+
+  w.listFail = false
+  w.rows.push(row('local_b1', 'cg-A'))
+  await startSession($)
+  // local_a1 is the coordination's but may be an earlier change's: it is not taken into b
+  expect(saved(w, 'b').sessions).toEqual(['local_b1'])
+  expect((moves(w)[0]!.session_ids as string[]).includes('local_a1')).toBe(false)
 })

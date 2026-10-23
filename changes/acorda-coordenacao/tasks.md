@@ -108,3 +108,33 @@ Pode correr em paralelo com as fases 1 e 2, porque mexe só em `orquestrador/ski
       clique" README.md` — cx: simple
 - [x] 3.3 Versão 0.13.0 em `orquestrador/.claude-plugin/plugin.json`. Verificação: `claude plugin test orquestrador`
       e `tsc` saem com 0 — cx: simple
+
+## 4. Achados da revisão
+
+A revisão de código rejeitou a change com 3 achados bloqueantes, 3 importantes e 2 detalhes. Esta fase os corrige
+antes de uma nova revisão. Portões: `claude plugin test orquestrador` (testes) e `tsc` (tipos). Arquivos:
+`hooks/wake.ts`, `hooks/register.tsx`, a skill, o `design.md`, o `evidence.md` e os testes. A versão fica em 0.13.0.
+
+- [x] 4.1 Bloqueante, injeção no turno do dono (`wake.ts`, `stopPrompt`): o título da sessão não entra mais cru no
+      aviso, que o app trata como turno do dono. O aviso leva o id `local_…` da filha (só os caracteres de um id) e a
+      coordenação confere o resto no `flow status`. Escolha justificada no `evidence.md`; `design.md` e skill com o
+      texto novo. Verificação: teste em `wake.test.ts` com um título com aspas, `\n` e texto longo, que não aparece
+      no aviso — cx: simple
+- [x] 4.2 Bloqueante, gravação velha do flow (`register.tsx`, `groupFamily`): o agrupamento relê o flow logo antes de
+      gravar e junta só `sessions` e `groupId`. Verificação: teste de harness em que um `report` grava o flow entre a
+      leitura e a gravação do agrupamento e não se perde — cx: medium
+- [x] 4.3 Bloqueante, grupo duplicado por corrida (`groupQuietly`): o agrupamento corre numa promessa do módulo, uma
+      chamada por vez. Verificação: teste de harness com dois `start_session` simultâneos e um `create_group` só — cx: simple
+- [x] 4.4 Filhas de outro flow avisam (`wake.ts`, `eligibleChildren`, e `wakeCoordination`): contam só as sessões do
+      `sessions` do flow corrente e as fases do plano dele, nunca as `earlier` nem as `sessions` de outro flow.
+      Verificação: teste em `wake.test.ts` e de harness em que uma filha `earlier` que para não gera aviso — cx: simple
+- [x] 4.5 Aviso em dobro com refreshes sobrepostos (`wakeCoordination`): trava em memória no módulo. Verificação:
+      teste de harness com dois refreshes simultâneos e um aviso só — cx: simple
+- [x] 4.6 Freio contra laço (`wakeCoordination`): o mod guarda o `seq` do flow no último aviso; depois de 3 avisos sem
+      o `seq` mudar, para de avisar e mostra ao dono um toast dizendo que o flow parece parado. Roteiro 2.6 do
+      `evidence.md` ganha "conferir se mover uma filha de grupo muda o `lastActivityAt`". Verificação: teste de
+      harness com 4 paradas no mesmo `seq` (3 avisos e o toast) e um aviso de novo depois de um `report` — cx: medium
+- [x] 4.7 Detalhe (`openChildren`): um `list_sessions` com erro é "não sei"; o `flow start` não grava `earlier` e o
+      agrupamento adota no flow só o id que o `start_session` devolveu. Verificação: teste de harness — cx: simple
+- [x] 4.8 Detalhe (`wakeCoordination`): com o clone inativo, o mod limpa também o `autowake-seen` (e o pendente).
+      Verificação: teste de harness em que uma parada de quando o clone estava inativo não é avisada ao reativar — cx: simple

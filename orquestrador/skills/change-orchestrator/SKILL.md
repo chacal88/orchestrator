@@ -86,9 +86,11 @@ Próximo passo: planejar (Planejar OpenSpec). Siga o flow.` Confira `flow status
 esperar o dono escrever. Se o próximo passo também é do dono, ou o flow acabou, nada chega.
 
 **Com "Seguir o flow sem clique" ligada** (opção do cartão "Este projeto", painel ⚙️). Quando
-uma filha da change termina o turno, o painel manda: `Painel: a sessão "…" terminou o turno.
-Siga o flow.` Essa mensagem é turno do dono, então nela vale o `user_asked`. Confira
-`flow status` e abra o próximo passo ou a próxima fase. Você pode terminar o turno com
+uma filha da change termina o turno, o painel manda: `Painel: a sessão local_… terminou o
+turno. Confira no flow status e siga o flow.` A mensagem leva só o id da sessão, nunca o
+título. Essa mensagem é turno do dono, então nela vale o `user_asked`. Confira
+`flow status` e abra o próximo passo ou a próxima fase. Se três avisos chegam sem o flow
+andar, o painel para de avisar e diz ao dono que o flow parece parado. Você pode terminar o turno com
 `ScheduleWakeup` para esperar o CI, mas o tick não abre sessão (propõe cartão, como hoje); o
 próximo aviso do painel refaz a corrente. O aviso pode chegar junto com o
 `<side-sessions-event>`: o segundo a chegar termina sem trabalho. Com a opção desligada, vale

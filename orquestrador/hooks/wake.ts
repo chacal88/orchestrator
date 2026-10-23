@@ -6,10 +6,21 @@ export type Seen = { running: boolean; activity?: string; told?: string }
 
 /**
  * The children whose end of turn wakes the coordination: not archived, not the coordination itself, and
- * opened by it (`startedBy`) or tied to a phase of its published plan. The rest of the group stays out.
+ * kept in the current flow's `sessions` or tied to a phase of its plan. The children of an earlier change
+ * (`earlier`, or another flow's `sessions`) never count, even when the plan names them.
  */
-export const eligibleChildren = <R extends SessionRow>(run: OrchestrationRun | undefined, self: string, children: readonly R[]): R[] =>
-  children.filter(row => !row.isArchived && row.sessionId !== self && (row.startedBy === self || inPlan(run, row)))
+export const eligibleChildren = <R extends SessionRow>(
+  run: OrchestrationRun | undefined,
+  flow: { sessions?: readonly string[]; excluded?: readonly string[] },
+  self: string,
+  children: readonly R[],
+): R[] => {
+  const own = new Set(flow.sessions ?? [])
+  const excluded = new Set(flow.excluded ?? [])
+  return children.filter(
+    row => !row.isArchived && row.sessionId !== self && !excluded.has(row.sessionId) && (own.has(row.sessionId) || inPlan(run, row)),
+  )
+}
 
 /**
  * The children that ended a turn since the last look. A child seen for the first time is only recorded, so
@@ -43,8 +54,12 @@ export const childStops = <R extends SessionRow>(
   return { seen: next, stopped }
 }
 
-/** The title the panel shows for a session. */
-export const sessionTitle = (row: SessionRow): string => row.name ?? row.title
+/**
+ * How the stop names a child: its id only, kept to the characters of an id. The prompt is taken as the
+ * owner's turn, so nothing a session can write (its title) goes in it; the coordination reads the rest in
+ * `flow status`.
+ */
+export const sessionRef = (row: SessionRow): string => row.sessionId.replace(/[^A-Za-z0-9_-]/g, '').slice(0, 64)
 
 /**
  * Whether the stop goes as the owner's own words. Off: the mod tells a fact, like the click's prompt. The
@@ -53,10 +68,10 @@ export const sessionTitle = (row: SessionRow): string => row.name ?? row.title
  */
 export const STOP_AS_USER = false
 
-/** What the coordination reads when children ended their turn: in pt-BR, like the click's `wakePrompt`. */
-export const stopPrompt = (titles: readonly string[], asUser = STOP_AS_USER): string => {
+/** What the coordination reads when children ended their turn, by id: in pt-BR, like the click's `wakePrompt`. */
+export const stopPrompt = (ids: readonly string[], asUser = STOP_AS_USER): string => {
   const head = asUser ? 'Painel (opção "Seguir o flow sem clique" ligada por mim):' : 'Painel:'
-  return titles.length === 1
-    ? `${head} a sessão "${titles[0]}" terminou o turno. Siga o flow.`
-    : `${head} as sessões ${titles.map(t => `"${t}"`).join(', ')} terminaram o turno. Siga o flow.`
+  return ids.length === 1
+    ? `${head} a sessão ${ids[0]} terminou o turno. Confira no flow status e siga o flow.`
+    : `${head} as sessões ${ids.join(', ')} terminaram o turno. Confira no flow status e siga o flow.`
 }

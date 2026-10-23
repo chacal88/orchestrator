@@ -22,15 +22,18 @@ refresh periódico (`$.clock.every(REFRESH_MS)`, 15 s, em `register.tsx`) já ch
 
 ## Quais filhas contam
 
-`wake.ts` recebe as linhas já filtradas por `eligibleChildren(run, flow, self, children)`:
+`wake.ts` recebe as linhas já filtradas por `eligibleChildren(run, { sessions, excluded }, self, children)`:
 
 - o flow desta coordenação está `running` (`ownsFlow` e `status === 'running'`);
 - a linha não está arquivada;
-- `startedBy === self.sessionId`, **ou** a sessão casa com uma fase do plano publicado (`phaseViews`, o mesmo casamento
-  do painel);
+- a sessão está no `sessions` do flow corrente (as filhas que o agrupamento adotou), **ou** casa com uma fase do plano
+  publicado da mesma change (`phaseViews`, o mesmo casamento do painel);
+- não está em `excluded`: as `earlier` do flow e as `sessions` dos outros flows desta coordenação, mesmo que o plano ou
+  o `sessions` as citem;
 - não é a própria coordenação.
 
-As sessões do grupo da sidebar que o dono abriu à mão, sem `startedBy` da coordenação e fora do plano, ficam de fora.
+Ter `startedBy` da coordenação não basta (fase 4, achado da revisão): uma filha da change anterior também tem. As
+sessões que o dono abriu à mão, fora do `sessions` e do plano, ficam de fora.
 
 ## Só a coordenação manda
 
@@ -56,10 +59,24 @@ ele enfileira, e o executor confere e registra na evidência. **Recomendação:*
 
 Texto, em pt-BR fixo, no estilo do `wakePrompt`:
 
-- uma sessão: `Painel: a sessão "<título>" terminou o turno. Siga o flow.`
-- várias: `Painel: as sessões "<a>", "<b>" terminaram o turno. Siga o flow.`
+- uma sessão: `Painel: a sessão <id> terminou o turno. Confira no flow status e siga o flow.`
+- várias: `Painel: as sessões <id-a>, <id-b> terminaram o turno. Confira no flow status e siga o flow.`
 
-O título usa `name ?? title`, como o resto do painel.
+O aviso leva só o id `local_…` de cada filha (`sessionRef`: só letras, dígitos, `_` e `-`, até 64 caracteres), nunca
+o título. O app trata o aviso como turno do dono, e o título é texto que qualquer sessão escreve: entrar cru seria
+injeção no turno do dono (fase 4). A coordenação confere o resto no `flow status`.
+
+**Só no tick do relógio.** O aviso sai só do refresh do `$.clock.every`. O refresh que roda dentro de uma chamada de
+ferramenta (`flow report`, `flow start`) não avisa: o host recusa o `$.prompt.submit` ali, porque ele esperaria o
+turno que a chamada segura, e a parada que esse refresh pegou se perderia.
+
+**Uma volta por vez.** Uma trava em memória no módulo (`waking`) faz um refresh que se sobrepõe a outro pular o aviso,
+para que a mesma parada não saia duas vezes.
+
+**Freio contra laço.** O mod guarda no `$.state` (`autowake-brake`) o `seq` do flow no último aviso e quantos avisos
+saíram com ele. Depois de 3 avisos sem o `seq` mudar, para de avisar e mostra ao dono um toast: o flow parece parado.
+Quando o flow anda (`seq` novo), os avisos voltam. Com o clone inativo ou a opção desligada, o mod apaga `autowake-seen`,
+`autowake-pending` e `autowake-brake`.
 
 ## Sem `asUser`, com uma reserva
 

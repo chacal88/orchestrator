@@ -25,7 +25,15 @@ const T = {
   get: 'mcp__ccd_session_mgmt__get_session',
 }
 
-type World = { disk: Map<string, string>; rows: Row[]; prompts: { text: string; asUser: boolean }[]; clock: MockClock }
+type World = {
+  disk: Map<string, string>
+  rows: Row[]
+  prompts: { text: string; asUser: boolean }[]
+  toasts: string[]
+  clock: MockClock
+  /** While set, list_sessions answers only once it resolves: the refresh waits there, and the next one overlaps it. */
+  hold?: Promise<void>
+}
 
 const child = (sessionId: string, extra: Partial<Row> = {}): Row => ({
   sessionId, cwd: `/w/.claude/worktrees/${sessionId}`, title: `Fase ${sessionId}`, startedBy: 'local_ee', isRunning: true, lastActivityAt: 't1', ...extra,
@@ -38,7 +46,7 @@ const child = (sessionId: string, extra: Partial<Row> = {}): Row => ({
 const world = (on: On, rows: Row[]): World => {
   mock.store(on)
   const clock = mock.clock(on, { now: 1_000 })
-  const w: World = { disk: new Map([ACTIVE]), rows: [{ sessionId: 'local_ee', cwd: '/w', title: 'Coordenação', isRunning: false }, ...rows], prompts: [], clock }
+  const w: World = { disk: new Map([ACTIVE]), rows: [{ sessionId: 'local_ee', cwd: '/w', title: 'Coordenação', isRunning: false }, ...rows], prompts: [], toasts: [], clock }
   on('env.get', () => ({ value: '/h' }))
   on('session.root', () => ({ value: '/w' }))
   on('session.repo', () => ({ value: null }))
@@ -57,9 +65,10 @@ const world = (on: On, rows: Row[]): World => {
   on('process.run', () => ({ value: { exitCode: 128, stdout: '', stderr: 'not a repo' } as never }))
   on('tool.list', () => ({ value: Object.values(T).map(name => ({ name })) as never }))
   const answer = (text: string) => ({ result: text, text }) as never
-  on('tool.call', ($, e) => {
+  on('tool.call', async ($, e) => {
     const input = e as unknown as Record<string, unknown>
     if (input.tool === T.get) return answer(JSON.stringify(w.rows[0]))
+    if (input.tool === T.list && w.hold !== undefined) await w.hold
     if (input.tool === T.list) return answer(JSON.stringify(w.rows))
     return answer('ok')
   })
@@ -68,7 +77,10 @@ const world = (on: On, rows: Row[]): World => {
   on('ui.open', () => ({ value: { isPlaced: true } }) as never)
   on('ui.panes', () => ({ value: [] }) as never)
   on('ui.log', () => ({ value: undefined }) as never)
-  on('ui.toast', () => ({ value: undefined }) as never)
+  on('ui.toast', ($, e) => {
+    w.toasts.push(e.text)
+    return { value: undefined } as never
+  })
   on('prompt.submit', ($, e) => {
     const origin = e.origin as { kind: string; asUser?: true }
     w.prompts.push({ text: e.text, asUser: origin.kind === 'plugin' && origin.asUser === true })
@@ -86,11 +98,16 @@ const stop = (w: World, id: string, activity = 't2') => {
   row.lastActivityAt = activity
 }
 
-/** The coordinator's session opens, its flow starts, and one refresh records what each child is doing. */
-const coordinate = async ($: Engine, w: World) => {
+/**
+ * The coordinator's session opens, its flow starts and keeps the children it opened (by default, every one
+ * of local_ee's; `earlier` ones belong to a change before), and one refresh records what each child is doing.
+ */
+const coordinate = async ($: Engine, w: World, earlier: string[] = []) => {
   await $.session.start({ cwd: '/w', surface: 'desktop', isInteractive: true } as never)
   await flow($, { action: 'start', change: 'b', flow: 'rapido' })
   expect(saved(w, 'b').coordinatorSession).toBe('local_ee')
+  const sessions = w.rows.filter(r => r.startedBy === 'local_ee' && !earlier.includes(r.sessionId)).map(r => r.sessionId)
+  w.disk.set(`${BASE}/flows/b.json`, JSON.stringify({ ...saved(w, 'b'), sessions, earlier }))
   await w.clock.advance(REFRESH_MS)
 }
 
@@ -102,7 +119,7 @@ test('with the option on, a child that ends its turn wakes the coordination once
 
   stop(w, 'local_b1')
   await w.clock.advance(REFRESH_MS)
-  expect(w.prompts).toEqual([{ text: 'Painel: a sessão "Fase local_b1" terminou o turno. Siga o flow.', asUser: false }])
+  expect(w.prompts).toEqual([{ text: 'Painel: a sessão local_b1 terminou o turno. Confira no flow status e siga o flow.', asUser: false }])
 
   // the same stop seen by the next refreshes is told once
   await w.clock.advance(REFRESH_MS * 2)
@@ -158,7 +175,83 @@ test('while the coordination works the stops wait, and go in one prompt once it 
 
   w.rows[0]!.isRunning = false
   await w.clock.advance(REFRESH_MS)
-  expect(w.prompts).toEqual([{ text: 'Painel: as sessões "Fase local_b1", "Fase local_b2" terminaram o turno. Siga o flow.', asUser: false }])
+  expect(w.prompts).toEqual([{ text: 'Painel: as sessões local_b1, local_b2 terminaram o turno. Confira no flow status e siga o flow.', asUser: false }])
   await w.clock.advance(REFRESH_MS * 2)
   expect(w.prompts).toHaveLength(1)
+})
+
+test('a child of an earlier change, or of another flow, wakes nothing even when the coordination opened it', async ($, on) => {
+  const w = world(on, [child('local_a1'), child('local_c1'), child('local_b1')])
+  optionOn(w)
+  await coordinate($, w, ['local_a1'])
+  // change c ran before on this coordination and keeps its own child, which b's list names by mistake
+  w.disk.set(`${BASE}/flows/c.json`, JSON.stringify({ ...saved(w, 'b'), change: 'c', status: 'done', sessions: ['local_c1'], earlier: [] }))
+  expect(saved(w, 'b').sessions).toContain('local_c1')
+  stop(w, 'local_a1')
+  stop(w, 'local_c1')
+  await w.clock.advance(REFRESH_MS * 2)
+  expect(w.prompts).toEqual([])
+
+  stop(w, 'local_b1')
+  await w.clock.advance(REFRESH_MS)
+  expect(w.prompts.map(p => p.text)).toEqual(['Painel: a sessão local_b1 terminou o turno. Confira no flow status e siga o flow.'])
+})
+
+test('two refreshes that overlap tell a stop once', async ($, on) => {
+  const w = world(on, [child('local_b1')])
+  optionOn(w)
+  await coordinate($, w)
+  stop(w, 'local_b1')
+  // the first tick's refresh waits on the session list while the second tick starts: both look together
+  let release = () => {}
+  w.hold = new Promise(resolve => (release = resolve))
+  await w.clock.advance(REFRESH_MS)
+  await w.clock.advance(REFRESH_MS)
+  w.hold = undefined
+  release()
+  await w.clock.advance(REFRESH_MS)
+  expect(w.prompts).toHaveLength(1)
+})
+
+test('a refresh run by a flow report leaves the stop to the tick, which tells it', async ($, on) => {
+  const w = world(on, [child('local_b1')])
+  optionOn(w)
+  await coordinate($, w)
+  stop(w, 'local_b1')
+  // a prompt submitted inside the report's tool call would wait on that call's turn: the stop must not go there
+  await Promise.all([w.clock.advance(REFRESH_MS), flow($, { action: 'report', step: 'planejar', outcome: 'pronto' })])
+  await w.clock.advance(REFRESH_MS)
+  expect(w.prompts).toHaveLength(1)
+})
+
+test('after 3 stops told with the flow standing still, the mod stops telling and says so; a moving flow tells again', async ($, on) => {
+  const w = world(on, [child('local_b1')])
+  optionOn(w)
+  await coordinate($, w)
+  for (const activity of ['t2', 't3', 't4', 't5', 't6']) {
+    stop(w, 'local_b1', activity)
+    await w.clock.advance(REFRESH_MS)
+  }
+  expect(w.prompts).toHaveLength(3)
+  expect(w.toasts.filter(t => /parece parado/.test(t))).toHaveLength(1)
+
+  // the coordination moves the flow (a new seq): the next stop is told again
+  await flow($, { action: 'report', step: 'planejar', outcome: 'pronto' })
+  stop(w, 'local_b1', 't7')
+  await w.clock.advance(REFRESH_MS)
+  expect(w.prompts).toHaveLength(4)
+})
+
+test('with the clone inactive nothing is kept, so a stop from then is not told once it is active again', async ($, on) => {
+  const w = world(on, [child('local_b1')])
+  optionOn(w)
+  await coordinate($, w)
+  w.disk.delete(ACTIVE[0])
+  stop(w, 'local_b1')
+  await w.clock.advance(REFRESH_MS * 2)
+  expect(w.prompts).toEqual([])
+
+  w.disk.set(...ACTIVE)
+  await w.clock.advance(REFRESH_MS * 2)
+  expect(w.prompts).toEqual([])
 })
