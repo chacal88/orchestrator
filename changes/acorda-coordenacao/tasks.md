@@ -138,3 +138,29 @@ antes de uma nova revisão. Portões: `claude plugin test orquestrador` (testes)
       agrupamento adota no flow só o id que o `start_session` devolveu. Verificação: teste de harness — cx: simple
 - [x] 4.8 Detalhe (`wakeCoordination`): com o clone inativo, o mod limpa também o `autowake-seen` (e o pendente).
       Verificação: teste de harness em que uma parada de quando o clone estava inativo não é avisada ao reativar — cx: simple
+
+## 5. Achados da 2ª revisão
+
+A 2ª revisão de código confirmou os 8 achados da fase 4 resolvidos e rejeitou a change por um bloqueante e dois
+detalhes. Última tentativa do passo antes de escalar ao dono. Portões: `claude plugin test orquestrador` (testes) e
+`tsc` (tipos). Arquivos: `hooks/register.tsx`, `hooks/wake.ts`, `types/index.d.ts`, os testes, `proposal.md`,
+`design.md` e `evidence.md`. A versão fica em 0.13.0.
+
+- [x] 5.1 Bloqueante, o freio dispara à toa (`wakeCoordination`, `AUTOWAKE_MAX_SAME_SEQ`): o `seq` fica parado entre
+      as fases do `executar`, e a 4ª fase que termina era barrada com um toast falso. O freio passa a medir o
+      andamento com `flowProgress` (`hooks/wake.ts`: `seq`, fases fechadas, sessões adotadas e fases `done` do plano)
+      e a frear por filha: a mesma filha avisada 3 vezes sem o flow andar. Escolha no `evidence.md`. Verificação:
+      testes de harness com 4 fases terminando uma a uma no mesmo `seq` (fases fechadas entre elas, plano republicado
+      entre elas, e nada entre elas com filhas diferentes) dão 4 avisos e nenhum toast; a mesma filha parando de novo
+      sem nada mudar (nem com o plano republicado igual) é freada, com toast; e teste de `flowProgress` em
+      `wake.test.ts` — cx: medium
+- [x] 5.2 O `report` ainda podia apagar uma filha adotada: toda gravação do flow que lê e grava o estado inteiro
+      (`saveFlow`: `report`, `note`, `close`, os passos automáticos e o clique do dono) junta `sessions` (união) e
+      `groupId` (o do disco) do arquivo antes de gravar; o `keepGrouping`, que já junta, grava direto (`writeFlow`).
+      Um flow começado de novo (outro `startedAt`) não herda nada do anterior. Verificação: teste de harness em que
+      uma adoção entre a leitura e a gravação do `report` não se perde, e outro em que um `flow start` novo não herda
+      as sessões do flow que acabou — cx: simple
+- [x] 5.3 Textos desatualizados: o teste "…once, with its title" vira "…once, with its id"; a `proposal.md` (§ "O
+      aviso" e critério 3) diz que o aviso leva só o id da sessão, limpo, nunca o título, por segurança; o
+      `evidence.md` registra a mudança do critério 3. Verificação: `grep -n "título" proposal.md` só acha o "nunca o
+      título" das linhas 64 e 97, e a seção da fase 5 no `evidence.md` — cx: simple

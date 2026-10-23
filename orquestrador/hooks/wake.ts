@@ -23,6 +23,20 @@ export const eligibleChildren = <R extends SessionRow>(
 }
 
 /**
+ * How far the flow went, for the brake against a loop: its `seq` moves only on a report, but inside the
+ * `executar` loop it stands still from phase to phase, so the phases closed in the flow, the sessions it
+ * adopted and the phases done in its plan count too. The plan's `updatedAt` does not: republishing the
+ * same plan is not progress.
+ */
+export const flowProgress = (
+  flow: { seq: number; closed?: Record<string, unknown>; sessions?: readonly string[] },
+  run: OrchestrationRun | undefined,
+): string => {
+  const done = (run?.waves ?? []).flatMap(wave => wave.phases).filter(phase => phase.status === 'done').length
+  return [flow.seq, Object.keys(flow.closed ?? {}).length, (flow.sessions ?? []).length, done].join('|')
+}
+
+/**
  * The children that ended a turn since the last look. A child seen for the first time is only recorded, so
  * turning the option on (or an app restart) never tells old stops. A stop is a child not running now that
  * was running before, or whose last activity moved (a short turn between two looks); `told` keeps the stop

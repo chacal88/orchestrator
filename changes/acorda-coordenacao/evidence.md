@@ -40,7 +40,7 @@ Não deu para ver ao vivo nesta fase: o app carrega o mod do marketplace (o mais
 5. **Desligar.** Apertar "Desligar", deixar uma filha terminar: nenhum aviso. Ligar de novo: a parada de quando estava desligada não é avisada.
 6. **Plano B, se o app recusar.** Se no passo 3 o `start_session` voltar como cartão (o app não tratou o aviso como turno do dono), trocar `STOP_AS_USER` para `true` em `orquestrador/hooks/wake.ts` (o texto passa a `Painel (opção "Seguir o flow sem clique" ligada por mim): …` e o envio leva `asUser: true`), ajustar o teste do texto em `tests/autowake-harness.test.ts`, lançar a versão de correção e repetir os passos 2 a 4.
 7. **Mover de grupo muda o `lastActivityAt`?** Com a opção ligada e uma filha parada, mover essa filha de grupo na sidebar (à mão, ou pelo agrupamento depois de um `start_session`) e olhar a linha dela no `list_sessions` antes e depois. Se o `lastActivityAt` mudar só com a mudança de grupo, o mod lê isso como uma parada nova e avisa sem a filha ter trabalhado: anotar aqui e abrir correção (o freio da fase 4 corta o laço depois de 3 avisos no mesmo `seq`, mas não o primeiro aviso falso).
-8. **Freio.** Com a opção ligada e o flow parado no mesmo passo, deixar a mesma filha terminar quatro turnos seguidos: três avisos e, no quarto, nenhum aviso e um toast "o flow de <change> parece parado". Depois de um `flow report`, a próxima parada volta a ser avisada.
+8. **Freio.** Com a opção ligada e o flow parado no mesmo passo, deixar a mesma filha terminar quatro turnos seguidos: três avisos e, no quarto, nenhum aviso e um toast "o flow de <change> parece parado" com o id dela. Outra filha que termina nesse meio-tempo continua sendo avisada. Depois de o flow andar (um `flow report`, um `flow close`, uma sessão nova adotada ou uma fase `done` no plano), a próxima parada volta a ser avisada. No passo `executar`, com quatro fases terminando uma a uma, saem quatro avisos e nenhum toast (fase 5).
 
 ## Fase 4 — achados da revisão
 
@@ -54,3 +54,27 @@ Não deu para ver ao vivo nesta fase: o app carrega o mod do marketplace (o mais
 - 4.8 (clone inativo): com o clone inativo, como com a opção desligada, o mod apaga `autowake-seen`, `autowake-pending` e `autowake-brake` (`forgetWatch`). Teste "with the clone inactive nothing is kept, so a stop from then is not told once it is active again" (pass).
 - Versão continua 0.13.0. `types/index.d.ts`: `autowake-pending` agora guarda ids, e entrou `autowake-brake`.
 - Portões: `claude plugin test orquestrador` saiu com 0 (400 pass, 0 fail, 33 arquivos); `tsc` (typescript 5.6.3, tipos do engine 2.1.308) saiu com 0.
+
+## Fase 5 — achados da 2ª revisão
+
+- 5.1 (o freio disparava à toa): **escolha: medir o andamento com `flowProgress` e frear por filha.**
+  - **A chave do andamento.** `flowProgress` (`hooks/wake.ts`) junta o `seq` do flow, o número de fases no `closed`, o número de sessões no `sessions` e o número de fases `done` no plano publicado da change. No `executar` o `seq` fica parado, mas o `flow close` de uma fase muda o `closed`, abrir a fase seguinte adota uma sessão e a skill republica o plano com a fase `done`. Qualquer um desses mudando recomeça a contagem.
+  - **Fora da chave: o `updatedAt` do plano.** Republicar o mesmo plano não é andamento. Uma coordenação presa num vaivém que republica o plano a cada aviso escaparia do freio se ele contasse.
+  - **Freio por filha, no lugar do freio global.** `autowake-brake` guarda `{ key, told: { <id>: n }, warned }`. Uma filha avisada 3 vezes (`AUTOWAKE_MAX_SAME_CHILD`) sem a chave mudar deixa de ser avisada, e o dono vê um toast, uma vez por chave, com o id dela. As outras filhas continuam sendo avisadas. O contador global da fase 4 saiu porque também barrava um caso legítimo: uma onda de fases paralelas em que a coordenação espera todas terminarem antes de fechar alguma, e por isso nada no flow muda entre os avisos. O laço de verdade é a mesma filha parando sem nada andar, e o freio por filha o pega. O pior caso é limitado a 3 avisos por filha da change.
+  - **Testes.** `autowake-harness.test.ts`, 4 testes novos (pass):
+    - "4 phases that end one by one in the executar loop, with the seq standing still, are 4 stops told and no toast": o `closed` ganha a fase entre as paradas, e o `seq` é o mesmo no fim.
+    - "4 phases that end one by one, with the plan republished between them…": o plano é republicado com mais uma fase `done`, e saem 4 avisos.
+    - "4 different children that end while nothing moves in the flow are still 4 stops told…": o flow fica igual byte a byte, e saem 4 avisos sem toast.
+    - "the same child that stops again and again while nothing moves is braked, even with the plan republished as it was": 6 paradas da mesma filha dão 3 avisos e 1 toast com o id dela. Outra filha que para depois ainda é avisada, sem segundo toast.
+  - O teste da fase 4 (5 paradas da mesma filha → 3 avisos e 1 toast; depois de um `flow report`, avisa de novo) continua passando. `wake.test.ts` ganhou o teste de `flowProgress`: muda com `seq`, `closed`, `sessions` e fases `done`, e não muda só com o `updatedAt` do plano.
+- 5.2 (o `report` podia apagar uma filha adotada): `saveFlow` relê o flow do disco antes de gravar. Se é o mesmo flow (mesmo `startedAt`), junta `sessions` (união) e `groupId` (o do disco, porque só o agrupamento o grava). Isso cobre todas as gravações que leem e gravam o estado inteiro: `report`, `note`, `close`, os passos automáticos e o deploy (`observeFlows`), o clique do dono e a liberação. O `keepGrouping` já junta e grava o `groupId` novo, por isso grava direto por `writeFlow`, o corpo antigo de `saveFlow`. Um `flow start` sobre um flow encerrado tem outro `startedAt` e não herda nada.
+  - Testes em `grupos-harness.test.ts` (pass):
+    - "a session adopted while a flow report works is kept by the report": o `fs.read` falso grava a adoção (`sessions: ["local_b1"]`, `groupId: "cg-B"`) logo depois de o `report` ler o flow, e o flow final tem o `report` (`current: validar`) e a adoção.
+    - "a new flow of a change takes nothing from the flow of the same change that ended".
+- **Prova de que os testes pegam os defeitos.** Com o `register.tsx` do commit 056623e no lugar do novo (e os testes novos), `claude plugin test orquestrador` dá 402 pass e 5 fail. Os 4 testes do freio e o do `report` falham. Com o código novo, todos passam.
+- 5.3 (textos):
+  - O teste de `autowake-harness.test.ts` agora se chama "…wakes the coordination once, with its id".
+  - **Critério 3 mudou.** A `proposal.md` (§ "O aviso" e o critério 3) dizia que o aviso levava o título. Agora diz que leva só o id `local_…` da sessão, limpo, nunca o título. O motivo é segurança: o app trata o aviso como turno do dono, e o título é texto que uma sessão escreve, então entrar no aviso seria injeção no turno do dono (achado 4.1). A coordenação avisa o dono dessa mudança.
+  - `design.md`: o § do freio foi reescrito, e "lista de títulos" do pendente virou "lista de ids". O roteiro 2.6, item 8, ganhou o freio por filha.
+- Versão continua 0.13.0. `types/index.d.ts`: `autowake-brake` mudou de forma. Um valor antigo (`{ seq, told }`) não tem `key`, então vale como andamento novo.
+- Portões: `claude plugin test orquestrador` saiu com 0 (407 pass, 0 fail, 33 arquivos); `tsc` (typescript 5.6.3, tipos do engine 2.1.308) saiu com 0.

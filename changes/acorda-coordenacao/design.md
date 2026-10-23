@@ -53,7 +53,7 @@ Não dá para confiar no que o `$.prompt.submit` faz com a sessão no meio de um
 ele enfileira, e o executor confere e registra na evidência. **Recomendação:** não depender disso.
 
 - Quando `self.isRunning` é `true`, as paradas vistas vão para `pending` no `$.state` (chave `autowake-pending`, lista
-  de títulos sem repetição) e nada é enviado.
+  de ids sem repetição) e nada é enviado.
 - No primeiro refresh com a coordenação parada, sai **uma** mensagem com tudo o que estava pendente e o `pending` é
   limpo.
 
@@ -73,9 +73,12 @@ turno que a chamada segura, e a parada que esse refresh pegou se perderia.
 **Uma volta por vez.** Uma trava em memória no módulo (`waking`) faz um refresh que se sobrepõe a outro pular o aviso,
 para que a mesma parada não saia duas vezes.
 
-**Freio contra laço.** O mod guarda no `$.state` (`autowake-brake`) o `seq` do flow no último aviso e quantos avisos
-saíram com ele. Depois de 3 avisos sem o `seq` mudar, para de avisar e mostra ao dono um toast: o flow parece parado.
-Quando o flow anda (`seq` novo), os avisos voltam. Com o clone inativo ou a opção desligada, o mod apaga `autowake-seen`,
+**Freio contra laço.** O mod guarda no `$.state` (`autowake-brake`) quanto o flow tinha andado no último aviso
+(`flowProgress` em `hooks/wake.ts`: o `seq`, as fases fechadas no `closed`, as sessões adotadas no `sessions` e as fases
+`done` do plano) e quantas vezes cada filha foi avisada desde então. Só o `seq` não basta: no passo `executar` ele fica
+parado de uma fase para outra (fase 5). Uma filha avisada 3 vezes sem o flow andar deixa de ser avisada, e o dono vê
+um toast, uma vez: o flow parece parado. As outras filhas continuam sendo avisadas, porque uma onda de fases paralelas
+que terminam antes de a coordenação fechar alguma é legítima. Quando o flow anda, a contagem recomeça. Com o clone inativo ou a opção desligada, o mod apaga `autowake-seen`,
 `autowake-pending` e `autowake-brake`.
 
 ## Sem `asUser`, com uma reserva

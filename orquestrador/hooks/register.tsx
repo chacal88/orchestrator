@@ -100,7 +100,7 @@ import { DEFAULT_LANGUAGES, contentRule, uiText } from './i18n'
 import type { UiText } from './i18n'
 import { renderBand, renderPane } from './pane'
 import { readActivation, readAutowake, registryDir } from './activation'
-import { STOP_AS_USER, childStops, eligibleChildren, sessionRef, stopPrompt } from './wake'
+import { STOP_AS_USER, childStops, eligibleChildren, flowProgress, sessionRef, stopPrompt } from './wake'
 import { WORKFLOWS_PANE, drawWorkflows, startWorkflowsLoad, toggleWorkflowsPane } from './workflows-pane'
 import { findAgent, loadConfig as loadProjectConfig, loadFlows } from './flow-files'
 import { firstSite, issueUrl, jiraKeys, moveFor, parseIssue, parseTransitions, wishes } from './jira'
@@ -161,8 +161,8 @@ const RUNNING = { plugin: 'orquestrador', key: 'running' } as const
 const AUTOWAKE_SEEN = { plugin: 'orquestrador', key: 'autowake-seen' } as const
 const AUTOWAKE_PENDING = { plugin: 'orquestrador', key: 'autowake-pending' } as const
 const AUTOWAKE_BRAKE = { plugin: 'orquestrador', key: 'autowake-brake' } as const
-/** Stops told while the flow's `seq` stays the same, before the mod takes the flow as stuck and stops telling. */
-const AUTOWAKE_MAX_SAME_SEQ = 3
+/** Stops of one child told while the flow does not move (`flowProgress`), before the mod stops telling that child. */
+const AUTOWAKE_MAX_SAME_CHILD = 3
 const GRILL_DRAFTS = { plugin: 'orquestrador', key: 'grillDrafts' } as const
 const START_SESSION = 'mcp__ccd_session__start_session'
 const TRANSITION_SUFFIX = '__transitionJiraIssue'
@@ -734,17 +734,23 @@ const wakeOnce = async (
     return
   }
   await $.state.set(AUTOWAKE_PENDING, null)
-  // a brake against a loop: told stops that move nothing in the flow (its `seq`) stop after a few
+  // a brake against a loop: the same child told a few times while the flow does not move stops being told
   const { value: brake } = await $.state.get(AUTOWAKE_BRAKE)
-  const told = brake?.seq === flow.seq ? brake.told + 1 : 1
-  await $.state.set(AUTOWAKE_BRAKE, { seq: flow.seq, told })
-  if (told > AUTOWAKE_MAX_SAME_SEQ) {
-    if (told === AUTOWAKE_MAX_SAME_SEQ + 1) {
-      $.ui.toast(`Orquestrador: o flow de ${flow.change} parece parado. Parei de avisar a coordenação até o flow andar.`)
-    }
-    return
+  const key = flowProgress(flow, plan)
+  const same = brake?.key === key ? brake : undefined
+  const told = same?.told ?? {}
+  const fresh = pending.filter(id => (told[id] ?? 0) < AUTOWAKE_MAX_SAME_CHILD)
+  const braked = pending.filter(id => !fresh.includes(id))
+  const warned = same?.warned === true || braked.length > 0
+  await $.state.set(AUTOWAKE_BRAKE, { key, told: { ...told, ...Object.fromEntries(fresh.map(id => [id, (told[id] ?? 0) + 1])) }, warned })
+  if (braked.length > 0 && same?.warned !== true) {
+    $.ui.toast(
+      `Orquestrador: o flow de ${flow.change} parece parado: ${braked.join(', ')} terminou o turno mais de ${AUTOWAKE_MAX_SAME_CHILD} ` +
+        'vezes sem o flow andar. Parei de avisar a coordenação sobre essa sessão até o flow andar.',
+    )
   }
-  void $.prompt.submit({ text: stopPrompt(pending), ...(STOP_AS_USER ? { asUser: true as const } : {}) }).catch(error => $.ui.log(`orquestrador: ${describeError('aviso', error)}`))
+  if (fresh.length === 0) return
+  void $.prompt.submit({ text: stopPrompt(fresh), ...(STOP_AS_USER ? { asUser: true as const } : {}) }).catch(error => $.ui.log(`orquestrador: ${describeError('aviso', error)}`))
 }
 
 /**
@@ -840,7 +846,8 @@ const keepGrouping = async ($: EngineInterface, change: string, fresh: readonly 
   const regrouped = groupId !== undefined && now.groupId !== groupId
   if (!added && !regrouped) return now
   const merged: FlowState = { ...now, ...(added ? { sessions } : {}), ...(regrouped ? { groupId } : {}) }
-  await saveFlow($, merged, [])
+  // already merged with the disk, and its groupId is the new one: written as it is
+  await writeFlow($, merged, [])
   return merged
 }
 
@@ -1310,8 +1317,21 @@ const allFlowStates = async ($: EngineInterface): Promise<FlowState[]> => {
   return states.filter((s): s is FlowState => s !== undefined && typeof s.change === 'string')
 }
 
-/** The state file and its append-only log, both written by the mod alone. */
+/**
+ * Writes a flow read earlier, keeping what the grouping added to it on disk since (`sessions`, `groupId`):
+ * a session adopted while a `flow report` or `close` worked is not lost. Only the grouping owns those two
+ * fields, so the disk wins for `groupId`. A flow started anew (another `startedAt`) takes nothing from the old one.
+ */
 const saveFlow = async ($: EngineInterface, state: FlowState, events: readonly FlowEvent[]): Promise<void> => {
+  const disk = await loadFlowState($, state.change)
+  if (disk === undefined || disk.startedAt !== state.startedAt) return writeFlow($, state, events)
+  const sessions = [...new Set([...(state.sessions ?? []), ...(disk.sessions ?? [])])]
+  const groupId = disk.groupId ?? state.groupId
+  await writeFlow($, { ...state, ...(state.sessions === undefined && disk.sessions === undefined ? {} : { sessions }), ...(groupId === undefined ? {} : { groupId }) }, events)
+}
+
+/** The state file and its append-only log, both written by the mod alone. */
+const writeFlow = async ($: EngineInterface, state: FlowState, events: readonly FlowEvent[]): Promise<void> => {
   await $.fs.write(await flowFile($, state.change, 'json'), JSON.stringify(state))
   await $.state.set(RUNNING, { root: '', at: 0, running: false }).catch(() => undefined)
   const log = await flowFile($, state.change, 'ndjson')

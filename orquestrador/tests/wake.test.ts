@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'claude-code/testing'
 
 import type { OrchestrationRun, SessionRow } from '../types'
-import { childStops, eligibleChildren, sessionRef, stopPrompt } from '../hooks/wake'
+import { childStops, eligibleChildren, flowProgress, sessionRef, stopPrompt } from '../hooks/wake'
 
 const row = (sessionId: string, extra: Partial<SessionRow> = {}): SessionRow => ({
   sessionId, title: `Fase ${sessionId}`, cwd: `/w/wt/${sessionId}`, branch: undefined, isRunning: false, isArchived: false,
@@ -104,4 +104,16 @@ describe('what the coordination reads', () => {
     expect(odd).toMatch(/^local_ab+$/)
     expect(odd.length).toBe(64)
   })
+})
+
+test('the flow moves for the brake when its seq, its closed phases, its adopted sessions or its plan phases done move, not when the plan is only republished', () => {
+  const flow = { seq: 4, closed: { '1': {} }, sessions: ['local_a'] }
+  const base = flowProgress(flow, run)
+  expect(flowProgress({ ...flow }, { ...run, updatedAt: 99 })).toBe(base)
+  expect(flowProgress({ ...flow, seq: 5 }, run)).not.toBe(base)
+  expect(flowProgress({ ...flow, closed: { '1': {}, '2': {} } }, run)).not.toBe(base)
+  expect(flowProgress({ ...flow, sessions: ['local_a', 'local_b'] }, run)).not.toBe(base)
+  const done = { ...run, waves: run.waves.map(w => ({ ...w, phases: w.phases.map(p => ({ ...p, status: 'done' as const })) })) }
+  expect(flowProgress(flow, done)).not.toBe(base)
+  expect(flowProgress({ seq: 4 }, undefined)).toBe('4|0|0|0')
 })

@@ -29,6 +29,8 @@ type World = {
   calls: Record<string, unknown>[]
   /** Runs when list_groups is asked, between the grouping's read of the flow and its write. */
   onGroups?: () => void
+  /** Runs once the given file was read, with the text read already in hand: a write between a read and its write. */
+  afterRead?: (path: string) => void
 }
 
 const row = (sessionId: string, groupId: string | undefined, extra: Partial<Row> = {}): Row => ({
@@ -48,7 +50,11 @@ const world = (on: On, rows: Row[], groups: World['groups']): World => {
   on('session.root', () => ({ value: '/w' }))
   on('session.repo', () => ({ value: null }))
   on('fs.exists', ($, e) => ({ value: w.disk.has(e.path) || [...w.disk.keys()].some(k => k.startsWith(`${e.path}/`)) }))
-  on('fs.read', ($, e) => ({ value: w.disk.get(e.path) ?? '' }))
+  on('fs.read', ($, e) => {
+    const value = w.disk.get(e.path) ?? ''
+    w.afterRead?.(e.path)
+    return { value }
+  })
   on('fs.write', ($, e) => {
     w.disk.set(e.path, e.text)
     return { value: undefined }
@@ -218,4 +224,31 @@ test('a session list that fails at the start is "do not know": the flow adopts o
   // local_a1 is the coordination's but may be an earlier change's: it is not taken into b
   expect(saved(w, 'b').sessions).toEqual(['local_b1'])
   expect((moves(w)[0]!.session_ids as string[]).includes('local_a1')).toBe(false)
+})
+
+test('a session adopted while a flow report works is kept by the report', async ($, on) => {
+  const w = world(on, [], [])
+  await flow($, { action: 'start', change: 'b', flow: 'rapido' })
+  const file = `${BASE}/flows/b.json`
+  // the report reads the flow; before it writes, the grouping adopts local_b1 and records the group
+  w.afterRead = path => {
+    if (path !== file) return
+    w.afterRead = undefined
+    w.disk.set(file, JSON.stringify({ ...saved(w, 'b'), sessions: ['local_b1'], groupId: 'cg-B' }))
+  }
+  const before = saved(w, 'b').seq
+  await flow($, { action: 'report', step: 'planejar', outcome: 'pronto' })
+  expect(w.afterRead).toBeUndefined()
+  expect(saved(w, 'b').seq).toBeGreaterThan(before)
+  expect(saved(w, 'b')).toMatchObject({ current: 'validar', sessions: ['local_b1'], groupId: 'cg-B' })
+  expect(saved(w, 'b').records.planejar).toMatchObject({ outcome: 'pronto' })
+})
+
+test('a new flow of a change takes nothing from the flow of the same change that ended', async ($, on) => {
+  const w = world(on, [], [])
+  await flow($, { action: 'start', change: 'b', flow: 'rapido' })
+  w.disk.set(`${BASE}/flows/b.json`, JSON.stringify({ ...saved(w, 'b'), status: 'aborted', sessions: ['local_old'], groupId: 'cg-OLD' }))
+  await flow($, { action: 'start', change: 'b', flow: 'rapido' })
+  expect(saved(w, 'b').sessions).toEqual([])
+  expect(saved(w, 'b').groupId).toBeUndefined()
 })

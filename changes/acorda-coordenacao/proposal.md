@@ -59,8 +59,11 @@ O que muda:
   versionada, e o modelo não consegue ligá-la sozinho, porque `touchesGateFiles` já recusa escrita nessa pasta.
 - **O aviso.** Com a opção ligada e um flow `running` desta coordenação, quando o refresh periódico do mod
   (`$.clock.every`, 15 s) vê uma filha passar de trabalhando a parada, o mod manda à coordenação:
-  `Painel: a sessão "<título>" terminou o turno. Siga o flow.`. Com várias de uma vez, vai uma mensagem só, com os
-  títulos juntos. A mensagem vai em nome do mod, sem `asUser`, como a do clique.
+  `Painel: a sessão <id> terminou o turno. Confira no flow status e siga o flow.`. Com várias de uma vez, vai uma
+  mensagem só, com os ids juntos. O aviso leva só o id `local_…` da sessão, limpo (só letras, dígitos, `_` e `-`), e
+  nunca o título: o app trata o aviso como turno do dono, e o título é texto que uma sessão escreve, então entrar no
+  aviso seria injeção no turno do dono (mudança da fase 4 da execução). A mensagem vai em nome do mod, sem `asUser`,
+  como a do clique.
 - **Quais filhas contam.** Só as sessões não arquivadas que a coordenação abriu (`startedBy` igual à coordenação) ou
   que estão ligadas a uma fase do plano publicado, e só enquanto um flow desta coordenação está `running`. Não contam
   as arquivadas, as que o dono abriu fora do plano nem as de outro flow.
@@ -91,7 +94,8 @@ O que muda:
    pt-BR e en, com o texto que diz que ela abre as sessões em nome do dono. Ligar ou desligar grava em
    `~/.claude/orquestrador/autowake.json` para a raiz do repositório e vale sem reiniciar.
 3. Com a opção ligada e um flow `running`, uma filha que passa de trabalhando a parada gera exatamente um
-   `$.prompt.submit` na coordenação, com o título dela e "Siga o flow". Teste de harness.
+   `$.prompt.submit` na coordenação, com o id dela, limpo, e "siga o flow", nunca o título (o título é texto que uma
+   sessão escreve; ver "O aviso"). Teste de harness.
 4. Com a opção desligada, nenhum aviso. Teste de harness.
 5. A mesma parada vista em dois refreshes gera um aviso só. Teste de harness.
 6. Uma sessão fora do plano (nem `startedBy` da coordenação, nem fase do plano) ou arquivada não gera aviso. Teste de

@@ -1,7 +1,7 @@
 import { expect, mock, test } from 'claude-code/testing'
 import type { Engine, MockClock, TestBody } from 'claude-code/testing'
 
-import type { FlowState } from '../types'
+import type { FlowState, OrchestrationRun } from '../types'
 
 /** The clone is activated, as the owner does from the panel: the mod works only where it is. */
 const ACTIVE: [string, string] = [`/w/.claude/${'settings'}.local.json`, JSON.stringify({ env: { ORQUESTRADOR: 'barrar' } })]
@@ -111,7 +111,7 @@ const coordinate = async ($: Engine, w: World, earlier: string[] = []) => {
   await w.clock.advance(REFRESH_MS)
 }
 
-test('with the option on, a child that ends its turn wakes the coordination once, with its title', async ($, on) => {
+test('with the option on, a child that ends its turn wakes the coordination once, with its id', async ($, on) => {
   const w = world(on, [child('local_b1')])
   optionOn(w)
   await coordinate($, w)
@@ -222,6 +222,92 @@ test('a refresh run by a flow report leaves the stop to the tick, which tells it
   await Promise.all([w.clock.advance(REFRESH_MS), flow($, { action: 'report', step: 'planejar', outcome: 'pronto' })])
   await w.clock.advance(REFRESH_MS)
   expect(w.prompts).toHaveLength(1)
+})
+
+/** The plan of change b, published by the coordination: one phase per child, the first `done` ones done. */
+const publishPlan = (w: World, ids: readonly string[], done: number, updatedAt: number) => {
+  const run: OrchestrationRun = {
+    change: 'b', changePath: undefined, coordinatorCwd: '/w', jira: undefined, jiraSite: undefined,
+    waves: [{
+      title: undefined, summary: undefined, jira: undefined,
+      phases: ids.map((id, i) => ({
+        id: String(i + 1), title: `Fase ${i + 1}`, status: i < done ? 'done' : 'running', icon: undefined, tasks: `${i + 1}.x`, session: id,
+        dependsOn: undefined, note: undefined, summary: undefined, jira: undefined, gates: undefined,
+      })),
+    }],
+    ownerQuestions: [], finalGates: undefined, updatedAt,
+  }
+  w.disk.set(`${BASE}/runs/b.json`, JSON.stringify(run))
+}
+
+const FOUR = ['local_b1', 'local_b2', 'local_b3', 'local_b4']
+
+test('4 phases that end one by one in the executar loop, with the seq standing still, are 4 stops told and no toast', async ($, on) => {
+  // between the stops the coordination closes the phase that ended (`flow close`), which keeps the seq
+  const w = world(on, FOUR.map(id => child(id)))
+  optionOn(w)
+  await coordinate($, w)
+  const seq = saved(w, 'b').seq
+  for (const [i, id] of FOUR.entries()) {
+    stop(w, id)
+    await w.clock.advance(REFRESH_MS)
+    const now = saved(w, 'b')
+    w.disk.set(`${BASE}/flows/b.json`, JSON.stringify({ ...now, closed: { ...now.closed, [String(i + 1)]: { at: 1, tasks: [], archived: true } } }))
+  }
+  expect(saved(w, 'b').seq).toBe(seq)
+  expect(w.prompts.map(p => p.text)).toEqual(FOUR.map(id => `Painel: a sessão ${id} terminou o turno. Confira no flow status e siga o flow.`))
+  expect(w.toasts.filter(t => /parece parado/.test(t))).toEqual([])
+})
+
+test('4 phases that end one by one, with the plan republished between them and the seq standing still, are 4 stops told', async ($, on) => {
+  const w = world(on, FOUR.map(id => child(id)))
+  optionOn(w)
+  publishPlan(w, FOUR, 0, 10)
+  await coordinate($, w)
+  for (const [i, id] of FOUR.entries()) {
+    stop(w, id)
+    await w.clock.advance(REFRESH_MS)
+    publishPlan(w, FOUR, i + 1, 20 + i)
+  }
+  expect(w.prompts).toHaveLength(4)
+  expect(w.toasts.filter(t => /parece parado/.test(t))).toEqual([])
+})
+
+test('4 different children that end while nothing moves in the flow are still 4 stops told: the brake counts per child', async ($, on) => {
+  // a wave of parallel phases: the coordination waits for all of them before it closes any
+  const w = world(on, FOUR.map(id => child(id)))
+  optionOn(w)
+  await coordinate($, w)
+  const before = JSON.stringify(saved(w, 'b'))
+  for (const id of FOUR) {
+    stop(w, id)
+    await w.clock.advance(REFRESH_MS)
+  }
+  expect(JSON.stringify(saved(w, 'b'))).toBe(before)
+  expect(w.prompts).toHaveLength(4)
+  expect(w.toasts.filter(t => /parece parado/.test(t))).toEqual([])
+})
+
+test('the same child that stops again and again while nothing moves is braked, even with the plan republished as it was', async ($, on) => {
+  const w = world(on, [child('local_b1'), child('local_b2')])
+  optionOn(w)
+  publishPlan(w, ['local_b1', 'local_b2'], 0, 10)
+  await coordinate($, w)
+  for (const [i, activity] of ['t2', 't3', 't4', 't5', 't6', 't7'].entries()) {
+    stop(w, 'local_b1', activity)
+    await w.clock.advance(REFRESH_MS)
+    // republishing the same plan is not progress
+    publishPlan(w, ['local_b1', 'local_b2'], 0, 20 + i)
+  }
+  expect(w.prompts).toHaveLength(3)
+  expect(w.toasts.filter(t => /parece parado/.test(t))).toHaveLength(1)
+  expect(w.toasts.find(t => /parece parado/.test(t))).toMatch(/local_b1/)
+
+  // another child of the flow is still told, without a second toast
+  stop(w, 'local_b2')
+  await w.clock.advance(REFRESH_MS)
+  expect(w.prompts.map(p => p.text).slice(3)).toEqual(['Painel: a sessão local_b2 terminou o turno. Confira no flow status e siga o flow.'])
+  expect(w.toasts.filter(t => /parece parado/.test(t))).toHaveLength(1)
 })
 
 test('after 3 stops told with the flow standing still, the mod stops telling and says so; a moving flow tells again', async ($, on) => {
