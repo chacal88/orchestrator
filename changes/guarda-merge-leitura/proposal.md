@@ -2,15 +2,18 @@
 
 ## Por quê
 
-Em 2026-10-22 o guarda de merge recusou `for n in 12 13 14; do gh pr view $n --json mergeable,…; done`, um
-comando que só lê PRs: sem merge legível na linha, qualquer comando "que executa algo" (aqui o `for`) numa linha que
-cita `gh` e `merge` era tratado como merge escondido.
+Em 2026-10-22 o guarda de merge recusou um laço `for` que só lia o estado de alguns PRs (`gh pr view … --json
+mergeable`). A regra do guarda diz que, quando a linha cita `gh` e `merge` sem um merge legível, qualquer comando que
+executa algo conta como merge escondido. Nesse laço, quem "executava algo" era a própria palavra `for`.
 
 ## O que muda
 
-O guarda passa a julgar cada comando pelo que ele mesmo faz, também sem merge legível: é merge escondido quando o
-executável vem de variável, quando o próprio comando cita `gh` e `merge` (xargs, timeout, find -exec, sudo, awk…),
-quando é um shell ou interpretador lendo do stdin, ou — sem merge legível na linha — um shell ou interpretador
-rodando um script, e o `git` que roda comandos. Laços, `cd`, `jq` e afins deixam de ser recusados.
+A regra do guarda continua a mesma, porque ela pega os scripts escondidos (`. m.sh`, `source`, `./m.sh`, `timeout`,
+`env -i`, `sudo -u`, `xargs sh -c`…). A mudança é que as palavras de laço e de condição do próprio shell (`for`,
+`select`, `case`, `esac`, `done`, `fi`, `read`, `break`, `continue`, `[[`, `]]` e `}`) passam a contar como inertes.
+Elas não executam nada sozinhas, e o que elas envolvem continua sendo julgado como um comando à parte.
+
+Uma primeira tentativa, que julgava cada comando só pelo que ele mesmo faz, foi reprovada na revisão de segurança e
+desfeita (ver evidence.md).
 
 Versão 0.12.2.
