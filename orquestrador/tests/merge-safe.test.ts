@@ -201,6 +201,26 @@ test('a gh call that only reads, and text that only mentions a merge, still pass
   expect(opaqueMerge('gh pr view 805 --json mergeable')).toBeUndefined()
 })
 
+// guarda-merge-leitura — a loop or a reader is no hidden merge
+
+test('a loop that only reads PRs, and other readers around gh, pass', async ($, on) => {
+  orchestrated(world(on), undefined)
+  expect(await merge($, 'for n in 12 13 14; do gh pr view $n --json mergeable,headRefName; done')).toBeUndefined()
+  expect(await merge($, 'while read n; do gh pr view "$n" --json mergeStateStatus; done < prs.txt')).toBeUndefined()
+  expect(await merge($, 'gh pr list --json number,mergeable | jq ".[] | .number"')).toBeUndefined()
+  // a script file written and run on the same line, with no readable merge, is still refused
+  expect(await merge($, "cat > m.sh <<'EOF'\ngh pr merge 805 --admin\nEOF\nbash m.sh")).toMatch(OPAQUE)
+  expect(await merge($, "cat > m.py <<'EOF'\nimport os; os.system('gh pr merge 805 --admin')\nEOF\npython3 m.py")).toMatch(OPAQUE)
+  // the other ways to run a script written on the same line stay refused
+  for (const run of ['. m.sh', 'source m.sh', 'chmod +x m.sh && ./m.sh', 'timeout 60 bash m.sh', 'env -i bash m.sh', 'sudo -u me bash m.sh', 'fish m.sh']) {
+    expect(await merge($, `cat > m.sh <<'EOF'\ngh pr merge 805 --admin\nEOF\n${run}`)).toMatch(OPAQUE)
+  }
+  expect(await merge($, `echo "gh pr merge 805 --admin" | xargs -I{} sh -c {}`)).toMatch(OPAQUE)
+  // a loop that merges is still refused
+  expect(await merge($, 'for n in 805; do gh pr merge $n --admin; done')).toBeDefined()
+  expect(await merge($, 'for n in 805; do echo $n | xargs gh pr merge --admin; done')).toMatch(OPAQUE)
+})
+
 // 9.1 — a readable merge does not cover a hidden one beside it
 
 test('a hidden merge next to a readable one is still refused, command by command', async ($, on) => {

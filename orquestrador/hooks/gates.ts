@@ -578,6 +578,8 @@ export const mergeCalls = (command: string): MergeCall[] =>
 const INERT = new Set([
   'echo', 'printf', 'cat', 'grep', 'egrep', 'rg', 'head', 'tail', 'less', 'jq', 'wc', 'sort', 'uniq', 'diff',
   'cd', 'ls', 'pwd', 'true', 'false', 'test', '[', 'mkdir', 'touch', 'cp', 'mv', 'tee',
+  // the shell's own loop and branch words run nothing by themselves: what they wrap is judged as its own command
+  'for', 'select', 'case', 'esac', 'done', 'fi', 'read', 'break', 'continue', '[[', ']]', '}',
 ])
 
 /** A `git` that runs a command of its own: an alias with `!`, `rebase --exec`/`-x`, `filter-branch`, `bisect run`. */
