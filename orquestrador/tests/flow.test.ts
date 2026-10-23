@@ -168,7 +168,9 @@ describe('the engine', () => {
     expect(text).toMatch(/do not do the step in this session/)
     expect(text).toMatch(/propose it as a card/)
     expect(text).toMatch(/"own_initiative"/)
-    expect(text).toMatch(/wake_when_done/)
+    expect(text).toMatch(/user_asked" with wake_when_done/)
+    expect(text).toMatch(/without wake_when_done/)
+    expect(text).toMatch(/agent, model and effort/)
     expect(text).not.toMatch(/Do the step/)
   })
 

@@ -36,3 +36,13 @@ Uma fase só, porque as tarefas mexem em arquivos diferentes e o executor as faz
       (`own_initiative`, mesmo prompt), avisa o dono numa linha e espera, sem fazer o passo; o tick do `ScheduleWakeup`
       também é evento automático (só confere e propõe cartão). Mod: o texto do passo `session` diz isso de forma curta,
       com teste. Verificação: `claude plugin test orquestrador` sai com 0 — cx: simple
+
+## 2. Achados da revisão
+
+- [x] 2.1 Skill § 5.2 e start recusado: corrente do `user_asked`, reserva longa (1200 s ou mais) com `wake_when_done`,
+      frase "não é confiável" removida, checklist ajustado. Verificação: `grep -n "não é confiável"` não acha nada — cx: simple
+- [x] 2.2 `flow.ts` passo `session`: "user_asked" com `wake_when_done`; cartão sem `wake_when_done`. Skill diz o mesmo;
+      teste atualizado. Verificação: testes saem com 0 — cx: simple
+- [x] 2.3 Teste do passo `session` confere "agent, model and effort". Verificação: testes saem com 0 — cx: simple
+- [x] 2.4 `SKILL.md:62`: "nunca de primeira com `own_initiative`; só quando o start é recusado". Verificação: grep — cx: simple
+- [x] 2.5 `SKILL.md` § 4.4: rodar o portão pelo nome do comando, com PATH, sem caminho entre aspas. Verificação: grep — cx: simple

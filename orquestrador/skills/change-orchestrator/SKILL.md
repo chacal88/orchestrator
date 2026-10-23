@@ -59,8 +59,8 @@ tabela do § 4. Passo sem agente declarado segue o prompt autocontido do § 4.
 
 **Uma sessão filha por passo de sessão e por fase.** Pedir "orquestrar" é o pedido explícito
 do dono por uma sessão para cada passo de sessão e para cada fase. Abra cada uma com
-`start_session` e `initiation: "user_asked"` e `wake_when_done: true`; nunca com `own_initiative`
-(vira cartão parado) e nunca com um subagente no lugar dela. O corpo do agente vai no prompt, e a
+`start_session` e `initiation: "user_asked"` e `wake_when_done: true`; nunca de primeira com
+`own_initiative` (vira cartão parado; só quando o start é recusado, abaixo) e nunca com um subagente no lugar dela. O corpo do agente vai no prompt, e a
 sessão usa o modelo e o esforço do passo. Um passo `session` nunca é feito na coordenação.
 
 - **Fica com a coordenação:** a escolha do flow, as rodadas do grill, o mockup, a liberação no
@@ -71,10 +71,13 @@ sessão usa o modelo e o esforço do passo. Um passo `session` nunca é feito na
   `use_worktree: false` quando só escrevem arquivos que a coordenação não mexe, para o PR sair
   de uma branch só; se a escrita pode cruzar com a de outra sessão, em worktree própria.
 - **Start recusado.** O app recusa `user_asked` num turno que começou por mensagem de outra
-  sessão ou por evento automático (inclui o tick do `ScheduleWakeup`); só vale no turno que vem
-  do próprio dono, ou no `<side-sessions-event>` logo depois dele. Se recusar, proponha a sessão
-  como cartão (`own_initiative`, mesmo prompt), diga ao dono numa linha que é só clicar e
-  espere. Nunca faça o passo no lugar da filha.
+  sessão ou por evento automático (inclui o tick do `ScheduleWakeup`). A corrente do
+  `user_asked`: só vale no turno do dono e nos `<side-sessions-event>` que vêm em sequência
+  direta a partir dele. Qualquer turno de mensagem entre sessões ou de tick no meio quebra a
+  corrente; dali em diante toda sessão vira cartão até o dono escrever de novo. Se recusar,
+  proponha a sessão como cartão (`own_initiative`, mesmo prompt, sem `wake_when_done`, que o
+  app recusa no cartão; o app acorda a coordenação quando a filha termina mesmo assim), diga ao
+  dono numa linha que é só clicar e espere. Nunca faça o passo no lugar da filha.
 
 **Clique do dono acorda você.** Quando o dono aperta um botão do flow e o próximo passo é
 seu (sessão, automático, `executar`, ou o mockup de novo depois de "Pedir ajustes"), o painel
@@ -167,7 +170,9 @@ diagnóstico pronto ao dono.
    as sessões rodarem e impõe os portões (publicar `done`, arquivar, `gh pr merge`); só o
    dono pula um portão, pelo painel. No prompt da fase, peça cada portão como comando
    próprio, que o código de saída decida: nada de `| tail`, `; echo $?` ou `|| true`
-   depois dele (junte com `&&`). Para pedir ao dono que libere um portão, use
+   depois dele (junte com `&&`). Rode o portão pelo nome do
+   comando, com o binário no PATH (ex. `export PATH=… && command claude plugin test …`), nunca
+   por caminho entre aspas: o mod reconhece o portão pelo nome. Para pedir ao dono que libere um portão, use
    `ownerQuestions` com `gate: {phase, gate}` (`phase: "final"` para os `finalGates`): o
    painel oferece o pulo na própria pergunta, e "Aceitar" nunca pula portão.
    Os `finalGates` seguram só o `gh pr merge` do PR da própria change, e só enquanto o
@@ -196,9 +201,11 @@ diagnóstico pronto ao dono.
    coordenação num turno de mensagem, onde o app recusa abrir sessão. A filha só usa
    `SendMessage` (ao id da coordenação, por extenso no prompt) quando precisa de resposta no
    meio do trabalho. Todo prompt de fase termina com essa instrução.
-2. **Puxar.** Com fase em voo, NUNCA termine o turno sem `ScheduleWakeup` (120 s); tick
-   sem mudança é `noop: true`. O tick também é evento automático: nele a coordenação só confere
-   e, se precisar de uma sessão, propõe o cartão (§ 2); não abre sessão. A notificação de fim de sessão não é confiável. Sem fase em
+2. **Puxar.** Com fase em voo, NUNCA termine o turno sem `ScheduleWakeup`; tick
+   sem mudança é `noop: true`. Com filha aberta com `wake_when_done: true`, o aviso principal é o
+   fim do turno dela; o `ScheduleWakeup` é só reserva e deve ser longo (1200 s ou mais), não de
+   120 s. O tick também é evento automático: nele a coordenação só confere
+   e, se precisar de uma sessão, propõe o cartão (§ 2); não abre sessão. Sem fase em
    voo e esperando um passo do dono, o painel acorda você no clique; mesmo assim termine o
    turno com `ScheduleWakeup` longo (1200 s ou mais) e confira `flow status` quando disparar.
 3. **Ledger.** `<changeRoot>/orchestration.md` (fase, ícone, sessão, branch, estado,
@@ -218,8 +225,9 @@ diagnóstico pronto ao dono.
 5. **Jira.** Quando o passo pede mudança de estado, o painel avisa; a issue só se move
    no botão **"Mover no Jira"** do dono.
 
-Antes de encerrar qualquer turno: há fase em voo? A checagem está agendada? Espera um
-passo do dono? O `ScheduleWakeup` longo está agendado?
+Antes de encerrar qualquer turno: há fase em voo? A filha foi aberta com `wake_when_done: true`
+(ou, se virou cartão, o dono foi avisado)? Espera um passo do dono? O `ScheduleWakeup` de reserva
+(1200 s ou mais) está agendado?
 
 ## 6. Depois do PR
 

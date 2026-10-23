@@ -1079,10 +1079,10 @@ const describeStepBody = (state: FlowState, step: FlowStep, where: string, outco
   switch (step.kind) {
     case 'session':
       return (
-        `${where}. Open a session for this step with start_session (initiation "user_asked", the owner asked to orchestrate), ` +
+        `${where}. Open a session for this step with start_session (initiation "user_asked" with wake_when_done, the owner asked to orchestrate), ` +
         "using the step's agent, model and effort; do not do the step in this session. If the app refuses the start in this turn " +
         '(it was set off by another session\'s message or an automatic event), propose it as a card (initiation "own_initiative", same prompt), ' +
-        'tell the owner to click it and wait; never do the step here. Open it with wake_when_done: the session ends its turn with its result. ' +
+        'without wake_when_done (the app refuses it on a card; it wakes you when the session ends anyway), tell the owner to click it and wait; never do the step here. The session ends its turn with its result. ' +
         `When it answers, report one of the step's outcomes with action "report": ${outcomes}.`
       )
     case 'loop': {

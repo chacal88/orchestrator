@@ -25,3 +25,15 @@
 
 A pedido da coordenação, rodado de novo numa forma que o mod reconhece:
 `export PATH="…/claude-code/2.1.308/…/MacOS:$PATH" && command claude plugin test orquestrador` — 369 pass, 0 fail, saída 0.
+
+## Fase 2 (tarefas 2.1 a 2.5)
+
+- 2.1 Skill § 2 (start recusado: corrente do `user_asked`), § 5.2 (reserva `ScheduleWakeup` de 1200 s ou mais; frase
+  "não é confiável" removida: `grep -n "não é confiável"` não acha nada) e checklist final ajustado.
+- 2.2 `flow.ts` passo `session`: "user_asked" com `wake_when_done`; o cartão vai sem `wake_when_done`. Skill diz o mesmo.
+  Teste atualizado.
+- 2.3 O teste do passo `session` confere também `agent, model and effort`.
+- 2.4 Skill § 2: "nunca de primeira com `own_initiative`; só quando o start é recusado".
+- 2.5 Skill § 4.4: portão pelo nome do comando, com PATH, sem caminho entre aspas.
+- Testes: `export PATH="…/2.1.308/…/MacOS:$PATH" && command claude plugin test orquestrador` — 369 pass, 0 fail, saída 0.
+- Tipos: `npx -y -p typescript@5.6.3 tsc -p <tsconfig fora do repo>` como na fase 1 — saída 0.
