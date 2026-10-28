@@ -175,21 +175,21 @@ Arquivos: `orquestrador/hooks/command.ts` (novo), `orquestrador/hooks/flow.ts`, 
 Arquivos: `orquestrador/skills/change-orchestrator/SKILL.md`, `README.md`, `orquestrador/.claude-plugin/plugin.json`,
 `changes/fases-sem-clique/evidence.md`. Depende das fases 1 a 3. Portões: `testes`, `tipos`, `validate`.
 
-- [ ] 4.1 Skill § 2 ("Start recusado" e "Com 'Seguir o flow sem clique' ligada") e § 5 (itens 1 e 2, e a pergunta
+- [x] 4.1 Skill § 2 ("Start recusado" e "Com 'Seguir o flow sem clique' ligada") e § 5 (itens 1 e 2, e a pergunta
       antes de encerrar o turno): a recusa do `user_asked` vira `flow pending` e o botão "Abrir as N sessões
       pendentes" ou `/orquestrador abrir`, sem um card por fase; o card fica só quando o mod não está disponível;
       filhas com `wake_when_done` não recebem o aviso do painel; o "três avisos" passa a dizer o que o mod faz hoje
       (freio por filha e teto de 10). Verificação: `grep -n "flow pending\|/orquestrador abrir" orquestrador/skills/change-orchestrator/SKILL.md`
       acha as duas seções — cx: moderate
-- [ ] 4.2 README: os subcomandos do `/orquestrador` (texto simples, só slash, pelo Remote Control), o botão "Abrir as
+- [x] 4.2 README: os subcomandos do `/orquestrador` (texto simples, só slash, pelo Remote Control), o botão "Abrir as
       N sessões pendentes" com a limitação que a 2.6 registrou, o botão e o `/orquestrador encerrar`, o aviso de
       permissão, e o item "Seguir o flow sem
       clique" valendo só para filhas que o app não acompanha. Verificação: `grep -n "/orquestrador aprovar\|sessões
       pendentes\|get_session" README.md` acha as linhas — cx: simple
-- [ ] 4.3 (C10) Versão 0.14.0 em `orquestrador/.claude-plugin/plugin.json`. Verificação: `grep -n '"version": "0.14.0"'
+- [x] 4.3 (C10) Versão 0.14.0 em `orquestrador/.claude-plugin/plugin.json`. Verificação: `grep -n '"version": "0.14.0"'
       orquestrador/.claude-plugin/plugin.json` acha a linha, e `claude plugin validate orquestrador` sai com 0 — cx:
       simple
-- [ ] 4.4 Evidência: seção "Fase 4" e a tabela "Critérios de aceite" do `evidence.md`, com um caminho de evidência
+- [x] 4.4 Evidência: seção "Fase 4" e a tabela "Critérios de aceite" do `evidence.md`, com um caminho de evidência
       para cada critério (1 a 10) da `proposal.md`. Verificação: nenhuma linha "a preencher" no `evidence.md` — cx:
       simple
 

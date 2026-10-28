@@ -259,33 +259,40 @@ exit=0
 
 ### Testes
 
+Gate testes: `claude plugin test orquestrador` (app 2.1.309), rodado sozinho.
+
 ```
-a preencher
+exit=0
+ 476 pass
+ 0 fail
+Ran 476 tests across 37 files.
 ```
 
 ### Tipos
 
-```
-a preencher
-```
+Esta fase não mudou código de `hooks/` (só SKILL.md, README.md e plugin.json); os tipos da fase 3 seguem valendo.
 
 ### Validação
 
 ```
-a preencher
+$ command claude plugin validate orquestrador
+exit=0
+✔ Validation passed
 ```
+
+Verificações das tarefas: `grep -n "flow pending\|/orquestrador abrir" orquestrador/skills/change-orchestrator/SKILL.md` acha as §§ 2 e 5; `grep -n "/orquestrador aprovar\|sessões pendentes\|get_session" README.md` acha as linhas 31 a 34; `"version": "0.14.0"` em `plugin.json`.
 
 ## Critérios de aceite
 
 | Critério (`proposal.md`) | Evidência |
 | --- | --- |
-| 1. Um botão / `/orquestrador abrir` abre todas as pendentes | a preencher |
-| 2. Sem aviso do mod para filha com `wake_when_done` | a preencher |
-| 3. Subcomandos; `aprovar` igual ao clique; recusa com `origin` de plugin | a preencher |
-| 4. Sem `liberar`; `aprovar` na liberação recusado | a preencher |
-| 5. Sem gravar permissão; aviso no painel e na faixa | a preencher |
-| 6. Texto simples e Remote Control | a preencher |
-| 7. No máximo 1 `get_session` pendente; nenhum do refresh | a preencher |
-| 8. Checagem do mod não marca espera | a preencher |
-| 9. Versão 0.14.0, README, skill e portões | a preencher |
-| 10. Encerrar o flow a qualquer momento, só pelo dono | a preencher |
+| 1. Um botão / `/orquestrador abrir` abre todas as pendentes | Fase 2: `openPending`, botão e `abrir`; README e skill (fase 4) |
+| 2. Sem aviso do mod para filha com `wake_when_done` | Fase 2 (`tracked` no `wakeOnce`); skill § 2 e § 5; README |
+| 3. Subcomandos; `aprovar` igual ao clique; recusa com `origin` de plugin | Fase 3: testes de `comando-harness.test.ts` (aprovar, origens, plugin recusado) |
+| 4. Sem `liberar`; `aprovar` na liberação recusado | Fase 3: teste do `liberar` desconhecido e da liberação recusada |
+| 5. Sem gravar permissão; aviso no painel e na faixa | Fase 1: `PERMISSION_NEEDED`; README, 'Aviso de permissão' |
+| 6. Texto simples e Remote Control | Fase 3: testes de texto simples e da ponte (Remote Control) |
+| 7. No máximo 1 `get_session` pendente; nenhum do refresh | Fase 1: um `get_session` por vez, sem o refresh |
+| 8. Checagem do mod não marca espera | Fase 2: `tracked` no `wakeOnce`; testes de checagem do mod |
+| 9. Versão 0.14.0, README, skill e portões | Fase 4: Validação acima (476 pass, validate exit 0), plugin.json 0.14.0, README e skill. A conferência no app fica em 'Conferência no QA' do tasks.md |
+| 10. Encerrar o flow a qualquer momento, só pelo dono | Fase 3: testes de `endFlow` e `encerrar`; README |
