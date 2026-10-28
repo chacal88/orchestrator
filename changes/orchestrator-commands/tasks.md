@@ -70,6 +70,9 @@ Arquivos: os listados no `design.md`, §11. Portões: `testes`, `tipos`, `lint`.
 
       Verificação: `grep -rn "mcp__orquestrador\|name: 'plano'\|plugin: 'orquestrador'" orchestrator/hooks
       orchestrator/types` não acha nada — cx: moderate
+
+      Feito com um desvio, registrado no `evidence.md`: `PLUGIN_NAME` fica em `activation.ts`, e as chaves de
+      `$.state` usam o literal `plugin: 'orchestrator'`, porque o engine só aceita literal nessas referências.
 - [x] 1.4 Textos que citam a ferramenta, o painel ou o plugin pelo nome, em `flow.ts` (prompts de aviso e de sessões
       pendentes, `:1158`), `i18n.ts`, `i18n-workflows.ts` e `workflows-pane.tsx`. A tabela está no `design.md`, §5. Os
       textos de `/orquestrador <sub>` só mudam na fase 3. Verificação: `grep -rn "mcp__orquestrador\|painel do

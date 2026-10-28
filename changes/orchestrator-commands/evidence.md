@@ -103,6 +103,24 @@ Os comandos `orquestrador` e `orquestrador-workflows` continuam registrados: ele
   painel e do toast do freio. `command: 'orquestrador'` e os caminhos `.orquestrador/` e `~/.claude/orquestrador/`
   ficam. 480 → 480 (acima).
 
+### Regras
+
+Revisão do diff `d8aaeb2..deb467a` pelo agente `aidakit:reviewer-quality`, contra o portão `regras` do `tasks.md`:
+**aprovado**, com 0 bloqueantes, 0 importantes e 3 nits.
+
+- Nenhum `[x]` sem evidência: as tarefas 1.1 a 1.5 têm seção aqui. O revisor rodou de novo os greps de 1.2, 1.3 e 1.4,
+  e nenhum achou nada. Passou.
+- Estilo do arquivo onde o código entra: passou. A posição de `PLUGIN_NAME` em `activation.ts` e as referências
+  literais estão justificadas pelo limite do engine e documentadas.
+- Nenhum texto ao dono exige palavra: o diff não acrescenta nenhum. Passou.
+
+Os nits:
+1. O texto da 1.3 no `tasks.md` ainda dizia `PLUGIN_NAME` em `register.tsx`. Ganhou uma nota com o desvio.
+2. As skills ainda chamam `mcp__orquestrador__flow` e `…__plano`. Isso é da fase 2 (2.4), e não sai release entre as
+   fases 1 e 2.
+3. `PANE = PLUGIN_NAME` amarra o id do painel ao nome do plugin. É o comportamento de antes (§5), e o código ficou
+   como estava.
+
 ## Fase 2 — agentes, skills e `.orchestrator/`
 
 ### Testes
