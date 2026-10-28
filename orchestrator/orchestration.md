@@ -1,4 +1,4 @@
-# Orquestração — mods-orquestrador, seção 4 (flows e gates)
+# Orquestração — mods-orchestrator, seção 4 (flows e gates)
 
 Coordenação: local_937d7056-6532-4a40-a960-b346b007f7cc
 Repositório: ~/.claude/mods-local (git, branch main). Cada fase trabalha numa worktree própria e entrega por merge em main.

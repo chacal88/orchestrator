@@ -712,25 +712,94 @@ Ficou fora do escopo, como pedido: README, versão, conferência no app, rename 
 
 ## Fase 6 — README, versão e conferência
 
+- 6.1: `orchestrator/.claude-plugin/plugin.json` passou a `"version": "0.15.0"`.
+  `grep -n '"version": "0.15.0"' orchestrator/.claude-plugin/plugin.json` acha `3:  "version": "0.15.0",`.
+- 6.2: README.
+  - A lista de comandos virou a seção "Comandos", com a tabela dos onze (colunas Comando, O que faz, Antes), tirada do
+    mockup aprovado. Os textos são os `description` dos arquivos em `orchestrator/commands/`.
+  - Entrou a seção "Reinstalar a partir da 0.15.0", com o passo a passo do `design.md`, §10, começando por "Faça logo
+    depois do merge do PR, antes de qualquer `claude plugin marketplace update`".
+  - Links, plugin, marketplace, agentes (`planner`, `plan-reviewer`, `executor`, `code-reviewer`, `pr-opener`,
+    `publisher`, `merge`, `workflow-merge`, `deploy`), `.orchestrator/` e as ferramentas `mcp__orchestrator__*` estão
+    com os nomes novos. Uma frase diz que a pasta `.orquestrador/` ainda é lida e que o flow em andamento continua em
+    `~/.claude/orquestrador/`.
+  - `orchestrator/proposal.md`, `tasks.md` e `orchestration.md` ficaram com os nomes novos. O `orchestrator/evidence.md`
+    já não tinha ocorrência.
+  - O `grep -n "orquestrador" README.md` acha: o verbo "orquestra"/"orquestrar", a coluna "Antes" da tabela, a frase
+    da pasta antiga e a seção de reinstalação (comandos de desinstalação, permissões antigas e a pasta). A coluna
+    "Antes" é pedida pela 6.2 e vai além do que a verificação lista.
+  - Desvio: a marca de ativação do clone continua a variável `ORQUESTRADOR` no arquivo de settings local do clone,
+    porque o `activation.ts` ainda a grava (só o hook lê também `ORCHESTRATOR`). O README diz isso na seção "Ativar
+    neste clone".
+- 6.3: ver "Produção".
+
 ### Testes
 
-_a preencher_
+```
+$ export PATH=".../claude-code/2.1.309/5af865b9901c/claude.app/Contents/MacOS:$PATH" && command claude plugin test orchestrator
+ 525 pass
+ 0 fail
+Ran 525 tests across 38 files. [11.40s]
+```
 
 ### Tipos
 
-_a preencher_
+```
+$ npx -y -p typescript@5.6.3 tsc -p <scratchpad>/tc/tsconfig.json   # tipos do engine 2.1.309, hooks + types + tests de orchestrator/
+(sem saída)
+TSC_EXIT=0
+```
 
 ### Validação
 
-_a preencher_
+```
+$ command claude plugin validate orchestrator
+✔ Validation passed
+VALIDATE_EXIT=0
+```
+
+O único aviso é `ICON_MISSING`, dos "plugin directory checks", que o próprio comando diz que não mudam o resultado.
 
 ### Produção
 
-_a preencher_: a produção desta change é a reinstalação do dono (`design.md`, §10).
+A produção desta change é a reinstalação feita pelo dono (`design.md`, §10), e o passo `producao` é dele. O `deploy`
+automático da config do projeto (`claude plugin marketplace update` com o nome antigo) não serve para a 0.15.0, porque
+o marketplace muda de nome para `orchestrator`; ele não roda nesta change. Nenhum arquivo de config muda nesta fase: o
+`deploy.commands` passa a `claude plugin marketplace update orchestrator` e `claude plugin update orchestrator@orchestrator`
+na 7.2, depois da reinstalação (§9, passo 5).
 
 ### Conferência no app
 
-_a preencher_: o menu ao digitar `/orchestrator` e o `/orchestrator:status` no desktop e pelo Remote Control.
+**Não concluída. A 6.4 fica sem marca e passa para o QA do dono.** O que se conseguiu, com o binário do app 2.1.309:
+
+```
+$ export PATH=".../claude-code/2.1.309/5af865b9901c/claude.app/Contents/MacOS:$PATH"
+$ command claude --version
+2.1.309 (Claude Code)
+
+$ command claude -p "/orchestrator:status" --plugin-dir orchestrator --output-format text < /dev/null
+orchestrator: Esse comando só vale digitado por você, no prompt ou no Remote Control.
+(exit 0)
+```
+
+Isso mostra que o plugin carrega por `--plugin-dir orchestrator` e que o comando `/orchestrator:status` é reconhecido
+e chega ao mod. O mod o recusa em modo `-p` por desenho, já que o comando só vale digitado pelo dono. Não é a resposta
+do comando.
+
+```
+$ command claude -p "/orchestrator" --plugin-dir orchestrator --output-format text < /dev/null
+O comando `/orchestrator` sozinho não existe, então chamei o `/orchestrator:help` no lugar, mas o mod `orchestrator`
+não respondeu. Para usar os comandos do orquestrador, abra esta sessão no app do Claude ou reinstale o plugin
+`orchestrator`.
+```
+
+Essa é uma resposta do modelo, não um menu. O menu de barra com os onze comandos só existe no prompt interativo, e
+esta sessão não consegue digitar nele. Nenhuma captura foi inventada.
+
+Fica para o QA do dono:
+- carregar com `claude --plugin-dir orchestrator`, digitar `/orchestrator` e conferir os onze comandos;
+- digitar `/orchestrator:status` no desktop, com um flow em andamento, e conferir o texto do mockup;
+- repetir `/orchestrator:status` pelo Remote Control.
 
 ## Fase 7 — com o dono
 

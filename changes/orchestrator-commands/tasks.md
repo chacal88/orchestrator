@@ -292,9 +292,9 @@ Feito com dois desvios, registrados no `evidence.md`:
 
 Portões: `testes`, `tipos`, `lint`.
 
-- [ ] 6.1 Versão `0.15.0` em `orchestrator/.claude-plugin/plugin.json` (C9). Verificação:
+- [x] 6.1 Versão `0.15.0` em `orchestrator/.claude-plugin/plugin.json` (C9). Verificação:
       `grep -n '"version": "0.15.0"' orchestrator/.claude-plugin/plugin.json` acha a linha — cx: simple
-- [ ] 6.2 README (C6, C13):
+- [x] 6.2 README (C6, C13):
       - a seção de comandos vira a tabela dos onze, com a coluna "Antes";
       - entra a seção "Reinstalar a partir da 0.15.0", com o passo a passo do `design.md`, §10, começando por
         "faça logo depois do merge, antes de qualquer `claude plugin marketplace update`" (§9, passo 4);
@@ -306,7 +306,7 @@ Portões: `testes`, `tipos`, `lint`.
       nomes novos. O README cita os três em `:256`.
       Verificação: `grep -n "orquestrador" README.md` só acha a seção de reinstalação e a frase da pasta antiga —
       cx: moderate
-- [ ] 6.3 Passo de produção desta change. O `deploy` automático de `.orquestrador/config.json` (`claude plugin
+- [x] 6.3 Passo de produção desta change. O `deploy` automático de `.orquestrador/config.json` (`claude plugin
       marketplace update orquestrador`) não serve para a 0.15.0, porque o marketplace muda de nome. Registrar no
       `evidence.md` que a produção desta change é a reinstalação do dono (§10) e que o passo `producao` é dele.
       Nenhum arquivo de config muda nesta fase. Verificação: a seção "Produção" do `evidence.md` preenchida — cx: simple
@@ -316,6 +316,9 @@ Portões: `testes`, `tipos`, `lint`.
 
       As capturas e os textos vão para o `evidence.md`. Verificação: a seção "Conferência no app" preenchida —
       cx: simple
+
+Sem marca: a captura não foi possível fora do app interativo (o `-p` recusa o comando, que só vale digitado).
+Fica para o QA do dono; ver o `evidence.md`, "Conferência no app".
 
 ## 7. Com o dono (precisa do ok do dono)
 

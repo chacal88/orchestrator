@@ -1,4 +1,4 @@
-# Painel do orquestrador
+# Painel do orchestrator
 
 ## Por quê
 
@@ -6,7 +6,7 @@ Numa orquestração com várias sessões, o dono perdia de vista em que fase o t
 
 ## O que muda
 
-- Painel lateral (`/orquestrador`) com o plano publicado pela coordenação: quanto falta, o que precisa do dono, o que está rodando agora, o que vem depois e o que já terminou.
+- Painel lateral (`/orchestrator`) com o plano publicado pela coordenação: quanto falta, o que precisa do dono, o que está rodando agora, o que vem depois e o que já terminou.
 - Pendências do dono com ação direta: aceitar recomendação, abrir a sessão ao lado, abrir o PR.
 - Sessões da change agrupadas sozinhas na barra lateral.
 - Andamento do OpenSpec e das issues do Jira ligadas às fases.
