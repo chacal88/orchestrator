@@ -310,15 +310,8 @@ Portões: `testes`, `tipos`, `lint`.
       marketplace update orquestrador`) não serve para a 0.15.0, porque o marketplace muda de nome. Registrar no
       `evidence.md` que a produção desta change é a reinstalação do dono (§10) e que o passo `producao` é dele.
       Nenhum arquivo de config muda nesta fase. Verificação: a seção "Produção" do `evidence.md` preenchida — cx: simple
-- [ ] 6.4 Conferência no app (C1, C8), com o plugin carregado por `--plugin-dir orchestrator`:
-      - digitar `/orchestrator` e capturar o menu com os onze comandos;
-      - rodar `/orchestrator:status` no desktop e, se o dono puder, pelo Remote Control.
-
-      As capturas e os textos vão para o `evidence.md`. Verificação: a seção "Conferência no app" preenchida —
-      cx: simple
-
-Sem marca: a captura não foi possível fora do app interativo (o `-p` recusa o comando, que só vale digitado).
-Fica para o QA do dono; ver o `evidence.md`, "Conferência no app".
+A 6.4 virou a 7.3: a conferência no app só é possível com o plugin instalado e o comando digitado pelo dono
+(o `-p` recusa o comando). Ver o `evidence.md`, "Conferência no app".
 
 ## 7. Com o dono (precisa do ok do dono)
 
@@ -340,3 +333,7 @@ Estas tarefas não são de uma sessão de fase: a coordenação pede o ok do don
 
       Num PR próprio ou junto do release, como o dono preferir. Verificação: o painel ⚙️ não mostra o aviso de
       `legacy` neste repo — cx: simple
+- [ ] 7.3 **QA do dono**, depois da reinstalação (era a 6.4; C1, C8): digitar `/orchestrator` e ver o menu com os
+      onze comandos; rodar `/orchestrator:status` no desktop e pelo Remote Control; num flow de teste no grill,
+      `/orchestrator:approve` anda o flow e `/orchestrator:end` encerra de primeira. Verificação: o dono aprova no passo
+      `qa` — cx: simple
