@@ -4,8 +4,8 @@ Flow `completo` do projeto (`.orquestrador/flows/completo.json`). Coordenação:
 
 | Fase | Ícone | Sessão | Branch | Estado | Próximo passo |
 | ---- | ----- | ------ | ------ | ------ | ------------- |
-| 1. Um `get_session` por vez, e só com permissão | 🛠️ | — | — | pendente | abrir depois da liberação |
-| 2. Abrir as fases sem um clique por card | 🛠️ | — | — | pendente | depois da 1 |
+| 1. Um `get_session` por vez, e só com permissão | 🛠️ | local_5a30d4d8 | claude/fases-sem-clique-f1-8909d3 (552c6b2, trazida por fast-forward) | fechada | — |
+| 2. Abrir as fases sem um clique por card | 🛠️ | local_bf72e235 | fases-sem-clique-f2 | rodando | fechar e trazer |
 | 3. `/orquestrador` com subcomandos e encerrar | 🛠️ | — | — | pendente | depois da 2 |
 | 4. Skill, README e versão | 📖 | — | — | pendente | depois da 3 |
 

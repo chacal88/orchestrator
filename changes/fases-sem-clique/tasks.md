@@ -110,12 +110,8 @@ Portões: `testes`, `tipos`.
         só 1 abre, o resto fica e o toast diz por quê. Uma recusa do app deixa a lista como estava e mostra a
         mensagem de digitar no desktop. O `wakeOnce` e o `pressFlow` nunca passam `consent`.
       Verificação: `claude plugin test orquestrador` sai com 0, e os casos novos aparecem como `(pass)` — cx: complex
-- [ ] 2.6 Conferência no app real, registrada no `evidence.md` (seção "No app"), para os quatro riscos do design:
-      `consent` no desktop, `consent` pelo Remote Control (clique no painel do celular), `wake_when_done` de uma filha
-      aberta pelo mod e a corrente depois do clique. Para cada um: o que foi feito, o que o app respondeu, e a
-      consequência (por exemplo, a limitação do Remote Control no texto). Se algum risco depender do dono e não puder
-      ser conferido nesta sessão, ele fica marcado como pendente para o passo de QA, sem marcar o checkbox.
-      Verificação: a seção preenchida com uma linha por risco — cx: moderate
+- 2.6 Saiu da fase: a conferência no app real só é possível com o mod novo instalado, depois do merge.
+      Ela passa para o QA (ver "Conferência no QA" no fim).
 - [x] 2.7 Evidência: seção "Fase 2" do `evidence.md` com a saída dos portões `testes` e `tipos` e os casos novos como
       `(pass)`. Verificação: a seção preenchida — cx: simple
 
@@ -196,3 +192,15 @@ Arquivos: `orquestrador/skills/change-orchestrator/SKILL.md`, `README.md`, `orqu
 - [ ] 4.4 Evidência: seção "Fase 4" e a tabela "Critérios de aceite" do `evidence.md`, com um caminho de evidência
       para cada critério (1 a 10) da `proposal.md`. Verificação: nenhuma linha "a preencher" no `evidence.md` — cx:
       simple
+
+## Conferência no QA (fora das fases)
+
+Vem da antiga tarefa 2.6. O mod instalado é o 0.13.1 até o merge, então o comportamento novo só se confere
+no app depois do deploy. O dono confere no passo `qa`, e o resultado entra no `evidence.md` (seção "No app").
+
+- [ ] QA.1 Conferência no app real, registrada no `evidence.md` (seção "No app"), para os quatro riscos do design:
+      `consent` no desktop, `consent` pelo Remote Control (clique no painel do celular), `wake_when_done` de uma filha
+      aberta pelo mod e a corrente depois do clique. Para cada um: o que foi feito, o que o app respondeu, e a
+      consequência (por exemplo, a limitação do Remote Control no texto). Se algum risco depender do dono e não puder
+      ser conferido nesta sessão, ele fica marcado como pendente para o passo de QA, sem marcar o checkbox.
+      Verificação: a seção preenchida com uma linha por risco — cx: moderate
