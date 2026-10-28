@@ -111,6 +111,13 @@ Portões: `testes`, `tipos`.
       O `HOOK_COMMAND` lê `${ORCHESTRATOR:-${ORQUESTRADOR:-barrar}}` e cita `/orchestrator:panel`. Testes: um
       `settings.local.json` com o hook da 0.14.1 é lido como ativo e removido pelo "Desativar". Verificação: os testes
       de `activation.test.ts` passam, e os novos aparecem como `(pass)` — cx: moderate
+- [ ] 2.6 Frontmatter em YAML estrito. Nos agentes (`orchestrator/agents/*.md`, os nove, já com os nomes novos), nas
+      skills (`skills/change`, `skills/install`) e, na fase 3, nos `commands/*.md`, o `description` vai entre aspas
+      duplas sempre que o texto tem `: `, com as aspas internas escapadas. Hoje `planejador`, `revisor-codigo` e
+      `deploy` têm `: ` sem aspas. O 2.1.309 aceita, mas o 2.1.227 recusa com erro de YAML. O `hooks.json` com
+      `modules` é recusado pelo 2.1.227, que não conhece mods; isso não muda, e os portões continuam com o binário do
+      app. Verificação: `grep -nE '^description: [^"].*: ' orchestrator/agents/*.md orchestrator/skills/*/SKILL.md`
+      não acha nada, e `claude plugin validate orchestrator` com o 2.1.309 sai 0 — cx: simple
 
 ## 3. Comandos com prefixo
 

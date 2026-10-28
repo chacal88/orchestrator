@@ -101,7 +101,7 @@ vez, com passo a passo de reinstalação?" e "Renomear o repositório do GitHub?
 - **C4.** Nenhum comando do plugin exige palavra-chave para funcionar: nem confirmar, nem resultado, nem nome de
   portão. Tarefas: 3.3 e 4.1 a 4.5.
 - **C5.** Plugin, marketplace, ferramentas do mod, agentes e pasta de configuração têm nomes em inglês. Um projeto com
-  `.orquestrador/` continua funcionando nesta versão. Tarefas: 1.1 a 1.5 e 2.1 a 2.5.
+  `.orquestrador/` continua funcionando nesta versão. Tarefas: 1.1 a 1.5 e 2.1 a 2.6.
 - **C6** (grill nº 6). `/orquestrador` sai de vez e o README traz o passo a passo de reinstalação. Tarefas: 3.3 e 6.2.
 - **C7** (grill nº 7). O repositório é renomeado nesta change, como a rodada 2 confirmou. Tarefa: 7.1 (cumprida
   junto com C13).
