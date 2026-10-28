@@ -193,6 +193,30 @@ Arquivos: `orquestrador/skills/change-orchestrator/SKILL.md`, `README.md`, `orqu
       para cada critério (1 a 10) da `proposal.md`. Verificação: nenhuma linha "a preencher" no `evidence.md` — cx:
       simple
 
+## 5. Ajustes do QA: os achados da revisão de código
+
+Pedido do dono em 2026-10-28, antes do QA ("QA pediu ajustes"). Os achados estão em `orchestration.md`, na seção
+"Revisão de código". Uma sessão só, porque mexe em `register.tsx`, `flow.ts`, `command.ts` e nos harness das fases 1 a
+3. Portões: `testes` e `tipos`, com o binário do app 2.1.309.
+
+- [ ] 5.1 `/orquestrador aprovar encerrar` (e qualquer `aprovar` da escalada que encerra o flow) é recusado e aponta
+      para `/orquestrador encerrar … confirmar`. Assim, encerrar sempre pede confirmação (C11). O clique
+      "Encerrar o flow" da escalada no painel continua como está. Verificação: um caso no `comando-harness` mostra o
+      flow escalado continuando `escalated` depois de `aprovar encerrar`, com a resposta apontando para o comando — cx:
+      simple
+- [ ] 5.2 Com "ask" e o próprio id ainda não guardado, o `keepPending` e o `commandFlow` respondem com o aviso de
+      permissão da fase 1, e não "outra sessão" ou "sem flow". Verificação: um harness com um flow que já tem
+      `coordinatorSession`, com o `SELF_ID` vazio e "ask", recebe o texto de permissão nos dois caminhos — cx: moderate
+- [ ] 5.3 No nível "lembrar", com "ask", o `openPending` não abre nenhuma sessão sem conseguir contar o teto. Ele
+      responde com o aviso de permissão, igual ao "barrar": sem a lista, o mod não sabe se passaria do teto.
+      Atualize o `design.md` com essa decisão. Verificação: o harness do `pendentes` ganha o caso "lembrar" + "ask"
+      (nenhum `start_session`, com o aviso) e o caso "lembrar" + "allow" (abre) — cx: moderate
+- [ ] 5.4 Nits: o `wakeOnce` compara `tracked` e pendentes pelo mesmo id limpo (`sessionRef` dos dois lados). O
+      `/orquestrador status` mostra o aviso de permissão mesmo sem `VIEW`. Verificação: um caso de teste para cada um —
+      cx: simple
+- [ ] 5.5 Evidência: seção "Fase 5" do `evidence.md`, com a saída dos portões e os casos novos como `(pass)`. Na
+      seção de achados do `orchestration.md`, cada achado ganha a marca de resolvido e o commit — cx: simple
+
 ## Conferência no QA (fora das fases)
 
 Vem da antiga tarefa 2.6. O mod instalado é o 0.13.1 até o merge, então o comportamento novo só se confere
