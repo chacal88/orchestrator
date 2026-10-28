@@ -74,10 +74,19 @@ sessão usa o modelo e o esforço do passo. Um passo `session` nunca é feito na
   sessão ou por evento automático (inclui o tick do `ScheduleWakeup`). A corrente do
   `user_asked`: só vale no turno do dono e nos `<side-sessions-event>` que vêm em sequência
   direta a partir dele. Qualquer turno de mensagem entre sessões ou de tick no meio quebra a
-  corrente; dali em diante toda sessão vira cartão até o dono escrever de novo. Se recusar,
-  proponha a sessão como cartão (`own_initiative`, mesmo prompt, sem `wake_when_done`, que o
-  app recusa no cartão; o app acorda a coordenação quando a filha termina mesmo assim), diga ao
-  dono numa linha que é só clicar e espere. Nunca faça o passo no lugar da filha.
+  corrente; dali em diante o app recusa toda sessão até o dono escrever de novo. Se recusar,
+  registre as sessões recusadas com `flow pending` (ação `pending` do `flow`, com `sessions`, o
+  mesmo prompt e sem `wake_when_done`; uma `key` repetida troca a anterior) e diga ao dono, numa
+  linha, para apertar "Abrir as N sessões pendentes" no painel ou rodar `/orquestrador abrir`.
+  O mod abre todas de uma vez com `wake_when_done`, então espere o aviso de cada uma. Pelo Remote
+  Control o app só abre sessão a partir de mensagem digitada no desktop; a resposta do comando
+  diz isso ao dono. O cartão (`own_initiative`) fica só para quando o mod não está disponível.
+  Nunca faça o passo no lugar da filha.
+
+**Passos do dono por texto.** Além dos botões, o dono responde com `/orquestrador aprovar
+<resultado> [nota]` (igual ao clique) e encerra o flow com `/orquestrador encerrar [motivo]
+confirmar`. Não existe `liberar`: a liberação segue pelo plan mode. Só o dono digitando vale;
+sessão nenhuma usa esses comandos no lugar dele.
 
 **Clique do dono acorda você.** Quando o dono aperta um botão do flow e o próximo passo é
 seu (sessão, automático, `executar`, ou o mockup de novo depois de "Pedir ajustes"), o painel
@@ -85,16 +94,16 @@ manda uma mensagem em nome do mod, por exemplo `Painel: o dono apertou "Aprovar 
 Próximo passo: planejar (Planejar OpenSpec). Siga o flow.` Confira `flow status` e siga, sem
 esperar o dono escrever. Se o próximo passo também é do dono, ou o flow acabou, nada chega.
 
-**Com "Seguir o flow sem clique" ligada** (opção do cartão "Este projeto", painel ⚙️). Quando
-uma filha da change termina o turno, o painel manda: `Painel: a sessão local_… terminou o
-turno. Confira no flow status e siga o flow.` A mensagem leva só o id da sessão, nunca o
-título. Essa mensagem é turno do dono, então nela vale o `user_asked`. Confira
-`flow status` e abra o próximo passo ou a próxima fase. Se três avisos chegam sem o flow
-andar, o painel para de avisar e diz ao dono que o flow parece parado. Você pode terminar o turno com
-`ScheduleWakeup` para esperar o CI, mas o tick não abre sessão (propõe cartão, como hoje); o
-próximo aviso do painel refaz a corrente. O aviso pode chegar junto com o
-`<side-sessions-event>`: o segundo a chegar termina sem trabalho. Com a opção desligada, vale
-o texto acima.
+**Com "Seguir o flow sem clique" ligada** (opção do cartão "Este projeto", painel ⚙️). Vale só
+para filhas que o app não acompanha, isto é, abertas sem `wake_when_done` (por exemplo as que
+viraram cartão). Quando uma delas termina o turno, o painel manda: `Painel: a sessão local_…
+terminou o turno. Confira no flow status e siga o flow.` A mensagem leva só o id da sessão. Filha
+aberta com `wake_when_done` não recebe esse aviso: o app já acorda você. O aviso não é turno do
+dono, então não conte com `user_asked` nele; se precisar abrir sessão e o app recusar, use
+`flow pending`. O freio é por filha, e o painel para de avisar depois de 10 avisos no total
+sem o flow andar, e diz ao dono que parece parado. Se o app pedir permissão para ler as
+sessões (`get_session`), o painel mostra o aviso ao dono; não repita a chamada por conta própria.
+Com a opção desligada, vale o texto acima.
 
 **Começando uma change nova numa coordenação que já conduziu outra.** Antes do `flow start`,
 arquive as filhas não arquivadas da change encerrada (com os portões passados). O app arrasta
@@ -219,13 +228,14 @@ diagnóstico pronto ao dono.
    meio do trabalho. Todo prompt de fase termina com essa instrução.
 2. **Puxar.** Com fase em voo, NUNCA termine o turno sem `ScheduleWakeup`; tick
    sem mudança é `noop: true`. Com filha aberta com `wake_when_done: true`, o aviso principal é o
-   fim do turno dela; o `ScheduleWakeup` é só reserva e deve ser longo (1200 s ou mais), não de
+   fim do turno dela (o painel não manda o seu aviso para ela); o `ScheduleWakeup` é só reserva e deve ser longo (1200 s ou mais), não de
    120 s. O tick também é evento automático: nele a coordenação só confere
    e, se precisar de uma sessão, propõe o cartão (§ 2); não abre sessão. Sem fase em
    voo e esperando um passo do dono, o painel acorda você no clique; mesmo assim termine o
    turno com `ScheduleWakeup` longo (1200 s ou mais) e confira `flow status` quando disparar.
    Com "Seguir o flow sem clique" ligada, o painel também acorda você a cada fim de turno de
-   uma filha (§ 2); esse aviso é turno do dono e permite abrir a próxima sessão com `user_asked`.
+   uma filha que o app não acompanha (§ 2); esse aviso não é turno do dono. Sessão que o app
+   recusar vai para `flow pending`, e o dono abre com o botão ou `/orquestrador abrir`.
 3. **Ledger.** `<changeRoot>/orchestration.md` (fase, ícone, sessão, branch, estado,
    próximo passo) atualizado a cada transição, para qualquer sessão retomar.
 4. **Painel.** Publique com `plano` logo após montar as ondas e a cada transição:
@@ -244,7 +254,7 @@ diagnóstico pronto ao dono.
    no botão **"Mover no Jira"** do dono.
 
 Antes de encerrar qualquer turno: há fase em voo? A filha foi aberta com `wake_when_done: true`
-(ou, se virou cartão, o dono foi avisado)? Espera um passo do dono? O `ScheduleWakeup` de reserva
+(ou, se o app recusou, está em `flow pending` e o dono foi avisado)? Espera um passo do dono? O `ScheduleWakeup` de reserva
 (1200 s ou mais) está agendado?
 
 ## 6. Depois do PR

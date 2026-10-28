@@ -62,6 +62,8 @@ import {
   describeStepAgent,
   describeWorkflow,
   detectedOutcome,
+  dropPending,
+  endFlow,
   executedTextShort,
   noteOwnerStep,
   observeDeploy,
@@ -72,6 +74,7 @@ import {
   stepTitle,
   ownerPress,
   pressedToast,
+  registerPending,
   wakePrompt,
   startFlow,
 } from './flow'
@@ -96,11 +99,12 @@ import {
   rejectPlan,
 } from './grill'
 import { bandSummary, parseEvents, stepTimes } from './glance'
+import { fromOwner, parseCommand, statusText } from './command'
 import { DEFAULT_LANGUAGES, contentRule, uiText } from './i18n'
 import type { UiText } from './i18n'
 import { renderBand, renderPane } from './pane'
 import { readActivation, readAutowake, registryDir } from './activation'
-import { STOP_AS_USER, childStops, eligibleChildren, flowProgress, sessionRef, stopPrompt } from './wake'
+import { STOP_AS_USER, childStops, eligibleChildren, flowProgress, sessionRef, stopPrompt, untracked } from './wake'
 import { WORKFLOWS_PANE, drawWorkflows, startWorkflowsLoad, toggleWorkflowsPane } from './workflows-pane'
 import { findAgent, loadConfig as loadProjectConfig, loadFlows } from './flow-files'
 import { firstSite, issueUrl, jiraKeys, moveFor, parseIssue, parseTransitions, wishes } from './jira'
@@ -142,6 +146,8 @@ const CREATE_GROUP = 'mcp__ccd_sidebar__create_group'
 const MOVE_SESSIONS = 'mcp__ccd_sidebar__move_sessions'
 const DELETE_GROUP = 'mcp__ccd_sidebar__delete_group'
 const REFRESH_MS = 15_000
+/** How long the wake of a typed `aprovar` waits: past the end of the command's hook, which cannot submit a prompt. */
+const WAKE_AFTER_COMMAND_MS = 50
 /** Jira is asked again at most this often; the panel refreshes every 15 s. */
 const JIRA_TTL_MS = 120_000
 
@@ -154,6 +160,7 @@ const GATES_SEEN = { plugin: 'orquestrador', key: 'gates' } as const
 const EDITED_AT = { plugin: 'orquestrador', key: 'editedAt' } as const
 const TRIED = { plugin: 'orquestrador', key: 'tried' } as const
 const SELF_ID = { plugin: 'orquestrador', key: 'selfId' } as const
+const PERMISSION_NEEDED = { plugin: 'orquestrador', key: 'permission-needed' } as const
 const ACTIVITY_TTL_MS = 7 * 24 * 60 * 60 * 1000
 const PANE_OPEN = { plugin: 'orquestrador', key: 'paneOpen' } as const
 const REMINDED = { plugin: 'orquestrador', key: 'reminded' } as const
@@ -167,6 +174,8 @@ const AUTOWAKE_MAX_SAME_CHILD = 3
 const AUTOWAKE_MAX_SAME_PROGRESS = 10
 const GRILL_DRAFTS = { plugin: 'orquestrador', key: 'grillDrafts' } as const
 const START_SESSION = 'mcp__ccd_session__start_session'
+const SET_SESSION_MODEL = 'mcp__ccd_session_mgmt__set_session_model'
+const SET_SESSION_EFFORT = 'mcp__ccd_session_mgmt__set_session_effort'
 const TRANSITION_SUFFIX = '__transitionJiraIssue'
 const ARCHIVE_SESSION = 'mcp__ccd_session_mgmt__archive_session'
 const EDIT_TOOLS = new Set(['Edit', 'Write', 'MultiEdit', 'NotebookEdit'])
@@ -291,16 +300,72 @@ const readJson = async <T,>($: EngineInterface, path: string): Promise<T | undef
 }
 
 /**
+ * Whether a background read of the app's session list may go out now. `$.tool.check` is a query: it opens
+ * no dialog. Only `allow` calls; `ask` and `deny` record in `permission-needed` which tools wait on the
+ * owner (the panel and the band say so) and answer "do not know". The mod never writes a permission rule.
+ *
+ * It guards the calls nobody pressed a button for: the clock's refresh, `publishActivity`, `restoreActivity`,
+ * the grouping, the wake, `refuseStart`, `folderIsOwn`, `loadFamily`, `openChildren`, `cleanupChange` (an
+ * automatic step; archiving with no `self` to spare could archive the coordination) and `selfId`/`selfRowNow`
+ * themselves (the loop's first link). An owner's action (a click) may call directly: phase 2 decides that path.
+ */
+const mayList = async ($: EngineInterface, tool: string, input: Record<string, unknown>): Promise<boolean> => {
+  const verdict = await $.tool.check({ tool, input } as never).catch(() => undefined)
+  const allowed = verdict?.decision === 'allow'
+  const { value: needed } = await $.state.get(PERMISSION_NEEDED)
+  const tools = (needed?.tools ?? []).filter(t => t !== tool)
+  if (!allowed) tools.push(tool)
+  const same = tools.length === (needed?.tools ?? []).length && tools.every(t => needed?.tools.includes(t))
+  if (!same) await $.state.set(PERMISSION_NEEDED, tools.length === 0 ? null : { tools, since: needed?.since ?? (await $.clock.now()) })
+  return allowed
+}
+
+/** A background read of the session list: "do not know" (an error result) when the owner has not allowed it. */
+const listCall = async ($: EngineInterface, tool: string, fields: Record<string, unknown>): Promise<CallResult> =>
+  (await mayList($, tool, fields)) ? callTool($, { tool, ...fields }) : { isError: true }
+
+let rowAsk: Promise<SessionRow | undefined> | undefined
+let selfAsk: Promise<string | undefined> | undefined
+
+/**
+ * This session's row now. Simultaneous calls share one `get_session self`, and the row is not kept between
+ * turns: `isRunning` and `groupId` change, and the wake needs them fresh.
+ */
+const selfRowNow = ($: EngineInterface): Promise<SessionRow | undefined> => {
+  if (rowAsk !== undefined) return rowAsk
+  const ask = (async () => {
+    if (!(await canCall($, GET_SESSION))) return undefined
+    return parseSessionRows((await listCall($, GET_SESSION, { session_id: 'self' })).text)[0]
+  })()
+  rowAsk = ask
+  const free = (): void => {
+    if (rowAsk === ask) rowAsk = undefined
+  }
+  ask.then(free, free)
+  return ask
+}
+
+/**
  * This session's id in the app's list, asked once and kept: `$.session.id()` names the
  * transcript, which is not the id the family's rows carry. Undefined outside the app.
+ * One ask at a time (`selfAsk`): a pending ask is never followed by a second one. A failure, or an
+ * answer with no row, keeps nothing, and the next call may ask again.
  */
 const selfId = async ($: EngineInterface): Promise<string | undefined> => {
   const { value: known } = await $.state.get(SELF_ID)
   if (known !== undefined) return known
-  if (!(await canCall($, GET_SESSION))) return undefined
-  const [row] = parseSessionRows((await callTool($, { tool: GET_SESSION, session_id: 'self' })).text)
-  if (row !== undefined) await $.state.set(SELF_ID, row.sessionId)
-  return row?.sessionId
+  if (selfAsk !== undefined) return selfAsk
+  const ask = (async () => {
+    const row = await selfRowNow($)
+    if (row !== undefined) await $.state.set(SELF_ID, row.sessionId)
+    return row?.sessionId
+  })()
+  selfAsk = ask
+  try {
+    return await ask
+  } finally {
+    if (selfAsk === ask) selfAsk = undefined
+  }
 }
 
 /** Keyed by the session's id when known, so a phase in the coordinator's folder has a file of its own. */
@@ -362,12 +427,12 @@ const loadSessions = async (
   base: string,
   ownPlan: PlanItem[],
 ): Promise<{ self: SessionCard | undefined; children: SessionCard[] }> => {
-  const [selfRow] = parseSessionRows((await callTool($, { tool: GET_SESSION, session_id: 'self' })).text)
-  const family = parseSessionRows((await callTool($, { tool: LIST_SESSIONS, linked: true, limit: 50 })).text)
+  const selfRow = await selfRowNow($)
+  const family = parseSessionRows((await listCall($, LIST_SESSIONS, { linked: true, limit: 50 })).text)
   const grouped =
     selfRow?.groupId === undefined
       ? []
-      : parseSessionRows((await callTool($, { tool: LIST_SESSIONS, group: selfRow.groupId, limit: 50 })).text)
+      : parseSessionRows((await listCall($, LIST_SESSIONS, { group: selfRow.groupId, limit: 50 })).text)
 
   const others = new Map<string, SessionRow>()
   for (const row of [...family, ...grouped]) {
@@ -731,7 +796,8 @@ const wakeOnce = async (
   const eligible = eligibleChildren(plan, { sessions: flow.sessions ?? [], excluded }, self.sessionId, children)
   const looked = childStops(seen ?? {}, eligible, await $.clock.now())
   const { value: before } = await $.state.get(AUTOWAKE_PENDING)
-  const pending = [...new Set([...(before ?? []), ...looked.stopped.map(sessionRef)])]
+  // a child opened with wake_when_done is woken for by the app: it stays in `seen`, but the mod tells nothing of it
+  const pending = untracked([...new Set([...(before ?? []), ...looked.stopped.map(sessionRef)])], flow.tracked)
   await $.state.set(AUTOWAKE_SEEN, asJson(looked.seen))
   if (self.isRunning || pending.length === 0) {
     if (pending.length !== (before ?? []).length) await $.state.set(AUTOWAKE_PENDING, pending)
@@ -793,11 +859,18 @@ const siblingFlows = async ($: EngineInterface, change: string, root: string): P
  * never lands ungrouped. Children of other changes stay out, and the ones the app dragged along with
  * the coordinator go back to their own group.
  */
-const groupFamily = async ($: EngineInterface, change: string, started?: string): Promise<string | undefined> => {
-  if (!(await canCall($, MOVE_SESSIONS))) return 'sidebar indisponível para agrupar'
+const groupFamily = async ($: EngineInterface, change: string, started?: string, start: StartSeen = {}): Promise<string | undefined> => {
+  if (!(await canCall($, MOVE_SESSIONS))) {
+    // with no sidebar the flow still learns what the start means for the wake and the pending list
+    if (start.track !== undefined || start.title !== undefined) {
+      const flow = await loadFlowState($, change)
+      if (flow !== undefined && ownsFlow(flow, await $.session.root())) await keepGrouping($, change, [], undefined, start)
+    }
+    return 'sidebar indisponível para agrupar'
+  }
   const root = await $.session.root()
-  const [self] = parseSessionRows((await callTool($, { tool: GET_SESSION, session_id: 'self' })).text)
-  const listedFamily = await callTool($, { tool: LIST_SESSIONS, linked: true, limit: 50 }).catch(() => ({ isError: true }) as CallResult)
+  const self = await selfRowNow($)
+  const listedFamily = await listCall($, LIST_SESSIONS, { linked: true, limit: 50 }).catch(() => ({ isError: true }) as CallResult)
   const family = listedFamily.isError === true ? [] : parseSessionRows(listedFamily.text)
   const children = family.filter(row => self !== undefined && !row.isArchived && row.startedBy === self.sessionId)
 
@@ -817,7 +890,7 @@ const groupFamily = async ($: EngineInterface, change: string, started?: string)
   // an error text is "do not know", never "no such group": creating one now would duplicate it
   if (listed.isError === true || listed.deny !== undefined || !groupsLegible(listed.text)) {
     $.ui.log(`orquestrador: list_groups não respondeu; o grupo de ${change} fica para o próximo gancho`)
-    if (state !== undefined) await keepGrouping($, change, fresh, undefined)
+    if (state !== undefined) await keepGrouping($, change, fresh, undefined, start)
     return undefined
   }
   const name = groupName(change)
@@ -825,7 +898,7 @@ const groupFamily = async ($: EngineInterface, change: string, started?: string)
   let groupId = state?.groupId !== undefined && known.includes(state.groupId) ? state.groupId : findGroupId(listed.text, name)
   if (groupId === undefined) groupId = findGroupId((await callTool($, { tool: CREATE_GROUP, name })).text)
   if (groupId === undefined) return `não consegui criar o grupo ${name}`
-  const kept = state === undefined ? undefined : await keepGrouping($, change, fresh, groupId)
+  const kept = state === undefined ? undefined : await keepGrouping($, change, fresh, groupId, start)
 
   const run = await loadRun($, root).catch(() => undefined)
   const plan = run?.change === change ? run : undefined
@@ -837,7 +910,7 @@ const groupFamily = async ($: EngineInterface, change: string, started?: string)
 
   if (moveSelf) {
     // the app moves the nested children with their mother: send the ones of other changes back
-    const after = parseSessionRows((await callTool($, { tool: LIST_SESSIONS, linked: true, limit: 50 })).text)
+    const after = parseSessionRows((await listCall($, LIST_SESSIONS, { linked: true, limit: 50 })).text)
     for (const other of others) {
       if (other.groupId === undefined || !known.includes(other.groupId)) continue
       const own = new Set(other.sessions ?? [])
@@ -851,18 +924,40 @@ const groupFamily = async ($: EngineInterface, change: string, started?: string)
 }
 
 /**
- * What the grouping adds to the flow, merged into the flow as it is on disk now: the sidebar calls in
- * between may let a `flow report` write it, and the grouping only owns `sessions` and `groupId`.
+ * What a start that went through says beyond the grouping: the child to keep in `tracked` (it was opened
+ * with `wake_when_done`, so the app wakes the coordination) and the title, which takes a pending session of
+ * the same title out of the list (the model opened it itself).
  */
-const keepGrouping = ($: EngineInterface, change: string, fresh: readonly string[], groupId: string | undefined): Promise<FlowState | undefined> =>
+type StartSeen = { track?: string; title?: string }
+
+/**
+ * What the grouping adds to the flow, merged into the flow as it is on disk now: the sidebar calls in
+ * between may let a `flow report` write it, and the grouping only owns `sessions`, `groupId` and `tracked`
+ * (and drops the pending session a start opened). One write, in the queue, with the grouping's own.
+ */
+const keepGrouping = (
+  $: EngineInterface,
+  change: string,
+  fresh: readonly string[],
+  groupId: string | undefined,
+  start: StartSeen = {},
+): Promise<FlowState | undefined> =>
   inFlowQueue(async () => {
-    const now = await loadFlowState($, change)
-    if (now === undefined) return undefined
+    const disk = await loadFlowState($, change)
+    if (disk === undefined) return undefined
+    const title = start.title?.trim()
+    const now = title === undefined || title === '' ? disk : dropPending(disk, p => p.title === title)
     const sessions = [...new Set([...(now.sessions ?? []), ...fresh])]
     const added = sessions.length !== (now.sessions ?? []).length
     const regrouped = groupId !== undefined && now.groupId !== groupId
-    if (!added && !regrouped) return now
-    const merged: FlowState = { ...now, ...(added ? { sessions } : {}), ...(regrouped ? { groupId } : {}) }
+    const track = start.track !== undefined && !(now.tracked ?? []).includes(start.track) ? start.track : undefined
+    if (!added && !regrouped && track === undefined && now === disk) return now
+    const merged: FlowState = {
+      ...now,
+      ...(added ? { sessions } : {}),
+      ...(regrouped ? { groupId } : {}),
+      ...(track === undefined ? {} : { tracked: [...(now.tracked ?? []), track] }),
+    }
     // already merged with the disk, and its groupId is the new one: written as it is
     await writeFlowNow($, merged, [])
     return merged
@@ -871,11 +966,11 @@ const keepGrouping = ($: EngineInterface, change: string, fresh: readonly string
 /** One grouping at a time: two start_session at once would both miss the group and create it twice. */
 let grouping: Promise<void> = Promise.resolve()
 
-const groupQuietly = ($: EngineInterface, change: string | undefined, started?: string): Promise<void> => {
+const groupQuietly = ($: EngineInterface, change: string | undefined, started?: string, start: StartSeen = {}): Promise<void> => {
   if (change === undefined) return Promise.resolve()
   const turn = grouping.then(async () => {
     try {
-      const problem = await groupFamily($, change, started)
+      const problem = await groupFamily($, change, started, start)
       if (problem !== undefined) $.ui.toast(`Orquestrador: ${problem}`)
     } catch (error) {
       $.ui.log(`orquestrador: ${describeError('agrupar', error)}`)
@@ -1069,7 +1164,12 @@ const ownChanges = async (
 const refuseStart = async ($: EngineInterface): Promise<string | undefined> => {
   const { value: ownPlan = [] } = await $.state.get(PLAN)
   const { self, children } = await loadSessions($, await baseDir($), ownPlan)
-  if (self === undefined) return 'the orchestrator could not read this session, so it cannot count the live phase sessions.'
+  if (self === undefined) {
+    const { value: needed } = await $.state.get(PERMISSION_NEEDED)
+    return needed === null || needed === undefined
+      ? 'the orchestrator could not read this session, so it cannot count the live phase sessions.'
+      : 'the orchestrator may not read the session list yet, so it cannot count the live phase sessions: allow get_session and list_sessions.'
+  }
   const finished = finishedSessionIds(await ownChanges($, await $.session.root()), children)
   const live = liveSessions(children, self.sessionId, self.cwd, finished)
   if (live.length < MAX_LIVE_SESSIONS) return undefined
@@ -1268,7 +1368,7 @@ const FLOW_SCHEMA = {
   properties: {
     action: {
       type: 'string',
-      enum: ['list', 'start', 'status', 'report', 'round', 'mockup', 'close', 'note'],
+      enum: ['list', 'start', 'status', 'report', 'round', 'mockup', 'close', 'note', 'pending'],
       description:
         'list: the flows on offer. start: begin a flow for a change. status: where the change stands and who ' +
         'answers the current step. report: the outcome of the current session step. round: record one ' +
@@ -1276,7 +1376,9 @@ const FLOW_SCHEMA = {
         'mockup the owner reviews while the flow is on the mockup. close: during the phase loop, ' +
         'close `phase` once its gates passed, its tasks are ticked in tasks.md and its work is committed; the mod ' +
         'archives its session and ends the loop when every phase is closed (without `phase`, it only checks that). ' +
-        'note: leave `note` for the owner step that waits (e.g. what QA asked); it joins the owner\'s answer.',
+        'note: leave `note` for the owner step that waits (e.g. what QA asked); it joins the owner\'s answer. ' +
+        'pending: on a session step or the phase loop, keep the `sessions` the app refused to start in this turn; the owner ' +
+        'opens them all with one press on "Abrir as N sessões pendentes" in the panel (a repeated `key` replaces the one before).',
     },
     phase: { type: 'string', description: 'close: the phase id, as in the published plan (e.g. "4.6") or a tasks.md section number.' },
     change: {
@@ -1306,6 +1408,25 @@ const FLOW_SCHEMA = {
     },
     amend: { type: 'boolean', description: 'round: merge into the latest round (fill answers) instead of adding one.' },
     artifact: { type: 'string', description: 'mockup: the mockup\'s Artifact URL or file path.' },
+    sessions: {
+      type: 'array',
+      maxItems: 6,
+      description:
+        'pending: the sessions to keep, each as start_session would take it. `key` is the phase id ("2", "4.6") or the step id ' +
+        '("planejar"). At most 6, a title of at most 120 and a prompt of at most 20000 characters.',
+      items: {
+        type: 'object',
+        properties: {
+          key: { type: 'string' },
+          title: { type: 'string', maxLength: 120 },
+          prompt: { type: 'string', maxLength: 20000 },
+          model: { type: 'string' },
+          effort: { type: 'string' },
+          use_worktree: { type: 'boolean' },
+        },
+        required: ['key', 'title', 'prompt'],
+      },
+    },
   },
   required: ['action'],
 }
@@ -1348,7 +1469,7 @@ const inFlowQueue = <T,>(fn: () => Promise<T>): Promise<T> => {
 }
 
 /**
- * Writes a flow read earlier, keeping what the grouping added to it on disk since (`sessions`, `groupId`):
+ * Writes a flow read earlier, keeping what the grouping added to it on disk since (`sessions`, `groupId`, `tracked`):
  * a session adopted while a `flow report` or `close` worked is not lost. Only the grouping owns those two
  * fields, so the disk wins for `groupId`. A flow started anew (another `startedAt`) takes nothing from the old one.
  */
@@ -1358,7 +1479,23 @@ const saveFlow = ($: EngineInterface, state: FlowState, events: readonly FlowEve
     if (disk === undefined || disk.startedAt !== state.startedAt) return writeFlowNow($, state, events)
     const sessions = [...new Set([...(state.sessions ?? []), ...(disk.sessions ?? [])])]
     const groupId = disk.groupId ?? state.groupId
-    await writeFlowNow($, { ...state, ...(state.sessions === undefined && disk.sessions === undefined ? {} : { sessions }), ...(groupId === undefined ? {} : { groupId }) }, events)
+    const tracked = [...new Set([...(state.tracked ?? []), ...(disk.tracked ?? [])])]
+    // a pending session stays only where both kept it: the write dropped it (a phase closed, the step left),
+    // or a start took it out on disk since the read; `flow pending` adds through its own turn of the queue
+    const onDisk = disk.pendingStarts ?? []
+    const pendingStarts = (state.pendingStarts ?? []).filter(p => onDisk.some(d => d.key === p.key && d.title === p.title))
+    const { pendingStarts: _pending, ...rest } = state
+    await writeFlowNow(
+      $,
+      {
+        ...rest,
+        ...(state.sessions === undefined && disk.sessions === undefined ? {} : { sessions }),
+        ...(groupId === undefined ? {} : { groupId }),
+        ...(tracked.length === 0 ? {} : { tracked }),
+        ...(pendingStarts.length === 0 ? {} : { pendingStarts }),
+      },
+      events,
+    )
   })
 
 /** The state file and its append-only log, both written by the mod alone. Only from inside `inFlowQueue`. */
@@ -1454,7 +1591,7 @@ const flowError = (why: string): FlowReply => ({ result: `Flow: ${why}`, isError
  */
 const openChildren = async ($: EngineInterface, coordinator: string | undefined): Promise<string[] | undefined> => {
   if (coordinator === undefined || !(await canCall($, LIST_SESSIONS))) return undefined
-  const listed = await callTool($, { tool: LIST_SESSIONS, linked: true, limit: 50 }).catch(() => ({ isError: true }) as CallResult)
+  const listed = await listCall($, LIST_SESSIONS, { linked: true, limit: 50 }).catch(() => ({ isError: true }) as CallResult)
   if (listed.isError === true || listed.deny !== undefined) return undefined
   return parseSessionRows(listed.text).filter(row => !row.isArchived && row.startedBy === coordinator).map(row => row.sessionId)
 }
@@ -1516,7 +1653,8 @@ const handleFlowTool = async ($: EngineInterface, input: Record<string, unknown>
     await saveFlow($, noted.state, noted.events)
     return { result: `Note kept for the owner's answer. ${describeFlow(noted.state)}` }
   }
-  if (action !== 'report') return flowError('action must be list, start, status, report, round, mockup, close or note.')
+  if (action === 'pending') return keepPending($, picked, input.sessions)
+  if (action !== 'report') return flowError('action must be list, start, status, report, round, mockup, close, note or pending.')
   if (typeof input.step !== 'string' || typeof input.outcome !== 'string') {
     return flowError('`step` and `outcome` are required to report.')
   }
@@ -1569,6 +1707,111 @@ const archiveSession = async ($: EngineInterface, sessionId: string, reason: str
  * session's work is committed; the mod then archives that session. Once every phase is closed the
  * mod ends the loop itself: no session reports it.
  */
+/**
+ * `flow pending`: only the coordination of a running flow keeps sessions for the owner's press. Read and
+ * written in one turn of the queue, from the disk: a start's grouping may have dropped an entry since.
+ */
+const keepPending = async ($: EngineInterface, picked: FlowState, sessions: unknown): Promise<FlowReply> => {
+  const self = await selfId($).catch(() => undefined)
+  if (picked.coordinatorSession !== undefined && picked.coordinatorSession !== self) {
+    return flowError('refused: only the session that coordinates this flow keeps its pending sessions.')
+  }
+  const at = await $.clock.now()
+  const kept = await inFlowQueue(async () => {
+    const disk = (await loadFlowState($, picked.change)) ?? picked
+    const moved = registerPending(disk, sessions, at)
+    if (!('error' in moved)) await writeFlowNow($, moved.state, moved.events)
+    return moved
+  })
+  if ('error' in kept) {
+    await logFlowRefusal($, picked, picked.current, 'session', kept.error)
+    return flowError(`refused: ${kept.error}`)
+  }
+  await refreshQuietly($)
+  const n = kept.state.pendingStarts?.length ?? 0
+  return {
+    result:
+      `Kept ${n} pending session(s): ${(kept.state.pendingStarts ?? []).map(p => p.key).join(', ')}. Tell the owner it is one press on ` +
+      `"Abrir as ${n} sessões pendentes" in the orquestrador panel; the mod opens them with wake_when_done, so wait for them to report. ` +
+      describeFlow(kept.state),
+  }
+}
+
+/** What the owner's press on "Abrir as N sessões pendentes" did: the keys opened, how many stayed and why. */
+type PendingOpened = { opened: string[]; left: number; why?: string; byApp: boolean }
+
+/**
+ * Opens the sessions the coordination kept with `flow pending`, on the owner's press. `words` are the owner's
+ * gesture as it happened (the press, or the typed command): the only place the mod hands a start the
+ * owner's words, which the app reads as the owner asking. The flow is read in the queue and the queue let
+ * go before the starts: the grouping of each start writes the flow through the same queue (it would wait
+ * on itself). A start the mod makes from a press does not pass its own `tool.call` hook, so the same gate
+ * and the same grouping run here: `refuseStart` (the ceiling, the session tools on "ask") as the hook holds
+ * it in this mode, then `groupQuietly` with the child to keep in `tracked`. The first refusal stops the loop
+ * and the rest stays. The opened ones leave the list in a turn of their own, with the disk read again.
+ */
+const openPending = async ($: EngineInterface, change: string, words: string): Promise<PendingOpened> => {
+  const read = await inFlowQueue(() => loadFlowState($, change))
+  const entries = read?.status === 'running' ? (read.pendingStarts ?? []) : []
+  if (read === undefined || entries.length === 0) return { opened: [], left: 0, byApp: false }
+  const self = await selfId($).catch(() => undefined)
+  const mode = await activeMode($)
+  const opened: string[] = []
+  let why: string | undefined
+  let byApp = false
+  for (const entry of entries) {
+    // the same gate the hook holds on a start: rigid in "barrar", a warning in "lembrar", nothing when inactive
+    const refusal = mode === undefined ? undefined : await refuseStart($)
+    if (refusal !== undefined && mode === 'barrar') {
+      why = refusal
+      break
+    }
+    if (refusal !== undefined) {
+      $.ui.toast(`Orchestrator gate: ${refusal}`)
+      await noteReminded($, `Orchestrator gate: ${refusal}`).catch(() => undefined)
+    }
+    const ran = (await callTool($, {
+      tool: START_SESSION,
+      title: entry.title,
+      prompt: entry.prompt,
+      initiation: 'user_asked',
+      wake_when_done: true,
+      ...(entry.use_worktree === undefined ? {} : { use_worktree: entry.use_worktree }),
+      consent: words,
+    }).catch(error => ({ isError: true, text: describeError('start_session', error) }) as CallResult)) as CallResult & { result?: unknown }
+    if (ran.deny !== undefined || ran.isError === true) {
+      why = (ran.deny ?? ran.text ?? '').replace(/^Orchestrator gate: /, '').slice(0, 240)
+      // the mod's own refusal (the ceiling, the permission) is not the app refusing a start from the panel
+      byApp = ran.deny === undefined || !ran.deny.startsWith('Orchestrator')
+      break
+    }
+    opened.push(entry.key)
+    const text = ran.text ?? (typeof ran.result === 'string' ? ran.result : JSON.stringify(ran.result ?? ''))
+    const id = startedSessionId(text, self)
+    if (id === undefined) continue
+    await groupQuietly($, change, id, { track: id, title: entry.title })
+    if (entry.model !== undefined) await callTool($, { tool: SET_SESSION_MODEL, session_id: id, model: entry.model }).catch(() => undefined)
+    if (entry.effort !== undefined) await callTool($, { tool: SET_SESSION_EFFORT, session_id: id, effort: entry.effort }).catch(() => undefined)
+  }
+  if (opened.length > 0) {
+    await inFlowQueue(async () => {
+      const now = await loadFlowState($, change)
+      if (now === undefined || now.startedAt !== read.startedAt) return
+      const event: FlowEvent = { seq: now.seq, at: await $.clock.now(), kind: 'pending-opened', step: now.current, by: 'owner', note: opened.join(', ') }
+      await writeFlowNow($, dropPending(now, p => opened.includes(p.key)), [event])
+    })
+  }
+  return { opened, left: entries.length - opened.length, ...(why === undefined ? {} : { why }), byApp }
+}
+
+/** The panel's press: opens the pending sessions and says how many opened, how many stayed and why. */
+const pressPending = async ($: EngineInterface, change: string, label: string, mobile: boolean): Promise<void> => {
+  const t = (await textNow($)).pending
+  const done = await openPending($, change, `The user pressed "${label}" in the orquestrador panel.`)
+  await refreshQuietly($)
+  $.ui.toast(t.result(done.opened.length, done.left, done.why) + (done.byApp ? ` ${mobile ? t.appRefusedMobile : t.appRefused}` : ''))
+}
+
 const closeLoopPhase = async ($: EngineInterface, state: FlowState, phase: unknown): Promise<FlowReply> => {
   const refusal = loopRefusal(state)
   if (refusal !== undefined) {
@@ -1640,8 +1883,11 @@ const cleanupChange = async ($: EngineInterface, state: FlowState): Promise<Omit
     if (!(await canCall($, LIST_GROUPS))) return [ev('cleanup', 'sidebar unavailable: sessions and group left as they are')]
     const groupId = findGroupId((await callTool($, { tool: LIST_GROUPS })).text, name)
     if (groupId === undefined) return [ev('cleanup', `no sidebar group ${name}`)]
-    const [self] = parseSessionRows((await callTool($, { tool: GET_SESSION, session_id: 'self' })).text)
-    const rows = parseSessionRows((await callTool($, { tool: LIST_SESSIONS, group: groupId, limit: 50 })).text)
+    const self = await selfRowNow($)
+    const listed = await listCall($, LIST_SESSIONS, { group: groupId, limit: 50 })
+    // without `self` the coordination itself could pass for a phase session: leave everything as it is
+    if (self === undefined || listed.isError === true) return [ev('cleanup', 'sessions not read (permission or app): sessions and group left as they are')]
+    const rows = parseSessionRows(listed.text)
     const events: Omit<FlowEvent, 'seq'>[] = []
     for (const row of phaseSessions(rows, self?.sessionId, state.coordinatorCwd)) {
       const label = row.name ?? row.title
@@ -1721,38 +1967,160 @@ const observeFlows = async ($: EngineInterface, command: string, failed: boolean
   }
 }
 
+/** What an owner press says back: the text for the toast or the command's answer, or why nothing changed. */
+type Pressed = { ok: true; text: string } | { error: string }
+
 /**
- * Only the panel's press reaches this: no tool call answers an owner step. When the flow lands on a
- * step the coordinator drives, the press also wakes it with a message in the mod's name.
+ * Only the owner reaches this (the panel's press, or `/orquestrador aprovar` typed by them): no tool call
+ * answers an owner step. When the flow lands on a step the coordinator drives, the press also wakes it with
+ * a message in the mod's name. The click waits for that message; the command does not (it would hold its answer).
  */
-const pressFlow = async ($: EngineInterface, change: string, step: string, outcome: string, note?: string): Promise<void> => {
-  const state = await loadFlowState($, change)
-  if (state === undefined) return
-  const running = state.status === 'running' && state.current === step
+const pressFlow = async (
+  $: EngineInterface,
+  change: string,
+  step: string,
+  outcome: string,
+  note?: string,
+  wait = true,
+): Promise<Pressed> => {
   const { languages } = await loadConfig($)
   const t = uiText(languages.ui)
-  if (running && step === RELEASE_STEP && outcome === RELEASE_OUTCOME) {
-    $.ui.toast(t.toast.releaseFromPlanMode)
-    return
-  }
+  const state = await loadFlowState($, change)
+  if (state === undefined) return { error: t.command.noFlow }
+  const running = state.status === 'running' && state.current === step
+  if (running && step === RELEASE_STEP && outcome === RELEASE_OUTCOME) return { error: t.toast.releaseFromPlanMode }
   const at = await $.clock.now()
   const prep = running && step === MOCKUP_STEP ? pressMockup(await loadPrep($, change), outcome, note, at) : undefined
-  if (prep !== undefined && 'error' in prep) {
-    $.ui.toast(t.toast.notRecorded(prep.error))
-    return
-  }
+  if (prep !== undefined && 'error' in prep) return { error: t.toast.notRecorded(prep.error) }
   const noted = note === undefined || note.trim() === '' ? undefined : note.trim()
   const moved = ownerPress(state, step, outcome, at, noted)
-  if ('error' in moved) {
-    $.ui.toast(t.toast.notRecorded(moved.error))
-    return
-  }
+  if ('error' in moved) return { error: t.toast.notRecorded(moved.error) }
   if (prep !== undefined) await savePrep($, state, prep, undefined)
   await saveFlow($, moved.state, moved.events)
   await refreshQuietly($)
-  $.ui.toast(pressedToast(state, moved.state, step, outcome, languages.ui))
   const wake = wakePrompt(state, moved.state, step, outcome, noted)
-  if (wake !== undefined) await $.prompt.submit({ text: wake })
+  if (wake !== undefined) {
+    // a command's hook holds the turn the prompt would wait on: the engine refuses it there, so it goes after
+    if (wait) await $.prompt.submit({ text: wake })
+    else $.clock.after(WAKE_AFTER_COMMAND_MS, () => void $.prompt.submit({ text: wake }).catch(error => $.ui.log(`orquestrador: ${describeError('aviso', error)}`)))
+  }
+  return { ok: true, text: pressedToast(state, moved.state, step, outcome, languages.ui) }
+}
+
+/** The click's side of a press: the toast is the text, or the reason it was not recorded. */
+const clickFlow = async ($: EngineInterface, change: string, step: string, outcome: string, note?: string): Promise<void> => {
+  const done = await pressFlow($, change, step, outcome, note)
+  $.ui.toast('error' in done ? done.error : done.text)
+}
+
+/**
+ * The owner ends the flow (the second press of "Encerrar o flow", or `/orquestrador encerrar ... confirmar`).
+ * Nothing is archived, the group stays, and no message goes to the coordination: the `aborted` flow stops the
+ * warnings by itself. The only caller of `endFlow` besides the escalation's answer.
+ */
+const endByOwner = async ($: EngineInterface, change: string, note?: string): Promise<Pressed> => {
+  const t = uiText((await loadConfig($)).languages.ui)
+  const state = await loadFlowState($, change)
+  if (state === undefined) return { error: t.command.noFlow }
+  const ended = endFlow(state, await $.clock.now(), note)
+  if ('error' in ended) return { error: ended.error }
+  await saveFlow($, ended.state, ended.events)
+  await refreshQuietly($)
+  return { ok: true, text: t.command.endDone(change) }
+}
+
+/**
+ * The flow this session coordinates, for the owner's subcommands: `running` or `escalated` (an escalated flow
+ * is still the owner's to answer or to end), the latest started. A child of the same folder is not its coordinator.
+ */
+const commandFlow = async ($: EngineInterface, root: string): Promise<FlowState | undefined> => {
+  const self = await selfId($).catch(() => undefined)
+  return (await allFlowStates($))
+    .filter(
+      s =>
+        (s.status === 'running' || s.status === 'escalated') &&
+        ownsFlow(s, root) &&
+        (s.coordinatorSession === undefined || s.coordinatorSession === self),
+    )
+    .sort((a, b) => b.startedAt - a.startedAt)[0]
+}
+
+/** The gates still open in the last panel view, by phase: what `status` lists and `pular-portão` can reach. */
+const openGatesNow = async ($: EngineInterface): Promise<{ phase: string; gate: GateView }[]> => {
+  const { value: view } = await $.state.get(VIEW)
+  if (view?.run === undefined) return []
+  const own = await ownCheck($)
+  const skips = view.skips ?? {}
+  const phases = phaseViews(view.run, view.children).flat()
+  const phaseGates = phases.flatMap(phase =>
+    phase.gates === undefined
+      ? []
+      : gateViews(phase.gates, phase.id, phase.session === undefined ? own : (phase.card?.gates ?? { records: {}, editedAt: undefined }), skips)
+          .filter(isOpenGate)
+          .map(gate => ({ phase: phase.id, gate })),
+  )
+  const check = familyCheck([own, ...view.children.map(c => c.gates ?? { records: {}, editedAt: undefined })])
+  const final = gateViews(view.run.finalGates, FINAL_SCOPE, check, skips)
+    .filter(isOpenGate)
+    .map(gate => ({ phase: 'final', gate }))
+  return [...phaseGates, ...final]
+}
+
+/** `/orquestrador <subcommand>`: the owner's chat, which the Remote Control reaches too. Plain text answers. */
+const runSubcommand = async ($: EngineInterface, args: string, origin: { readonly kind: string }): Promise<string> => {
+  const config = await loadConfig($)
+  const t = uiText(config.languages.ui)
+  const parsed = parseCommand(args)
+  if (parsed.kind === 'toggle') {
+    const done = await togglePane($)
+    return done === 'closed' ? t.command.closed : done === 'opened' ? t.command.opened : t.command.waiting
+  }
+  if (!fromOwner(origin)) return t.command.notFromOwner
+  if (parsed.kind === 'help') return t.command.help
+  if (parsed.kind === 'unknown') return `${t.command.unknown(parsed.word)}\n${t.command.help}`
+  const flow = await commandFlow($, await $.session.root())
+  if (flow === undefined) return t.command.noFlow
+  const change = flow.change
+  switch (parsed.kind) {
+    case 'status': {
+      await refreshQuietly($)
+      const { value: view } = await $.state.get(VIEW)
+      const { value: needed } = await $.state.get(PERMISSION_NEEDED)
+      return statusText(
+        {
+          flow: flowView(flow, config.languages),
+          gates: (await openGatesNow($)).map(g => `${g.phase}: ${g.gate.gate}`),
+          pending: (flow.pendingStarts ?? []).map(p => p.title),
+          permission: needed === null || needed === undefined || view === undefined ? undefined : t.warning.permission,
+        },
+        t.command,
+      )
+    }
+    case 'approve': {
+      const done = await pressFlow($, change, flow.escalation?.step ?? flow.current, parsed.outcome, parsed.note, false)
+      return 'error' in done ? done.error : done.text
+    }
+    case 'open': {
+      if ((flow.pendingStarts ?? []).length === 0) return t.command.noPending
+      const done = await openPending($, change, 'The user typed "/orquestrador abrir".')
+      await refreshQuietly($)
+      return t.pending.result(done.opened.length, done.left, done.why) + (done.byApp ? ` ${origin.kind === 'bridge' ? t.pending.appRefusedMobile : t.pending.appRefused}` : '')
+    }
+    case 'skip': {
+      await refreshQuietly($)
+      const hit = (await openGatesNow($)).find(g => g.phase === parsed.phase && (g.gate.gate === parsed.gate || g.gate.label === parsed.gate))
+      if (hit === undefined) return t.command.skipUnknown(parsed.phase, parsed.gate)
+      if (!parsed.confirmed) return t.command.skipAsk(parsed.phase, hit.gate.gate)
+      await skipGate($, change, hit.gate)
+      await refreshQuietly($)
+      return t.command.skipDone(hit.gate.gate)
+    }
+    case 'end': {
+      if (!parsed.confirmed) return t.command.endAsk(change, flow.escalation?.step ?? flow.current)
+      const done = await endByOwner($, change, parsed.reason)
+      return 'error' in done ? done.error : done.text
+    }
+  }
 }
 
 /**
@@ -1918,7 +2286,9 @@ const folderIsOwn = async ($: EngineInterface, sessionId: string | undefined, cw
   if (sessionId === undefined) return true
   if (!(await canCall($, LIST_SESSIONS))) return false
   // a family past 50 live sessions is far above the ceiling of 3 phases; the panel reads the same page
-  const family = parseSessionRows((await callTool($, { tool: LIST_SESSIONS, linked: true, limit: 50 })).text)
+  const listed = await listCall($, LIST_SESSIONS, { linked: true, limit: 50 })
+  if (listed.isError === true) return false
+  const family = parseSessionRows(listed.text)
   return !family.some(row => !row.isArchived && row.sessionId !== sessionId && row.cwd === cwd)
 }
 
@@ -1976,11 +2346,9 @@ export const register: Register = on => {
     return next(e)
   })
 
-  on('command.run', { command: 'orquestrador' }, async $ => {
-    const done = await togglePane($)
-    const t = (await textNow($)).command
-    return { text: done === 'closed' ? t.closed : done === 'opened' ? t.opened : t.waiting }
-  })
+  on('command.run', { command: 'orquestrador' }, async ($, e) => ({
+    text: await runSubcommand($, e.args ?? '', e.origin).catch(error => describeError('orquestrador', error)),
+  }))
 
   on('command.run', { command: 'orquestrador-workflows' }, async $ => {
     const done = await toggleWorkflowsPane($)
@@ -2009,13 +2377,15 @@ export const register: Register = on => {
     const { value: view } = await $.state.get(VIEW)
     const { value: answered = [] } = await $.state.get(ANSWERED)
     const summary = view === undefined ? undefined : bandSummary(view, answered)
-    if (summary === undefined) return next(e)
+    const { value: needed } = await $.state.get(PERMISSION_NEEDED)
+    const lang = view?.languages?.ui
+    const notice = needed === null || needed === undefined ? undefined : uiText(lang).warning.permission
+    if (summary === undefined && notice === undefined) return next(e)
     const { value: paneOpen = false } = await $.state.get(PANE_OPEN)
     const { Box, Text, Button } = $.ui.resolve(e)
-    const lang = view?.languages?.ui
     return renderBand({ Box, Text, Button }, summary, paneOpen, () => {
       void togglePane($).catch(() => $.ui.toast(uiText(lang).toast.paneFailed))
-    }, lang)
+    }, lang, notice)
   })
 
   on('tool.call', async ($, e, next) => {
@@ -2079,7 +2449,11 @@ export const register: Register = on => {
       const change = await currentChange($, await $.session.root()).catch(() => undefined)
       const result = ran as CallResult & { result?: unknown }
       const text = result.text ?? (typeof result.result === 'string' ? result.result : JSON.stringify(result.result ?? ''))
-      await groupQuietly($, change, startedSessionId(text, await selfId($).catch(() => undefined)))
+      const started = startedSessionId(text, await selfId($).catch(() => undefined))
+      await groupQuietly($, change, started, {
+        ...(input.wake_when_done === true && started !== undefined ? { track: started } : {}),
+        ...(typeof input.title === 'string' ? { title: input.title } : {}),
+      })
     }
 
     const { value: waiting } = await $.state.get(WAITING)
@@ -2104,6 +2478,8 @@ export const register: Register = on => {
   })
 
   on('tool.check', async ($, e, next) => {
+    // a check the mod raised itself (mayList, or its own $.tool.call) is not the model asking: it marks no wait
+    if (next.origin.plugin === 'orquestrador') return next(e)
     const verdict = await next(e)
     if (verdict.decision === 'ask' && (await activeMode($)) !== undefined) await setWaiting($, { kind: 'permission', text: toolLabel(e.tool) })
     return verdict
@@ -2123,11 +2499,13 @@ export const register: Register = on => {
       openspec: undefined, jira: {}, jiraNote: undefined, skips: {},
     }
     const { value: reminded } = await $.state.get(REMINDED)
+    const { value: needed } = await $.state.get(PERMISSION_NEEDED)
     const tampered = (await readActivation($).catch(() => undefined))?.tampered === true
     const warnings = [
       base.warning,
       reminded === undefined || reminded === null ? undefined : uiText(base.languages?.ui).warning.reminded(reminded.count, reminded.last),
       tampered ? uiText(base.languages?.ui).warning.tampered : undefined,
+      needed === null || needed === undefined ? undefined : uiText(base.languages?.ui).warning.permission,
     ].filter(x => x !== undefined)
     const view: PanelView = warnings.length === 0 || (warnings.length === 1 && warnings[0] === base.warning) ? base : { ...base, warning: warnings.join(' · ') }
     const { value: collapsed = {} } = await $.state.get(COLLAPSED)
@@ -2160,14 +2538,22 @@ export const register: Register = on => {
           .catch(() => $.ui.toast(t.skipFailed))
       },
       answerFlow: (change, step, outcome) => () => {
-        void pressFlow($, change, step, outcome).catch(() => $.ui.toast(t.flowFailed))
+        void clickFlow($, change, step, outcome).catch(() => $.ui.toast(t.flowFailed))
+      },
+      endFlow: change => () => {
+        void endByOwner($, change)
+          .then(done => $.ui.toast('error' in done ? done.error : done.text))
+          .catch(() => $.ui.toast(t.flowFailed))
+      },
+      openPending: (change, label) => () => {
+        void pressPending($, change, label, e.surface === 'mobile').catch(() => $.ui.toast(uiText(view.languages?.ui).pending.failed))
       },
       noteFlow: (change, step, outcome) => (value: string) => {
         if (value.trim() === '') {
           $.ui.toast(t.adjustEmpty)
           return
         }
-        void pressFlow($, change, step, outcome, value).catch(() => $.ui.toast(t.flowFailed))
+        void clickFlow($, change, step, outcome, value).catch(() => $.ui.toast(t.flowFailed))
       },
       drafts,
       draftAnswer: question => (value: string) => {

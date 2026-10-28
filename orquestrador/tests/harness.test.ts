@@ -44,6 +44,7 @@ const world = (on: On, family: Record<string, unknown>[]): World => {
       .filter(k => k.startsWith(`${e.path}/`) && !k.slice(e.path.length + 1).includes('/'))
       .map(k => ({ name: k.slice(e.path.length + 1), kind: 'file', size: 1, mtimeMs: w.mtimes.get(k) ?? w.now, isLink: false })) as never,
   }))
+  on('tool.check', () => ({ decision: 'allow' }) as never)
   on('tool.list', () => ({
     value: [{ name: 'mcp__ccd_session_mgmt__list_sessions' }, { name: 'mcp__ccd_session_mgmt__get_session' }] as never,
   }))

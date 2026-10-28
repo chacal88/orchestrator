@@ -42,6 +42,7 @@ const world = (on: On): World => {
     const cwd = e.argv[2] ?? ''
     return { value: { exitCode: 0, stdout: w.dirty[cwd] ?? '', stderr: '' } as never }
   })
+  on('tool.check', () => ({ decision: 'allow' }) as never)
   on('tool.list', () => ({
     value: [
       { name: 'mcp__ccd_session_mgmt__list_sessions' },

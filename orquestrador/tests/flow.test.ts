@@ -5,12 +5,16 @@ import {
   applyOutcome,
   automaticOutcome,
   describeFlow,
+  dropPending,
+  endFlow,
   flowView,
   mergeFlows,
   ownerPress,
   parseFlow,
+  registerPending,
   startFlow,
 } from '../hooks/flow'
+import { closePhase } from '../hooks/lifecycle'
 import { DEFAULT_FLOWS, defaultFlows } from '../hooks/flows/index'
 
 const flows = Object.fromEntries(defaultFlows().map(f => [f.id, f])) as Record<string, FlowDef>
@@ -166,10 +170,11 @@ describe('the engine', () => {
     expect(text).toMatch(/start_session/)
     expect(text).toMatch(/"user_asked"/)
     expect(text).toMatch(/do not do the step in this session/)
-    expect(text).toMatch(/propose it as a card/)
-    expect(text).toMatch(/"own_initiative"/)
     expect(text).toMatch(/user_asked" with wake_when_done/)
-    expect(text).toMatch(/without wake_when_done/)
+    // a refused start is kept for the owner's single press, never proposed as a card
+    expect(text).toMatch(/action "pending"/)
+    expect(text).toMatch(/Abrir as N sessões pendentes/)
+    expect(text).not.toMatch(/own_initiative|as a card/)
     expect(text).toMatch(/agent, model and effort/)
     expect(text).not.toMatch(/Do the step/)
   })
@@ -181,6 +186,7 @@ describe('the engine', () => {
     ])
     expect(atExecutar.current).toBe('executar')
     expect(describeFlow(atExecutar)).toMatch(/one session per phase/)
+    expect(describeFlow(atExecutar)).toMatch(/action "pending"/)
   })
 
   test('QA asking for changes goes back to the phases and forgets what came after', () => {
@@ -266,4 +272,124 @@ test('flowView shows the owner step and its buttons', () => {
   ])
   expect(view.steps.filter(s => s.state === 'done').map(s => s.id)).toEqual(['grill', 'planejar', 'validar', 'revisao-plano'])
   expect(view.steps.find(s => s.id === 'validar')?.outcomeLabel).toBe('Validou')
+})
+
+describe('flow pending', () => {
+  const atExecutar = (): FlowState =>
+    walk(start(rapido), [
+      ['planejar', 'pronto', 'session'],
+      ['validar', 'passou', 'automatic'],
+    ])
+  const entry = (key: string, extra: Record<string, unknown> = {}) => ({ key, title: `Fase ${key}`, prompt: `faça a fase ${key}`, ...extra })
+
+  test('registers the sessions on the loop, logs the keys without the prompt, and shows them in the view', () => {
+    const before = atExecutar()
+    const moved = ok(registerPending(before, [entry('1', { model: 'claude-opus-5-5', effort: 'high', use_worktree: true }), entry('2')], 50))
+    expect(moved.state.pendingStarts).toEqual([
+      { key: '1', step: 'executar', title: 'Fase 1', prompt: 'faça a fase 1', model: 'claude-opus-5-5', effort: 'high', use_worktree: true },
+      { key: '2', step: 'executar', title: 'Fase 2', prompt: 'faça a fase 2' },
+    ])
+    expect(moved.state.seq).toBe(before.seq + 1)
+    expect(moved.events).toEqual([{ seq: before.seq + 1, at: 50, kind: 'pending', step: 'executar', by: 'session', note: '1, 2' }])
+    expect(JSON.stringify(moved.events)).not.toMatch(/faça a fase/)
+    expect(flowView(moved.state).pendingStarts).toEqual([{ key: '1', title: 'Fase 1' }, { key: '2', title: 'Fase 2' }])
+  })
+
+  test('a repeated key replaces the entry before it', () => {
+    const once = ok(registerPending(atExecutar(), [entry('1'), entry('2')], 50)).state
+    const again = ok(registerPending(once, [entry('1', { prompt: 'outro prompt' })], 51)).state
+    expect(again.pendingStarts?.map(p => [p.key, p.prompt])).toEqual([
+      ['2', 'faça a fase 2'],
+      ['1', 'outro prompt'],
+    ])
+  })
+
+  test('a session step takes it too; an automatic or owner step, or a flow not running, refuses it', () => {
+    expect(ok(registerPending(start(rapido), [entry('planejar')], 50)).state.pendingStarts?.[0]?.step).toBe('planejar')
+    const atValidar = walk(start(rapido), [['planejar', 'pronto', 'session']])
+    expect(err(registerPending(atValidar, [entry('1')], 50))).toMatch(/opens no session/)
+    const atQa = walk(atExecutar(), [
+      ['executar', 'concluidas', 'mod'],
+      ['revisao-codigo', 'aprovado', 'session'],
+      ['checagem', 'passou', 'automatic'],
+      ['pr', 'aberto', 'session'],
+    ])
+    expect(err(registerPending(atQa, [entry('1')], 50))).toMatch(/opens no session/)
+    expect(err(registerPending({ ...atExecutar(), status: 'aborted' }, [entry('1')], 50))).toMatch(/aborted/)
+  })
+
+  test('refuses past the limits: 6 entries, a title of 120 and a prompt of 20 000 characters', () => {
+    const six = ['1', '2', '3', '4', '5', '6'].map(k => entry(k))
+    const full = ok(registerPending(atExecutar(), six, 50)).state
+    expect(err(registerPending(full, [entry('7')], 51))).toMatch(/at most 6/)
+    expect(err(registerPending(atExecutar(), [...six, entry('7')], 51))).toMatch(/at most 6/)
+    expect(err(registerPending(atExecutar(), [entry('1', { title: 'x'.repeat(121) })], 51))).toMatch(/at most 120/)
+    expect(err(registerPending(atExecutar(), [entry('1', { prompt: 'x'.repeat(20_001) })], 51))).toMatch(/at most 20000/)
+    expect(err(registerPending(atExecutar(), [], 51))).toMatch(/at least one/)
+    expect(err(registerPending(atExecutar(), [{ key: '1', title: 'Fase 1' }], 51))).toMatch(/needs `key`, `title` and `prompt`/)
+    expect(err(registerPending(atExecutar(), [entry('1', { wake_when_done: true })], 51))).toMatch(/unknown fields: wake_when_done/)
+    expect(ok(registerPending(atExecutar(), [entry('1', { title: 'x'.repeat(120), prompt: 'x'.repeat(20_000) })], 51)).state.pendingStarts).toHaveLength(1)
+  })
+
+  test('a phase closed drops its entry; the others stay', () => {
+    const kept = ok(registerPending(atExecutar(), [entry('1'), entry('2')], 50)).state
+    const closed = closePhase(kept, { id: '1', title: 'Um', tasks: [], gates: undefined, session: undefined }, { session: undefined, archived: false }, 60)
+    expect(closed.state.pendingStarts?.map(p => p.key)).toEqual(['2'])
+  })
+
+  test('leaving the step drops every entry of it', () => {
+    const kept = ok(registerPending(atExecutar(), [entry('1')], 50)).state
+    const left = walk(kept, [['executar', 'concluidas', 'mod']])
+    expect(left.current).toBe('revisao-codigo')
+    expect(left.pendingStarts).toBeUndefined()
+    expect(flowView(left).pendingStarts).toEqual([])
+    const atPlanejar = ok(registerPending(start(rapido), [entry('planejar')], 50)).state
+    expect(walk(atPlanejar, [['planejar', 'pronto', 'session']]).pendingStarts).toBeUndefined()
+  })
+
+  test('dropPending takes the matching entries out, and the field goes once the list is empty', () => {
+    const kept = ok(registerPending(atExecutar(), [entry('1'), entry('2')], 50)).state
+    expect(dropPending(kept, p => p.title === 'Fase 1').pendingStarts?.map(p => p.key)).toEqual(['2'])
+    expect('pendingStarts' in dropPending(kept, () => true)).toBe(false)
+    expect(dropPending(kept, () => false)).toBe(kept)
+  })
+})
+
+describe('endFlow', () => {
+  const escalate = (): FlowState => {
+    const fail: Report[] = [
+      ['planejar', 'pronto', 'session'],
+      ['validar', 'falhou', 'automatic'],
+    ]
+    return walk(start(rapido), [...fail, ...fail, ...fail])
+  }
+
+  test('a running flow becomes aborted, with the owner and the note on the event, and its pending starts go', () => {
+    const running = ok(registerPending(start(rapido), [{ key: '1', title: 'Fase 1', prompt: 'x' }], 5)).state
+    expect(running.pendingStarts).toHaveLength(1)
+    const ended = ok(endFlow(running, 50, '  mudou o escopo  '))
+    expect(ended.state.status).toBe('aborted')
+    expect(ended.state.pendingStarts).toBeUndefined()
+    expect([ended.state.seq, ended.state.updatedAt]).toEqual([running.seq + 1, 50])
+    expect(ended.events).toEqual([{ seq: running.seq + 1, at: 50, kind: 'aborted', step: 'planejar', by: 'owner', note: 'mudou o escopo' }])
+  })
+
+  test('an escalated flow ends too, on the step that escalated', () => {
+    const escalated = escalate()
+    expect(escalated.status).toBe('escalated')
+    const ended = ok(endFlow(escalated, 60))
+    expect(ended.state.status).toBe('aborted')
+    expect(ended.events).toEqual([{ seq: escalated.seq + 1, at: 60, kind: 'aborted', step: 'planejar', by: 'owner' }])
+  })
+
+  test('a flow already done or aborted is refused with the reason', () => {
+    const aborted = ok(endFlow(start(rapido), 50)).state
+    expect(err(endFlow(aborted, 51))).toMatch(/already ended/)
+    expect(err(endFlow({ ...start(rapido), status: 'done' }, 51))).toMatch(/already done/)
+  })
+
+  test('the escalation answered with encerrar is the same state and event as endFlow', () => {
+    const escalated = escalate()
+    expect(ok(ownerPress(escalated, 'planejar', 'encerrar', 20))).toEqual(ok(endFlow(escalated, 20)))
+  })
 })

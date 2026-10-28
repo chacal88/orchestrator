@@ -24,6 +24,7 @@ const T = {
   list: 'mcp__ccd_session_mgmt__list_sessions',
   get: 'mcp__ccd_session_mgmt__get_session',
 }
+const START = 'mcp__ccd_session__start_session'
 
 type World = {
   disk: Map<string, string>
@@ -63,6 +64,7 @@ const world = (on: On, rows: Row[]): World => {
       .map(k => ({ name: k.slice(e.path.length + 1), kind: 'file', size: 1, mtimeMs: clock.now(), isLink: false })) as never,
   }))
   on('process.run', () => ({ value: { exitCode: 128, stdout: '', stderr: 'not a repo' } as never }))
+  on('tool.check', () => ({ decision: 'allow' }) as never)
   on('tool.list', () => ({ value: Object.values(T).map(name => ({ name })) as never }))
   const answer = (text: string) => ({ result: text, text }) as never
   on('tool.call', async ($, e) => {
@@ -70,6 +72,12 @@ const world = (on: On, rows: Row[]): World => {
     if (input.tool === T.get) return answer(JSON.stringify(w.rows[0]))
     if (input.tool === T.list && w.hold !== undefined) await w.hold
     if (input.tool === T.list) return answer(JSON.stringify(w.rows))
+    if (input.tool === START) {
+      // the app opens the child and answers with its id
+      const id = `local_c${w.rows.length}`
+      w.rows.push(child(id))
+      return answer(`Started session ${id}`)
+    }
     return answer('ok')
   })
   on('command.register', () => ({ value: undefined }) as never)
@@ -385,4 +393,29 @@ test('with the clone inactive nothing is kept, so a stop from then is not told o
   w.disk.set(...ACTIVE)
   await w.clock.advance(REFRESH_MS * 2)
   expect(w.prompts).toEqual([])
+})
+
+test('a child opened with wake_when_done wakes nothing from the mod (the app wakes for it); one opened without it still does', async ($, on) => {
+  const w = world(on, [])
+  optionOn(w)
+  await coordinate($, w)
+  const followed = (await $.tool.call({ tool: START, initiation: 'user_asked', wake_when_done: true, title: 'Fase 1', prompt: 'p' } as never)) as { text?: string }
+  const carded = (await $.tool.call({ tool: START, initiation: 'own_initiative', title: 'Fase 2', prompt: 'p' } as never)) as { text?: string }
+  expect([followed.text, carded.text]).toEqual(['Started session local_c1', 'Started session local_c2'])
+  // the flow keeps the child the app follows, and only that one
+  expect(saved(w, 'b').tracked).toEqual(['local_c1'])
+  w.disk.set(`${BASE}/flows/b.json`, JSON.stringify({ ...saved(w, 'b'), sessions: ['local_c1', 'local_c2'] }))
+  await w.clock.advance(REFRESH_MS)
+
+  stop(w, 'local_c1')
+  stop(w, 'local_c2')
+  await w.clock.advance(REFRESH_MS)
+  expect(w.prompts).toEqual([{ text: 'Painel: a sessão local_c2 terminou o turno. Confira no flow status e siga o flow.', asUser: false }])
+
+  // the followed child ending again is still not told; it stays watched, so it is never told as new either
+  w.rows.find(r => r.sessionId === 'local_c1')!.isRunning = true
+  await w.clock.advance(REFRESH_MS)
+  stop(w, 'local_c1', 't3')
+  await w.clock.advance(REFRESH_MS * 2)
+  expect(w.prompts).toHaveLength(1)
 })

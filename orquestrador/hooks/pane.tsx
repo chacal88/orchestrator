@@ -59,6 +59,10 @@ export type PaneActions = {
   skip: (gate: GateView) => () => void
   /** The owner's answer to a flow step: the only way an owner step moves. */
   answerFlow: (change: string, step: string, outcome: string) => () => void
+  /** The owner's "Abrir as N sessões pendentes": opens what the coordination kept with `flow pending`. */
+  openPending: (change: string, label: string) => () => void
+  /** The owner's end of the flow: armed by a first press, fired by the second. */
+  endFlow: (change: string) => () => void
   /** The same answer with the owner's note typed in the panel (a mockup adjustment). */
   noteFlow: (change: string, step: string, outcome: string) => (value: string) => void
   /** What the owner has typed in the grill's answer fields, by question text. */
@@ -1042,6 +1046,45 @@ export const renderPane = (
         ]
   }
 
+  /**
+   * The sessions the app refused in the coordination's turn: their titles and one button for all of them, in
+   * the current step, on every surface (the phone's panel too).
+   */
+  const pendingBlock = (): RenderElement | undefined => {
+    const pending = flow?.status === 'running' ? (flow.pendingStarts ?? []) : []
+    if (flow === undefined || pending.length === 0) return undefined
+    const label = t.pending.button(pending.length)
+    return (
+      <Box flexDirection="column" marginTop={1} minWidth={0}>
+        <Text dimColor wrap="wrap">
+          {t.pending.hint(pending.map(p => p.title))}
+        </Text>
+        <Button key="pending:open" onPress={actions.openPending(flow.change, label)}>
+          {label}
+        </Button>
+      </Box>
+    )
+  }
+
+  /** "Encerrar o flow", while the flow is going: two presses, on every surface (the phone's panel too). */
+  const endBlock = (): RenderElement | undefined => {
+    if (flow === undefined || (flow.status !== 'running' && flow.status !== 'escalated')) return undefined
+    const id = `arm:end:${flow.change}`
+    const armed = isOpen(id, false)
+    return (
+      <Box flexDirection="row" columnGap={1} marginTop={1} minWidth={0}>
+        {armed ? (
+          <Button key="end:confirm" variant="primary" onPress={actions.endFlow(flow.change)}>
+            {t.command.endConfirm(flow.change)}
+          </Button>
+        ) : undefined}
+        <Button key="end:arm" plain dimColor onPress={actions.toggle(id, false)}>
+          {armed ? t.cancel : t.command.endButton}
+        </Button>
+      </Box>
+    )
+  }
+
   /** The harness the change follows: the flow's steps, the phases' gates while the loop runs, the final gates. */
   const gatesCard = (): RenderElement[] => {
     const anyPhaseGates = waves.flat().some(p => (p.gates?.length ?? 0) > 0)
@@ -1052,6 +1095,7 @@ export const renderPane = (
     const folded = flow.steps.filter(s => s.state === 'done' || s.state === 'skipped')
     const shown = flow.steps.filter(s => s.state === 'current' || s.state === 'pending')
     const hasLoop = flow.steps.some(s => s.kind === 'loop')
+    const end = endBlock()
     return [
       card(
         'gates',
@@ -1075,6 +1119,7 @@ export const renderPane = (
                   </Text>
                 )}
                 {step.kind === 'loop' && <Box flexDirection="column" marginTop={1} minWidth={0}>{loopPhases()}</Box>}
+                {pendingBlock()}
               </Box>
             ) : (
               stepLine(step)
@@ -1087,6 +1132,7 @@ export const renderPane = (
               : []),
           ...(!hasLoop && anyPhaseGates ? [<Box flexDirection="column" marginTop={1} minWidth={0}>{loopPhases()}</Box>] : []),
           ...finalGateRows(),
+          ...(end === undefined ? [] : [end]),
           <Text dimColor wrap="wrap">
             {t.steps.legend}
           </Text>,
@@ -1177,13 +1223,15 @@ export const renderPane = (
 /** The thin band above the prompt: the flow's step, phases in flight, what waits on the owner; a button for the pane. */
 export const renderBand = (
   { Box, Text, Button }: Pick<PaneElements, 'Box' | 'Text' | 'Button'>,
-  summary: BandSummary,
+  summary: BandSummary | undefined,
   paneOpen: boolean,
   togglePane: () => void,
   lang?: Lang,
+  /** A warning the band carries even with no plan loaded (the session list is not allowed yet). */
+  notice?: string,
 ): RenderElement => {
   const t = uiText(lang).band
-  const parts = [
+  const parts = summary === undefined ? [] : [
     summary.step === undefined ? undefined : t.step(summary.step),
     t.inFlight(summary.inFlight),
   ].filter((part): part is string => part !== undefined)
@@ -1192,9 +1240,10 @@ export const renderBand = (
       <Box flexShrink={1} minWidth={0}>
         <Text wrap="truncate-end">
           <Text dimColor>🧭 {parts.join(' · ')}</Text>
-          {summary.waiting > 0 && (
+          {summary !== undefined && summary.waiting > 0 && (
             <Text color="warning">{` · ${t.waiting(summary.waiting)}`}</Text>
           )}
+          {notice !== undefined && <Text color="warning">{`${parts.length === 0 ? '' : ' · '}${notice}`}</Text>}
         </Text>
       </Box>
       <Button key="band:pane" plain dimColor onPress={togglePane}>

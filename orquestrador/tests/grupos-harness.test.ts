@@ -79,6 +79,7 @@ const world = (on: On, rows: Row[], groups: World['groups']): World => {
       .filter(k => k.startsWith(`${e.path}/`) && !k.slice(e.path.length + 1).includes('/'))
       .map(k => ({ name: k.slice(e.path.length + 1), kind: 'file', size: 1, mtimeMs: 0, isLink: false })) as never,
   }))
+  on('tool.check', () => ({ decision: 'allow' }) as never)
   on('tool.list', () => ({ value: Object.values(T).map(name => ({ name })) as never }))
   const answer = (text: string, isError?: true) => ({ result: text, text, ...(isError === undefined ? {} : { isError }) }) as never
   on('tool.call', ($, e) => {

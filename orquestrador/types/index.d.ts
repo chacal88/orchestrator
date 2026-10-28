@@ -218,9 +218,28 @@ export type FlowState = {
   sessions?: string[]
   /** Children that already existed when the flow started; they belong to an earlier change. */
   earlier?: string[]
+  /** Children opened with `wake_when_done`: the app wakes the coordination when they end, so the mod does not. */
+  tracked?: string[]
+  /** Sessions the app refused to open in the coordination's turn, kept for the owner's "Abrir as N sessões pendentes". */
+  pendingStarts?: PendingStart[]
   seq: number
   startedAt: number
   updatedAt: number
+}
+
+/**
+ * A session the coordination registered with `flow pending`: the prompt is the coordination's, the mod only
+ * opens it on the owner's press. `key` names the phase ("2", "4.6") or the step; `step` is the step it was
+ * registered on, and the entry goes once the flow leaves it.
+ */
+export type PendingStart = {
+  key: string
+  step: string
+  title: string
+  prompt: string
+  model?: string
+  effort?: string
+  use_worktree?: boolean
 }
 
 /** One phase of the loop, closed by the mod once its gates passed and its tasks were ticked. */
@@ -253,6 +272,9 @@ export type FlowEvent = {
     | 'progress'
     /** The owner moved a Jira issue from the panel. */
     | 'jira-moved'
+    /** The coordination registered sessions the app refused; the owner's press opened some of them. */
+    | 'pending'
+    | 'pending-opened'
   step: string
   by: FlowActor | 'mod'
   outcome?: string
@@ -287,6 +309,8 @@ export type FlowView = {
   ownerChoices: FlowChoice[]
   escalation: FlowEscalation | undefined
   steps: FlowStepView[]
+  /** The sessions waiting on the owner's "Abrir as N sessões pendentes", by key and title (no prompt). */
+  pendingStarts: { key: string; title: string }[]
 }
 
 /** One grill question; answered, it becomes an acceptance criterion (its own wording, else the answer). */
@@ -581,6 +605,8 @@ declare module 'claude-code' {
       tried: GateAttempt[]
       /** This session's id in the app's session list, once asked; its activity file is keyed by it. */
       selfId: string
+      /** The session-list tools the owner has not allowed (`ask`/`deny`), and since when; the panel and the band ask for them. */
+      'permission-needed': { tools: string[]; since: number } | null
       /** Whether the pane is up, so the band's button says "Abrir" or "Fechar". */
       paneOpen: boolean
       /** What the owner has typed so far in the grill's answer fields, by question text. */

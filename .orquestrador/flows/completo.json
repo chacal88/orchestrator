@@ -1,0 +1,57 @@
+{
+  "id": "completo",
+  "base": "completo",
+  "title": "Completo (plugin)",
+  "description": "O completo do mod para este repositório de plugin, que não usa OpenSpec: o plano em changes/<change>/ é validado com `claude plugin validate`, a checagem final é o `claude plugin test` com o evidence.md e o `tsc`, e a change termina com o lançamento da versão.",
+  "override": {
+    "planejar": {
+      "title": "Planejar",
+      "description": "Uma sessão escreve grill, proposta, design e tarefas em changes/<change>/."
+    },
+    "validar": {
+      "title": "Validar o plugin",
+      "description": "O mod vê o `claude plugin validate` rodar; o código de saída decide.",
+      "command": "plugin validate",
+      "details": {
+        "inputs": "O plano em changes/<change>/ e o plugin como está.",
+        "produces": "O `claude plugin validate orquestrador` com saída 0.",
+        "blocks": "Falhou volta ao planejar."
+      }
+    },
+    "checagem": {
+      "description": "O mod vê o `claude plugin test` passar, com o evidence.md da change preenchido.",
+      "command": "plugin test",
+      "details": {
+        "inputs": "O código aprovado e o evidence.md preenchido.",
+        "produces": "O `claude plugin test orquestrador` com saída 0.",
+        "blocks": "Falhou volta ao executar; sem evidence.md não passa."
+      }
+    },
+    "arquivar": {
+      "title": "Lançar a versão",
+      "description": "Uma sessão cria o release no GitHub; quando passa, o mod arquiva as sessões restantes e remove o grupo da barra lateral.",
+      "command": "gh release create",
+      "details": {
+        "inputs": "A change em produção.",
+        "produces": "O `gh release create` com saída 0, as sessões arquivadas e o grupo removido.",
+        "blocks": "Falhou tenta de novo."
+      }
+    }
+  },
+  "add": [
+    {
+      "after": "checagem",
+      "step": {
+        "id": "tipos",
+        "title": "Tipos",
+        "description": "O mod vê o `tsc` passar sobre o código do plugin; o código de saída decide.",
+        "kind": "automatic",
+        "command": "tsc",
+        "outcomes": {
+          "passou": { "label": "Passou", "next": "$seguinte" },
+          "falhou": { "label": "Falhou", "next": "executar" }
+        }
+      }
+    }
+  ]
+}

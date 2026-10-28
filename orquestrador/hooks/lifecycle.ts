@@ -1,5 +1,5 @@
 import type { FlowEvent, FlowState, GateAttempt, GateView, OrchestrationRun, PhaseClosure, SessionRow, TaskItem } from '../types'
-import { LOOP_DONE, applyOutcome, currentStep } from './flow'
+import { LOOP_DONE, applyOutcome, currentStep, dropPending } from './flow'
 import type { Moved } from './flow'
 import { phaseRefusal } from './gates'
 import { parseTaskItems, tasksForPhase } from './openspec'
@@ -99,7 +99,8 @@ export const closePhase = (
     })
   }
   return {
-    state: { ...state, closed: { ...state.closed, [unit.id]: closure }, seq: state.seq + events.length, updatedAt: at },
+    // a phase closed needs no pending session any more
+    state: { ...dropPending(state, p => p.key === unit.id), closed: { ...state.closed, [unit.id]: closure }, seq: state.seq + events.length, updatedAt: at },
     events,
   }
 }
