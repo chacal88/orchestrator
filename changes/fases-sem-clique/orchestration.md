@@ -1,0 +1,40 @@
+# Orquestração — fases-sem-clique (0.14.0)
+
+Flow `completo` do projeto (`.orquestrador/flows/completo.json`). Coordenação: esta sessão (grupo da change na sidebar).
+
+| Fase | Ícone | Sessão | Branch | Estado | Próximo passo |
+| ---- | ----- | ------ | ------ | ------ | ------------- |
+| 1. Um `get_session` por vez, e só com permissão | 🛠️ | — | — | pendente | abrir depois da liberação |
+| 2. Abrir as fases sem um clique por card | 🛠️ | — | — | pendente | depois da 1 |
+| 3. `/orquestrador` com subcomandos e encerrar | 🛠️ | — | — | pendente | depois da 2 |
+| 4. Skill, README e versão | 📖 | — | — | pendente | depois da 3 |
+
+As quatro fases são em série: mexem em `register.tsx`, `i18n.ts`, `pane.tsx` e `flow.ts`. Cada fase trabalha
+na branch da anterior.
+
+## Histórico
+
+- 2026-10-28: o primeiro flow (`completo` padrão) escalou no `validar`, porque o repo não tem `openspec/`. O dono
+  encerrou esse flow, e a change recomeçou no `completo` do projeto.
+- `planejar` pronto; `validar` passou (`claude plugin validate`, binário do app 2.1.309; o `claude` do nvm, 2.1.227,
+  não entende mods); `revisao-plano` aprovado.
+
+## Achados da revisão do plano (para as fases)
+
+Importantes:
+1. **Fila não reentrante no `openPending`** (`design.md:113-120`, `tasks.md:95-97`; fase 2). O `$.tool.call(START_SESSION)`
+   passa pelo hook `tool.call` → `groupQuietly` → `keepGrouping` → `inFlowQueue`. Por isso, o flow é lido dentro da
+   fila e a fila é liberada. As sessões abrem fora dela, e as que abriram saem da lista numa volta nova da fila, com
+   o disco relido.
+2. **Botão com permissão em "ask"** (`design.md:45-46` contra `59-63`, `tasks.md:47-49`; fases 1 e 2). O
+   `start_session` do `openPending` passa por `refuseStart` → `loadSessions` → `mayList` sem saber que veio do dono:
+   com "ask", ele recusa e mostra o aviso de permissão. É preciso escrever isso no design. O harness 2.5 ganha um
+   caso com "ask" (recusa com aviso) e um com "allow" (abre).
+3. **`/orquestrador status` sem teste** (C3, `proposal.md:106`; fase 3). Entra o `statusText` na tarefa 3.1 e um caso
+   de `status` no harness 3.6, com o texto sem tabela para `bridge` (C6).
+
+Nits:
+- `tasks.md:47-49`: o `cleanupChange` entra no `mayList` ou fica escrito por que não entra. Também fica dito se
+  `selfId`/`selfRowNow` passam pelo `mayList`.
+- `design.md:142-143`: o plano B do risco 3 só acontece depois da 2.6, com outra mudança. Deixar isso escrito.
+- `design.md:219`: a tabela da fase 1 também lista `types/index.d.ts` e `evidence.md`.
