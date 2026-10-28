@@ -76,8 +76,12 @@ sessão usa o modelo e o esforço do passo. Um passo `session` nunca é feito na
   direta a partir dele. Qualquer turno de mensagem entre sessões ou de tick no meio quebra a
   corrente; dali em diante o app recusa toda sessão até o dono escrever de novo. Se recusar,
   registre as sessões recusadas com `flow pending` (ação `pending` do `flow`, com `sessions`, o
-  mesmo prompt e sem `wake_when_done`; uma `key` repetida troca a anterior) e diga ao dono, numa
+  mesmo prompt, um `background` por sessão e sem `wake_when_done`; uma `key` repetida troca a
+  anterior) e diga ao dono, numa
   linha, para apertar "Abrir as N sessões pendentes" no painel ou rodar `/orchestrator:open`.
+  O `background` de cada sessão tem pelo menos 80 caracteres: o objetivo da change, as decisões
+  até aqui e o que a fase entrega. O mod abre a sessão com `context: "fresh"`, e o app recusa
+  um `fresh` com menos que isso; sem `background`, o mod escreve um a partir do flow.
   O mod abre todas de uma vez com `wake_when_done`, então espere o aviso de cada uma. Pelo Remote
   Control o app só abre sessão a partir de mensagem digitada no desktop; a resposta do comando
   diz isso ao dono. O cartão (`own_initiative`) fica só para quando o mod não está disponível.

@@ -8,6 +8,7 @@ import type {
   FlowDef,
   FlowEvent,
   FlowState,
+  FlowStatus,
   FlowView,
   GateAttempt,
   GateCheck,
@@ -69,6 +70,7 @@ import {
   observeDeploy,
   pendingReview,
   pendingCodeReview,
+  pendingBackground,
   flowView,
   outcomeLabel,
   stepTitle,
@@ -417,14 +419,34 @@ const canCall = async ($: EngineInterface, tool: string): Promise<boolean> => {
   return tools.some(t => t.name === tool)
 }
 
-const loadRun = async ($: EngineInterface, cwd: string): Promise<OrchestrationRun | undefined> => {
+/** Every plan published from this checkout, the latest first. */
+const cwdRuns = async ($: EngineInterface, cwd: string): Promise<OrchestrationRun[]> => {
   const dir = `${await baseDir($)}/runs`
-  if (!(await $.fs.exists(dir))) return undefined
+  if (!(await $.fs.exists(dir))) return []
   const files = (await $.fs.list(dir)).filter(f => f.kind === 'file' && f.name.endsWith('.json'))
   const runs = await Promise.all(files.map(f => readJson<OrchestrationRun>($, `${dir}/${f.name}`)))
   return runs
     .filter((run): run is OrchestrationRun => run?.coordinatorCwd === cwd)
-    .sort((a, b) => b.updatedAt - a.updatedAt)[0]
+    .sort((a, b) => b.updatedAt - a.updatedAt)
+}
+
+const loadRun = async ($: EngineInterface, cwd: string): Promise<OrchestrationRun | undefined> => (await cwdRuns($, cwd))[0]
+
+/** How long a plan from before `coordinatorSession` still shows to a session without a flow. */
+const OLD_RUN_MS = 24 * 60 * 60 * 1000
+
+/**
+ * The plan the panel shows (design §7): with a flow of this session, that change's plan only; without one, the
+ * latest plan this session published. A plan from before the field shows only without a flow and for 24 h, so an
+ * orchestration without a flow survives the plugin's update, and an old plan of another change never comes back.
+ */
+const sessionRun = async ($: EngineInterface, root: string, flow: FlowState | undefined): Promise<OrchestrationRun | undefined> => {
+  if (flow !== undefined) return readJson<OrchestrationRun>($, `${await baseDir($)}/runs/${runKey(flow.change)}.json`)
+  const self = await selfId($).catch(() => undefined)
+  const now = await $.clock.now()
+  return (await cwdRuns($, root)).find(run =>
+    run.coordinatorSession === undefined ? now - run.updatedAt <= OLD_RUN_MS : self !== undefined && run.coordinatorSession === self,
+  )
 }
 
 const describeError = (step: string, error: unknown): string =>
@@ -606,7 +628,8 @@ const loadJiraMoves = async (
  * then approved for that one call, which the tool.call hook refuses otherwise.
  */
 const pressJiraMove = async ($: EngineInterface, change: string, key: string, transitionId: string): Promise<void> => {
-  const run = await loadRun($, await $.session.root())
+  const root = await $.session.root()
+  const run = await sessionRun($, root, await sessionFlow($, root))
   if (run === undefined) return
   const t = await textNow($)
   const conn = await jiraConnection($, run, t)
@@ -675,7 +698,13 @@ const refresh = async ($: EngineInterface, wake = false): Promise<void> => {
   const { languages } = config
   const t = uiText(languages.ui)
 
-  const run = await loadRun($, cwd).catch(error => {
+  const shown = await loadFlowView($, cwd, languages).catch(error => {
+    problems.push(describeError('flow', error))
+    return undefined
+  })
+  const flowState = shown?.state
+  const flow = shown?.view
+  const run = await sessionRun($, cwd, flowState).catch(error => {
     problems.push(describeError('plano', error))
     return undefined
   })
@@ -702,12 +731,9 @@ const refresh = async ($: EngineInterface, wake = false): Promise<void> => {
       : await loadJira($, run, t).catch(error => ({ issues: {}, note: describeError('jira', error) }))
 
   const skips = run === undefined ? {} : await loadSkips($, run.change).catch(() => ({}))
-  const flow = await loadFlowView($, run, cwd, languages).catch(error => {
-    problems.push(describeError('flow', error))
-    return undefined
-  })
-  const flowState = flow === undefined ? undefined : await loadFlowState($, flow.change).catch(() => undefined)
-  const jiraMoves = await loadJiraMoves($, run, flowState, jira.issues, t).catch(error => {
+  // the plan reads its own change's flow, finished too: its phases show closed while the flow card is gone
+  const runFlow = flowState ?? (run === undefined ? undefined : await loadFlowState($, run.change).catch(() => undefined))
+  const jiraMoves = await loadJiraMoves($, run, runFlow, jira.issues, t).catch(error => {
     problems.push(describeError('jira', error))
     return []
   })
@@ -721,7 +747,7 @@ const refresh = async ($: EngineInterface, wake = false): Promise<void> => {
 
   const view: PanelView = {
     ...sessions,
-    run: run === undefined ? undefined : withFlowStatus(run, flowState),
+    run: run === undefined ? undefined : withFlowStatus(run, runFlow),
     repoUrl,
     openspec,
     jira: jira.issues,
@@ -842,12 +868,7 @@ const wakeOnce = async (
  * The change this coordination works on: the flow `running` it started (the mod of a child in the same
  * folder is not its coordinator), else the plan published last. The flow wins: a new change has no plan yet.
  */
-const currentFlow = async ($: EngineInterface, root: string): Promise<FlowState | undefined> => {
-  const self = await selfId($).catch(() => undefined)
-  return (await allFlowStates($))
-    .filter(s => s.status === 'running' && ownsFlow(s, root) && (s.coordinatorSession === undefined || s.coordinatorSession === self))
-    .sort((a, b) => b.startedAt - a.startedAt)[0]
-}
+const currentFlow = ($: EngineInterface, root: string): Promise<FlowState | undefined> => sessionFlow($, root, ['running'])
 
 const currentChange = async ($: EngineInterface, root: string): Promise<string | undefined> =>
   (await currentFlow($, root))?.change ?? (await loadRun($, root).catch(() => undefined))?.change
@@ -1064,7 +1085,10 @@ const publishPlan = async ($: EngineInterface, input: Record<string, unknown>): 
       isError: true as const,
     }
   }
-  await $.fs.write(`${await baseDir($)}/runs/${runKey(parsed.change)}.json`, JSON.stringify(parsed))
+  // the session that publishes is the one whose panel shows the plan when no flow of its own does
+  const self = await selfId($).catch(() => undefined)
+  const kept: OrchestrationRun = self === undefined ? parsed : { ...parsed, coordinatorSession: self }
+  await $.fs.write(`${await baseDir($)}/runs/${runKey(parsed.change)}.json`, JSON.stringify(kept))
   await groupQuietly($, parsed.change)
   await refreshQuietly($)
   await showPane($)
@@ -1424,7 +1448,8 @@ const FLOW_SCHEMA = {
       maxItems: 6,
       description:
         'pending: the sessions to keep, each as start_session would take it. `key` is the phase id ("2", "4.6") or the step id ' +
-        '("planejar"). At most 6, a title of at most 120 and a prompt of at most 20000 characters.',
+        '("planejar"). At most 6, a title of at most 120 and a prompt of at most 20000 characters. `background` is start_session\'s ' +
+        'for a fresh session: the change\'s goal, the decisions so far and what this session delivers, at least 80 characters; without it the mod writes one.',
       items: {
         type: 'object',
         properties: {
@@ -1434,6 +1459,7 @@ const FLOW_SCHEMA = {
           model: { type: 'string' },
           effort: { type: 'string' },
           use_worktree: { type: 'boolean' },
+          background: { type: 'string', maxLength: 4000 },
         },
         required: ['key', 'title', 'prompt'],
       },
@@ -1799,6 +1825,9 @@ const openPending = async ($: EngineInterface, change: string, words: string): P
       tool: START_SESSION,
       title: entry.title,
       prompt: entry.prompt,
+      // the app takes a fresh session only with a background of 80 characters, and assumes fresh without a context
+      context: 'fresh',
+      background: pendingBackground(read, entry),
       initiation: 'user_asked',
       wake_when_done: true,
       ...(entry.use_worktree === undefined ? {} : { use_worktree: entry.use_worktree }),
@@ -2056,20 +2085,24 @@ const endByOwner = async ($: EngineInterface, change: string, note?: string): Pr
 }
 
 /**
- * The flow this session coordinates, for the owner's subcommands: `running` or `escalated` (an escalated flow
- * is still the owner's to answer or to end), the latest started. A child of the same folder is not its coordinator.
+ * The flow this session coordinates (design §7), for the panel, the owner's commands and the wake: `running` or
+ * `escalated` (an escalated flow is still the owner's to answer or to end), of this checkout, started by this
+ * session or by none the app named, the latest started. A child of the same folder is not its coordinator, and a
+ * flow done or ended is never one.
  */
-const commandFlow = async ($: EngineInterface, root: string): Promise<FlowState | undefined> => {
+const sessionFlow = async (
+  $: EngineInterface,
+  root: string,
+  statuses: FlowStatus[] = ['running', 'escalated'],
+): Promise<FlowState | undefined> => {
   const self = await selfId($).catch(() => undefined)
   return (await allFlowStates($))
-    .filter(
-      s =>
-        (s.status === 'running' || s.status === 'escalated') &&
-        ownsFlow(s, root) &&
-        (s.coordinatorSession === undefined || s.coordinatorSession === self),
-    )
+    .filter(s => statuses.includes(s.status) && ownsFlow(s, root) && (s.coordinatorSession === undefined || s.coordinatorSession === self))
     .sort((a, b) => b.startedAt - a.startedAt)[0]
 }
+
+/** The flow the owner's subcommands answer: this session's, escalated included. */
+const commandFlow = ($: EngineInterface, root: string): Promise<FlowState | undefined> => sessionFlow($, root)
 
 /**
  * Every session's activity file of the last week: what the cards and the gates read. A file per session id is
@@ -2286,18 +2319,14 @@ const togglePane = async ($: EngineInterface): Promise<'opened' | 'waiting' | 'c
   return (await showPane($)) ? 'opened' : 'waiting'
 }
 
-/** The flow the panel shows: the published plan's change, else the latest flow of this checkout. */
+/** The flow the panel shows: this session's (`sessionFlow`), never another session's nor a finished one. */
 const loadFlowView = async (
   $: EngineInterface,
-  run: OrchestrationRun | undefined,
-  cwd: string,
+  root: string,
   languages: Languages,
-): Promise<FlowView | undefined> => {
-  const state =
-    run === undefined
-      ? (await allFlowStates($)).filter(s => s.coordinatorCwd === cwd).sort((a, b) => b.updatedAt - a.updatedAt)[0]
-      : await loadFlowState($, run.change)
-  return state === undefined ? undefined : flowView(state, languages)
+): Promise<{ state: FlowState; view: FlowView } | undefined> => {
+  const state = await sessionFlow($, root)
+  return state === undefined ? undefined : { state, view: flowView(state, languages) }
 }
 
 const prepFile = async ($: EngineInterface, change: string): Promise<string> =>

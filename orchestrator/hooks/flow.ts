@@ -926,9 +926,12 @@ export const resolveEscalation = (state: FlowState, choice: string, at: number):
 }
 
 /** How much `flow pending` keeps: a few phases' prompts, never a dump. */
-export const PENDING_LIMITS = { entries: 6, title: 120, prompt: 20_000 } as const
+export const PENDING_LIMITS = { entries: 6, title: 120, prompt: 20_000, background: 4000 } as const
 
-const PENDING_FIELDS = ['key', 'title', 'prompt', 'model', 'effort', 'use_worktree'] as const
+const PENDING_FIELDS = ['key', 'title', 'prompt', 'model', 'effort', 'use_worktree', 'background'] as const
+
+/** The least `background` the app takes for a `fresh` session; a shorter one refuses the start. */
+export const BACKGROUND_MIN = 80
 
 /** One entry as the coordination sent it, checked; a string says what is wrong with it. */
 const pendingEntry = (raw: unknown, step: string, n: number): PendingStart | string => {
@@ -947,6 +950,11 @@ const pendingEntry = (raw: unknown, step: string, n: number): PendingStart | str
     if (o[k] !== undefined && (typeof o[k] !== 'string' || (o[k] as string).trim() === '')) return `session ${key}: \`${k}\` must be a non-empty string.`
   }
   if (o.use_worktree !== undefined && typeof o.use_worktree !== 'boolean') return `session ${key}: \`use_worktree\` must be true or false.`
+  const background = typeof o.background === 'string' ? o.background.trim() : undefined
+  if (o.background !== undefined && typeof o.background !== 'string') return `session ${key}: \`background\` must be a string.`
+  if (background !== undefined && background.length > PENDING_LIMITS.background) {
+    return `session ${key}: the background has ${background.length} characters; at most ${PENDING_LIMITS.background}.`
+  }
   return {
     key,
     step,
@@ -955,7 +963,22 @@ const pendingEntry = (raw: unknown, step: string, n: number): PendingStart | str
     ...(typeof o.model === 'string' ? { model: o.model.trim() } : {}),
     ...(typeof o.effort === 'string' ? { effort: o.effort.trim() } : {}),
     ...(typeof o.use_worktree === 'boolean' ? { use_worktree: o.use_worktree } : {}),
+    ...(background === undefined || background === '' ? {} : { background }),
   }
+}
+
+/**
+ * start_session's `background` for a pending session (design §8): the entry's own when it has the 80 characters
+ * the app asks of a `fresh` session, else one written from the flow. The fixed part alone passes 80, so a change
+ * and a title of one letter still do.
+ */
+export const pendingBackground = (state: FlowState, entry: PendingStart): string => {
+  if (entry.background !== undefined && entry.background.length >= BACKGROUND_MIN) return entry.background
+  const plan = state.changePath === undefined ? 'The plan is in the change\'s folder' : `The plan is in ${state.changePath}`
+  return (
+    `Session of the ${state.flow.title} flow for the change ${state.change}, step ${entry.step}, key ${entry.key} ("${entry.title}"). ` +
+    `${plan}. The full request is in the prompt.`
+  )
 }
 
 /**
@@ -1190,7 +1213,8 @@ const projectNote = (step: FlowStep): string => {
  */
 const PENDING_RULE =
   'If the app refuses the start in this turn (it was set off by another session\'s message or an automatic event), ' +
-  'register the session with action "pending" (`sessions`: key = the phase id or this step id, title, the same prompt, model, effort, use_worktree) ' +
+  'register the session with action "pending" (`sessions`: key = the phase id or this step id, title, the same prompt, model, effort, use_worktree, ' +
+  'and a background of at least 80 characters: the change\'s goal and what this session delivers) ' +
   'and tell the owner it is one press on "Abrir as N sessões pendentes" in the orchestrator panel; then wait, and never do the step here.'
 
 const describeStep = (state: FlowState, step: FlowStep, where: string, outcomes: string): string =>

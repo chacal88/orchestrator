@@ -567,15 +567,148 @@ o `background` das sessões pendentes, o README, a versão e a config deste repo
 
 ### O teste falha sem a correção
 
-_a preencher_: a 5.3 e a 5.5 rodadas com o código de antes.
+**5.3 (C14)**, com o código do commit `6858089` (fim da fase 4, `git archive`) e o `painel-sessao-harness.test.ts` novo:
+
+```
+$ command claude plugin test <scratchpad>/old/orchestrator
+(fail) C14: with the plan of a done change and a running flow of another change of this session, the panel shows the running one with the owner's button
+  AssertionError: expect(received).toBeDefined()      ← o botão flow:grill:fechado não aparece: o painel mostra freio-aviso
+(fail) C14: a running flow another session coordinates in the same clone does not show here
+  Received: { type: "Button", key: "flow:grill:fechado", … }   ← o flow da outra sessão aparece
+(fail) C14: without a flow of this session, the plan of a concluded flow does not bring that flow to the panel
+  Expected: "local_ee"  Received: undefined          ← o publishPlan de antes não grava coordinatorSession
+(fail) C14: an escalated flow of this session shows with the escalation's buttons
+(fail) a plan without a flow shows to the session that published it, never to another; an old one only within 24 h
+ 517 pass
+ 5 fail
+```
+
+O primeiro caso é o bug visto nesta change: o `run` de `freio-aviso` (gravado como a 0.14.1, sem o campo) leva o painel
+ao flow concluído, sem o botão do passo do dono.
+
+**5.5 (B1)**, com o código desta fase e só o `openPending` de antes (sem as linhas `context` e `background`):
+
+```
+$ command claude plugin test <scratchpad>/oldpend/orchestrator
+(fail) the panel shows one button for the pending sessions; one press opens all three as the owner asked, and they leave the list
+  Received: "Nenhuma sessão pendente abriu. Ficaram 3: start_session: context \"fresh\" needs a background of at least 80 characters (the overall goal, decisions and constraints so far, how this piece fits) O app não aceitou abrir pelo painel; digite /orchestrator:open no desktop."
+(fail) B1: /orchestrator:open opens the three as the owner typed it, each fresh with a background the app takes
+  Received: "Nenhuma sessão pendente abriu. Ficaram 3: start_session: context \"fresh\" needs a background of at least 80 characters (…) O app não aceitou abrir pelo painel; digite /orchestrator:open no desktop."
+(fail) B1: an entry with a background of its own opens with that text; one shorter than 80 gets the written one
+(fail) with two live phase sessions only one opens; …          ← os três abaixo dependem de um start aceito
+(fail) with the session tools on "ask" the press is refused …
+(fail) on "lembrar" with the session tools on "ask" …
+ 519 pass
+ 6 fail
+```
+
+A recusa é a mesma mensagem do bug, palavra por palavra.
 
 ### Testes
 
-_a preencher_
+Antes, no commit `6858089` (fim da fase 4): 517 testes em 37 arquivos, todos `(pass)` (o número da fase 4).
+
+Depois:
+
+```
+$ export PATH="…/claude-code/2.1.309/5af865b9901c/claude.app/Contents/MacOS:$PATH" && command claude plugin test orchestrator
+…
+(pass) the panel shows one button for the pending sessions; one press opens all three as the owner asked, and they leave the list
+(pass) a start the model makes with the same title takes the entry out, and a later `flow pending` does not bring it back
+(pass) B1: /orchestrator:open opens the three as the owner typed it, each fresh with a background the app takes
+(pass) B1: an entry with a background of its own opens with that text; one shorter than 80 gets the written one
+(pass) B1: pendingBackground passes 80 characters with a change and a title of one letter
+(pass) C14: with the plan of a done change and a running flow of another change of this session, the panel shows the running one with the owner's button
+(pass) C14: a running flow another session coordinates in the same clone does not show here
+(pass) C14: without a flow of this session, the plan of a concluded flow does not bring that flow to the panel
+(pass) C14: an escalated flow of this session shows with the escalation's buttons
+(pass) a plan without a flow shows to the session that published it, never to another; an old one only within 24 h
+(pass) the panel shows a phase the loop closed and a finished flow without the plan published again; publishing it then asks no gates
+…
+ 525 pass
+ 0 fail
+Ran 525 tests across 38 files.
+exit=0
+```
+
+517 → 525: 8 testes a mais, nenhum removido.
+
+- `painel-sessao-harness.test.ts` (novo, 5 testes): um coordenador `local_ee` que o app conhece pelo id e outra
+  sessão `local_other` no mesmo clone. O painel é lido depois de `/orchestrator:panel`, que relê o disco.
+- `pendentes-harness.test.ts` (3 testes novos):
+  - o `start_session` falso recusa como o app. Sem `context`, ele supõe `fresh`. Um `fresh` com `background` de menos
+    de 80 caracteres volta com a mensagem do bug. Um `context` que não é `fresh` nem `fork` também é recusado;
+  - o teste do clique passou a exigir `context: 'fresh'` e o `background` escrito em cada start;
+  - o start que o modelo faz com o mesmo título passou a mandar `context` e `background`, como o app exige.
+- `lifecycle-harness.test.ts` não mudou. Ele pegou um efeito da primeira versão: sem o flow, o plano de um flow concluído
+  perdia as fases fechadas. Ver o desvio da 5.1.
 
 ### Tipos
 
-_a preencher_
+```
+$ npx -y -p typescript@5.6.3 tsc -p <scratchpad>/tc/tsconfig.json   # tipos do engine 2.1.309 (plugin-authoring), hooks + types + tests de orchestrator/
+(sem saída)
+exit=0
+```
+
+### Validação
+
+```
+$ export PATH="…/claude-code/2.1.309/5af865b9901c/claude.app/Contents/MacOS:$PATH" && command claude plugin validate orchestrator
+⚠ Found 1 plugin directory warning: ICON_MISSING (já existia; não muda o resultado)
+✔ Validation passed
+exit=0
+```
+
+### Tarefas
+
+- 5.1: `sessionFlow($, root, statuses = ['running', 'escalated'])` em `register.tsx`. Ela é o filtro do `commandFlow`
+  de antes: `ownsFlow`, `coordinatorSession` igual ao desta sessão ou ausente, e o mais recente por `startedAt`.
+  - O `commandFlow` é `sessionFlow($, root)`, e o `currentFlow` é `sessionFlow($, root, ['running'])`.
+  - O `loadFlowView($, root, languages)` devolve `{ state, view }` do `sessionFlow`, e o `refresh` lê o flow antes do
+    plano.
+  - O plano do painel vem do `sessionRun($, root, flow)`. Com flow, é só o `runs/<change>.json` dessa change. Sem flow,
+    é o mais recente deste clone com `coordinatorSession` igual ao desta sessão, ou, sem o campo, de até 24 h
+    (`OLD_RUN_MS`). O `loadRun` virou o primeiro do `cwdRuns`.
+  - O "Mover no Jira" do painel usa o mesmo `sessionRun`.
+  - As travas que leem o plano (`refuseArchive`, `refuseMerge`, `ownChanges`, `keepGrouping`) continuam no `loadRun`,
+    porque são regras do clone, não do painel.
+
+  O `grep -n "coordinatorCwd === cwd" orchestrator/hooks/register.tsx` só acha a linha do `cwdRuns` (`:429`), o antigo
+  `loadRun`. Não há nenhuma no `loadFlowView`.
+
+  Desvio: o plano de um flow concluído lê o estado desse flow (`runFlow`) para o `withFlowStatus` e as transições do
+  Jira, como antes. Assim as fases aparecem fechadas. O cartão do flow (`flow` da `PanelView`) só vem do
+  `sessionFlow`, então um flow `done` ou `aborted` nunca aparece. Sem isso, o teste do `lifecycle-harness` que mostra
+  "2 de 2 fases" depois do fim do flow falhava.
+- 5.2: o `publishPlan` grava `coordinatorSession` com o `selfId` da sessão que publica. Fora do app, sem id, não grava.
+  O campo é opcional em `OrchestrationRun` (`types/index.d.ts`). O teste C14 do primeiro caso tira o campo do `run`
+  (`asOldRun`), como a 0.14.1 gravava. O último teste cobre um `run` antigo sem flow: aparece com 1 h, e some depois
+  de mais 24 h.
+- 5.3: os quatro casos do C14 em `painel-sessao-harness.test.ts`, mais o do plano sem flow. Os botões da escalada
+  são `flow:grill:tentar-de-novo` e `flow:grill:encerrar`.
+- 5.4: o `background` das sessões pendentes.
+  - O schema `pending` tem `background` (`maxLength` 4000).
+  - O `pendingEntry` aceita o campo e recusa um texto acima de 4000 caracteres (`PENDING_LIMITS.background`).
+  - O `pendingBackground(state, entry)` em `flow.ts` usa o `background` da entrada se ele tem pelo menos 80
+    caracteres (`BACKGROUND_MIN`). Se não, escreve:
+    `Session of the <flow> flow for the change <change>, step <step>, key <key> ("<title>"). The plan is in <changePath>. The full request is in the prompt.`
+  - O `openPending` passa `context: 'fresh'` e esse `background`.
+  - O `PENDING_RULE`, que o mod dá à coordenação, e a skill `change` passaram a pedir um `background` por sessão,
+    com pelo menos 80 caracteres: o objetivo da change, as decisões até aqui e o que a fase entrega.
+
+  O `grep -n "background" orchestrator/hooks/register.tsx` acha o schema (`:1451`, `:1462`) e a chamada (`:1828-1830`),
+  além de três linhas que já existiam e falam de outra coisa: leitura em segundo plano e `run_in_background`.
+
+  Desvio: o texto escrito está em inglês, como os outros prompts que o mod manda às sessões em `flow.ts`. O exemplo do
+  design está em pt-BR.
+- 5.5: os testes B1 em `pendentes-harness.test.ts`. O clique abre as 3 e o `orchestrator:open` abre as 3, cada uma com
+  `context: 'fresh'` e o `background` escrito. Uma entrada com `background` próprio usa esse texto, e uma com
+  `curto` recebe o escrito. O `pendingBackground` com `change` `x`, `title` `y`, título de flow vazio e `key` vazia
+  passa de 80. A prova da falha com o `openPending` de antes está acima.
+
+Ficou fora do escopo, como pedido: README, versão, conferência no app, rename do repositório e a config deste repo em
+`.orquestrador/`.
 
 ## Fase 6 — README, versão e conferência
 

@@ -251,14 +251,14 @@ Feito com dois desvios, registrados no `evidence.md`:
 
 Portões: `testes`, `tipos`.
 
-- [ ] 5.1 `sessionFlow($, root)` em `register.tsx` (`design.md`, §7). O `commandFlow`, o `currentFlow` e o
+- [x] 5.1 `sessionFlow($, root)` em `register.tsx` (`design.md`, §7). O `commandFlow`, o `currentFlow` e o
       `loadFlowView` passam a usá-la. O `run` só entra no painel se for da change do `sessionFlow` ou, sem flow, se for
       desta sessão. Verificação: `grep -n "coordinatorCwd === cwd" orchestrator/hooks/register.tsx` só acha a linha do
       `loadRun` (hoje `register.tsx:421`), que continua legítima, e nenhuma dentro do `loadFlowView` — cx: moderate
-- [ ] 5.2 O `publishPlan` grava `coordinatorSession` no `run`; o campo é novo em `OrchestrationRun`
+- [x] 5.2 O `publishPlan` grava `coordinatorSession` no `run`; o campo é novo em `OrchestrationRun`
       (`types/index.d.ts:469`). Um `run` sem o campo segue as regras do design. Verificação: o teste da 5.3 que usa um
       `run` antigo — cx: simple
-- [ ] 5.3 Testes em `panel-flow.test.ts` ou em harness novo (C14):
+- [x] 5.3 Testes em `panel-flow.test.ts` ou em harness novo (C14):
       - com um `run` publicado de uma change cujo flow está `done` e um flow `running` de outra change desta sessão, o
         painel mostra o flow `running` com o botão do passo do dono;
       - um flow `running` de outra sessão no mesmo clone não aparece;
@@ -267,14 +267,14 @@ Portões: `testes`, `tipos`.
 
       Conferir que o primeiro caso falha com o `loadFlowView` de antes e anotar isso no `evidence.md`. Verificação: os
       testes como `(pass)` — cx: moderate
-- [ ] 5.4 `background` das sessões pendentes (`design.md`, §8):
+- [x] 5.4 `background` das sessões pendentes (`design.md`, §8):
       - `background` opcional no schema `pending`;
       - `pendingBackground(state, entry)` em `flow.ts`;
       - o `openPending` passa `context: 'fresh'` e o `background`;
       - a skill `change` manda `background` em cada sessão do `pending`.
 
       Verificação: `grep -n "background" orchestrator/hooks/register.tsx` acha o schema e a chamada — cx: moderate
-- [ ] 5.5 Teste de harness (B1). O `start_session` falso de `pendentes-harness.test.ts` recusa como o app quando o
+- [x] 5.5 Teste de harness (B1). O `start_session` falso de `pendentes-harness.test.ts` recusa como o app quando o
       `background` tem menos de 80 caracteres ou falta o `context`. Casos:
       - o clique "Abrir as N sessões pendentes" abre as N;
       - `orchestrator:open` abre as N;
@@ -283,6 +283,10 @@ Portões: `testes`, `tipos`.
 
       Conferir que os dois primeiros casos falham com o `openPending` de antes, com a mesma mensagem do bug, e anotar
       isso no `evidence.md`. Verificação: os testes como `(pass)` — cx: moderate
+
+Feito com dois desvios, registrados no `evidence.md`:
+- o plano de um flow concluído ainda lê o estado desse flow para mostrar as fases fechadas, só o cartão do flow sai;
+- o texto do `pendingBackground` está em inglês, como os outros prompts que o mod manda às sessões em `flow.ts`.
 
 ## 6. README, versão e conferência
 

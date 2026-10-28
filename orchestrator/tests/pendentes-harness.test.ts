@@ -1,7 +1,9 @@
 import { expect, mock, test } from 'claude-code/testing'
 import type { Engine, TestBody } from 'claude-code/testing'
 
-import type { FlowState } from '../types'
+import type { FlowState, PendingStart } from '../types'
+import { BACKGROUND_MIN, pendingBackground, startFlow } from '../hooks/flow'
+import { defaultFlows } from '../hooks/flows/index'
 
 /** The clone is activated, as the owner does from the panel: the mod works only where it is. */
 const ACTIVE: [string, string] = ['/w/.claude/settings.local.json', JSON.stringify({ env: { ORQUESTRADOR: 'barrar' } })]
@@ -12,6 +14,9 @@ type Decision = 'allow' | 'ask' | 'deny'
 type Row = { sessionId: string; cwd: string; title: string; startedBy?: string; groupId?: string; isArchived?: boolean; isRunning?: boolean }
 
 const BASE = '/h/.claude/orquestrador'
+/** The app's refusal of a fresh start without enough background, word for word (bug B1). */
+const FRESH_REFUSAL =
+  'start_session: context "fresh" needs a background of at least 80 characters (the overall goal, decisions and constraints so far, how this piece fits)'
 const T = {
   list: 'mcp__ccd_session_mgmt__list_sessions',
   get: 'mcp__ccd_session_mgmt__get_session',
@@ -98,6 +103,10 @@ const world = (on: On, permission: Decision = 'allow'): World => {
     }
     if (input.tool === T.start) {
       if (w.appRefuses) return answer('start_session: initiation "user_asked" needs the user\'s own words in this turn', true)
+      // as the app: no context is taken as "fresh", and a fresh session needs a background of 80 characters
+      const background = typeof input.background === 'string' ? input.background : ''
+      if ((input.context === undefined || input.context === 'fresh') && background.length < 80) return answer(FRESH_REFUSAL, true)
+      if (input.context !== 'fresh' && input.context !== 'fork') return answer('start_session: context must be "fork" or "fresh"', true)
       const id = `local_c${w.rows.length}`
       w.rows.push({ sessionId: id, cwd: `/w/wt/${id}`, title: String(input.title), startedBy: 'local_ee', isRunning: true })
       return answer(`Started session ${id}`)
@@ -143,6 +152,11 @@ const atLoopWithPending = async ($: Engine, w: World) => {
   expect(saved(w).pendingStarts?.map(p => p.key)).toEqual(['1', '2', '3'])
 }
 
+/** The background the mod writes for an entry of change b's phase loop that brought none. */
+const written = (key: string) =>
+  `Session of the ${RAPIDO_TITLE} flow for the change b, step executar, key ${key} ("Fase ${key}"). The plan is in the change's folder. The full request is in the prompt.`
+const RAPIDO_TITLE = defaultFlows().find(f => f.id === 'rapido')!.title
+
 const press = async ($: Engine, surface: 'desktop' | 'mobile' = 'desktop') => {
   const ui = await $.ui.mount({ plugin: 'orchestrator', surface, ...PANE })
   await ui.press({ key: 'pending:open' })
@@ -163,10 +177,12 @@ test('the panel shows one button for the pending sessions; one press opens all t
 
   await press($)
   const consent = 'The user pressed "Abrir as 3 sessões pendentes" in the orchestrator panel.'
+  expect(w.toasts.join(' ')).not.toMatch(/needs a background/)
+  const fresh = (key: string) => ({ context: 'fresh', background: written(key) })
   expect(starts(w)).toEqual([
-    { tool: T.start, title: 'Fase 1', prompt: 'faça a fase 1', initiation: 'user_asked', wake_when_done: true, use_worktree: true, consent },
-    { tool: T.start, title: 'Fase 2', prompt: 'faça a fase 2', initiation: 'user_asked', wake_when_done: true, consent },
-    { tool: T.start, title: 'Fase 3', prompt: 'faça a fase 3', initiation: 'user_asked', wake_when_done: true, consent },
+    { tool: T.start, title: 'Fase 1', prompt: 'faça a fase 1', ...fresh('1'), initiation: 'user_asked', wake_when_done: true, use_worktree: true, consent },
+    { tool: T.start, title: 'Fase 2', prompt: 'faça a fase 2', ...fresh('2'), initiation: 'user_asked', wake_when_done: true, consent },
+    { tool: T.start, title: 'Fase 3', prompt: 'faça a fase 3', ...fresh('3'), initiation: 'user_asked', wake_when_done: true, consent },
   ])
   // the entry's model and effort go to the session it opened, as the skill does
   expect(w.calls.filter(c => c.tool === T.model || c.tool === T.effort).map(({ tool_use_id: _id, ...c }) => c)).toEqual([
@@ -245,7 +261,15 @@ test('with the session tools on "ask" the press is refused with the permission n
 test('a start the model makes with the same title takes the entry out, and a later `flow pending` does not bring it back', async ($, on) => {
   const w = world(on)
   await atLoopWithPending($, w)
-  await $.tool.call({ tool: T.start, initiation: 'user_asked', wake_when_done: true, title: 'Fase 2', prompt: 'faça a fase 2' } as never)
+  await $.tool.call({
+    tool: T.start,
+    initiation: 'user_asked',
+    wake_when_done: true,
+    title: 'Fase 2',
+    prompt: 'faça a fase 2',
+    context: 'fresh',
+    background: written('2'),
+  } as never)
   expect(saved(w).pendingStarts?.map(p => p.key)).toEqual(['1', '3'])
   expect(saved(w).tracked).toEqual(['local_c1'])
 
@@ -301,4 +325,43 @@ test('on "lembrar" with the session tools on "ask" the press opens none (it cann
   await press($)
   expect(starts(w)).toHaveLength(3)
   expect(saved(w).pendingStarts).toBeUndefined()
+})
+
+test('B1: /orchestrator:open opens the three as the owner typed it, each fresh with a background the app takes', async ($, on) => {
+  const w = world(on)
+  await atLoopWithPending($, w)
+  const done = (await $.command.run({ command: 'orchestrator:open', args: '', origin: { kind: 'composer' } } as never)) as { text?: string }
+  await settle()
+  expect(done.text).toBe('Abriram 3 sessões pendentes.')
+  expect(starts(w).map(c => [c.title, c.context, c.background])).toEqual([
+    ['Fase 1', 'fresh', written('1')],
+    ['Fase 2', 'fresh', written('2')],
+    ['Fase 3', 'fresh', written('3')],
+  ])
+  expect(saved(w).pendingStarts).toBeUndefined()
+})
+
+test('B1: an entry with a background of its own opens with that text; one shorter than 80 gets the written one', async ($, on) => {
+  const w = world(on)
+  await flow($, { action: 'start', change: 'b', flow: 'rapido' })
+  await flow($, { action: 'report', step: 'planejar', outcome: 'pronto' })
+  await $.tool.call({ tool: 'Bash', command: 'npx openspec validate b --strict' } as never)
+  const own = 'A change b reorganiza os comandos do plugin; esta fase entrega o painel da sessão e as sessões pendentes.'
+  const kept = await flow($, { action: 'pending', sessions: [entry('1', { background: own }), entry('2', { background: 'curto' })] })
+  expect(kept.isError).toBeUndefined()
+  expect(saved(w).pendingStarts?.map(p => p.background)).toEqual([own, 'curto'])
+  await press($)
+  expect(starts(w).map(c => c.background)).toEqual([own, written('2')])
+  expect(saved(w).pendingStarts).toBeUndefined()
+
+  const long = await flow($, { action: 'pending', sessions: [entry('3', { background: 'x'.repeat(4001) })] })
+  expect([long.isError, String(long.result)]).toEqual([true, expect.stringMatching(/background has 4001 characters; at most 4000/)])
+})
+
+test('B1: pendingBackground passes 80 characters with a change and a title of one letter', () => {
+  const state = startFlow(defaultFlows().find(f => f.id === 'rapido')!, { change: 'x', coordinatorCwd: '/w', visual: false }, 1).state
+  const tiny: PendingStart = { key: '1', step: 'executar', title: 'y', prompt: 'p' }
+  expect(pendingBackground(state, tiny).length).toBeGreaterThanOrEqual(BACKGROUND_MIN)
+  expect(pendingBackground({ ...state, flow: { ...state.flow, title: '' } }, { ...tiny, key: '' }).length).toBeGreaterThanOrEqual(BACKGROUND_MIN)
+  expect(pendingBackground({ ...state, changePath: 'c' }, tiny)).toMatch(/The plan is in c\./)
 })

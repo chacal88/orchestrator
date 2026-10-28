@@ -240,6 +240,8 @@ export type PendingStart = {
   model?: string
   effort?: string
   use_worktree?: boolean
+  /** start_session's `background` for a fresh session; without one of 80 characters, `pendingBackground` writes it. */
+  background?: string
 }
 
 /** One phase of the loop, closed by the mod once its gates passed and its tasks were ticked. */
@@ -478,6 +480,11 @@ export type OrchestrationRun = {
   ownerQuestions: OwnerQuestion[]
   /** Gates the whole change passes once, at the end. */
   finalGates: string[] | undefined
+  /**
+   * The session that published the plan (its id in the app's list). Without a flow of its own, only its panel
+   * shows the plan; absent in a plan from before 0.15.0.
+   */
+  coordinatorSession?: string
   updatedAt: number
 }
 
