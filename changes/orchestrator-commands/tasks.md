@@ -85,13 +85,13 @@ Arquivos: os listados no `design.md`, §11. Portões: `testes`, `tipos`, `lint`.
 
 Portões: `testes`, `tipos`, `lint` (a fase mexe nas skills e no frontmatter dos agentes).
 
-- [ ] 2.1 Agentes. `git mv` de `planejador`→`planner`, `revisor-plano`→`plan-reviewer`, `revisor-codigo`→
+- [x] 2.1 Agentes. `git mv` de `planejador`→`planner`, `revisor-plano`→`plan-reviewer`, `revisor-codigo`→
       `code-reviewer`, `abre-pr`→`pr-opener`, `publicador`→`publisher` e `merge-pelo-workflow`→`workflow-merge`, com o
       `name:` do frontmatter acompanhando. Os flows padrão (`hooks/flows/*.ts`), `WORKFLOW_MERGE_AGENT`,
       `CODE_REVIEW_AGENT` (`flow.ts:829-832`), `model.ts:219-221` e as comparações em `i18n-workflows.ts` passam aos
       nomes novos. Verificação: `grep -rn "planejador\|revisor-plano\|revisor-codigo\|abre-pr\|publicador\|merge-pelo-workflow"
       orchestrator/hooks orchestrator/agents` só acha o mapa `LEGACY_AGENTS` (2.2) — cx: moderate
-- [ ] 2.2 Nome antigo vira o novo na carga do flow (`design.md`, §6). `LEGACY_AGENTS` em `flow.ts` e a função pura
+- [x] 2.2 Nome antigo vira o novo na carga do flow (`design.md`, §6). `LEGACY_AGENTS` em `flow.ts` e a função pura
       `normalizeAgents(def)`, aplicada no fim do `resolveFlow` (`flow.ts:379`) e no `loadFlowState` (`register.tsx`),
       sobre o `state.flow` de um flow já em andamento. Depois disso, `CODE_REVIEW_AGENT` (`flow.ts:110`, `:852`),
       `WORKFLOW_MERGE_AGENT` (`flow.ts:1165`, `:1216`) e `model.ts:221` só comparam com o nome novo. O editor de
@@ -105,7 +105,7 @@ Portões: `testes`, `tipos`, `lint` (a fase mexe nas skills e no frontmatter dos
 
       Verificação: os testes como `(pass)` e `grep -n "LEGACY_AGENTS" orchestrator/hooks/*.ts*` acha só a definição,
       o `normalizeAgents` e o `findAgent` — cx: complex
-- [ ] 2.3 A personalização do projeto com o nome antigo continua valendo (`design.md`, §6, e README `:187`). O
+- [x] 2.3 A personalização do projeto com o nome antigo continua valendo (`design.md`, §6, e README `:187`). O
       `findAgent(name)` procura `<projectDir>/agents/<name>.md`, depois `<projectDir>/agents/<antigo>.md` para cada
       nome antigo que o mapa leva a `name`, e por fim `agents/<name>.md` do plugin. O `listAgents` mostra o arquivo
       antigo do projeto sob o nome novo. Testes:
@@ -114,12 +114,12 @@ Portões: `testes`, `tipos`, `lint` (a fase mexe nas skills e no frontmatter dos
       - sem nenhum no projeto, vem o do plugin.
 
       Verificação: os três testes como `(pass)` — cx: moderate
-- [ ] 2.4 Skills. `git mv skills/change-orchestrator skills/change` e `git mv skills/instalar skills/install`, com o
+- [x] 2.4 Skills. `git mv skills/change-orchestrator skills/change` e `git mv skills/instalar skills/install`, com o
       `name:` acompanhando. As chamadas a `mcp__orchestrator__flow`/`plan`, os nomes de agente e os comandos citados
       (`/orchestrator:panel`, `:approve`, `:open` etc.) ficam atualizados. A skill `install` grava em
       `.orchestrator/`. Verificação: `grep -rn "orquestrador\|change-orchestrator\|instalar" orchestrator/skills` só acha a
       menção à pasta antiga lida por compatibilidade — cx: moderate
-- [ ] 2.5 `.orchestrator/` com leitura da antiga. `projectDir($, root)` em `project-config.ts` devolve
+- [x] 2.5 `.orchestrator/` com leitura da antiga. `projectDir($, root)` em `project-config.ts` devolve
       `{ dir, legacy }` (`design.md`, §4). `CONFIG_PATH`, `readFlowDir`, os agentes do projeto, o `loadProjectConfig`
       e o editor de workflows passam por ela. O painel ⚙️ mostra o aviso de `legacy`. Testes:
       - só `.orquestrador/` lê config e flows;
@@ -129,18 +129,18 @@ Portões: `testes`, `tipos`, `lint` (a fase mexe nas skills e no frontmatter dos
       - um projeto sem pasta grava em `.orchestrator/`.
 
       Verificação: os cinco testes como `(pass)` em `project-config.test.ts` ou `flow-resolve.test.ts` — cx: complex
-- [ ] 2.6 Ativação. `HOOK_MARK = 'orchestrator:activate'`, e "Desativar" acha o hook pelo marcador novo e pelo antigo.
+- [x] 2.6 Ativação. `HOOK_MARK = 'orchestrator:activate'`, e "Desativar" acha o hook pelo marcador novo e pelo antigo.
       O `HOOK_COMMAND` lê `${ORCHESTRATOR:-${ORQUESTRADOR:-barrar}}` e cita `/orchestrator:panel`. Testes: um
       `settings.local.json` com o hook da 0.14.1 é lido como ativo e removido pelo "Desativar". Verificação: os testes
       de `activation.test.ts` passam, e os novos aparecem como `(pass)` — cx: moderate
-- [ ] 2.7 Frontmatter em YAML estrito. Nos agentes (`orchestrator/agents/*.md`, os nove, já com os nomes novos), nas
+- [x] 2.7 Frontmatter em YAML estrito. Nos agentes (`orchestrator/agents/*.md`, os nove, já com os nomes novos), nas
       skills (`skills/change`, `skills/install`) e, na fase 3, nos `commands/*.md`, o `description` vai entre aspas
       duplas sempre que o texto tem `: `, com as aspas internas escapadas. Hoje `planejador`, `revisor-codigo` e
       `deploy` têm `: ` sem aspas. O 2.1.309 aceita, mas o 2.1.227 recusa com erro de YAML. O `hooks.json` com
       `modules` é recusado pelo 2.1.227, que não conhece mods; isso não muda, e os portões continuam com o binário do
       app. Verificação: `grep -nE '^description: [^"].*: ' orchestrator/agents/*.md orchestrator/skills/*/SKILL.md`
       não acha nada, e `claude plugin validate orchestrator` com o 2.1.309 sai 0 — cx: simple
-- [ ] 2.8 Textos com a pasta resolvida (`design.md`, §4, "Textos com a pasta"). Os textos que citam `.orquestrador/`
+- [x] 2.8 Textos com a pasta resolvida (`design.md`, §4, "Textos com a pasta"). Os textos que citam `.orquestrador/`
       fixo passam a receber o nome relativo devolvido por `projectDir`:
       - `i18n-workflows.ts:143`, `:174`, `:258`, `:285`, `:288`, `:289` e `:320`, e os equivalentes em en (`:528` a
         `:703`); as constantes viram funções de `dir`;
@@ -150,6 +150,10 @@ Portões: `testes`, `tipos`, `lint` (a fase mexe nas skills e no frontmatter dos
       Testes: num projeto `legacy`, o aviso de salvar cita `.orquestrador/flows/<id>.json`; num projeto novo, cita
       `.orchestrator/flows/<id>.json`. Verificação: `grep -rn "\.orquestrador/" orchestrator/hooks` só acha o aviso de
       `legacy` e o `LEGACY_DIR` de `project-config.ts`, e os dois testes como `(pass)` — cx: moderate
+
+Feito com dois desvios, registrados no `evidence.md`: o `grep "LEGACY_AGENTS"` também acha o `currentAgent` de `flow.ts`
+(usado pelo `normalizeAgents` e pela checagem da revisão de código no `parseFlow`) e o `listAgents` (que a 2.3 pede);
+e o `.orquestrador/` do `LEGACY_DIR` não tem barra, então o grep da 2.8 só acha as duas línguas do aviso de `legacy`.
 
 ## 3. Comandos com prefixo
 

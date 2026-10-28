@@ -1,7 +1,7 @@
 import type { ConfigDraft, FlowDef, FlowStep, Lang, Languages, ProjectDeploy, ProjectMerge, ProjectSettings } from '../types'
 import { parseConfig } from './i18n'
 import type { WorkflowsText } from './i18n-workflows'
-import { DEPLOY_KEYS, MERGE_KEYS } from './project-config'
+import { DEPLOY_KEYS, MERGE_KEYS, PROJECT_DIR } from './project-config'
 
 /** What a merge or deploy step is built with where neither the workflow nor the project says. */
 export const MERGE_DEFAULTS: Required<ProjectMerge> = { branch: 'main', method: 'squash', auto: false }
@@ -74,16 +74,21 @@ export const configChanges = (draft: ConfigDraft, t: WorkflowsText): string[] =>
  * The file's new text: the one on disk with only the keys the draft changed set, every other key kept.
  * A file that is not a JSON object, or a result `parseConfig` would name a new problem in, is refused.
  */
-export const configText = (prior: string | undefined, draft: ConfigDraft, t: WorkflowsText): { text: string } | { error: string } => {
+export const configText = (
+  prior: string | undefined,
+  draft: ConfigDraft,
+  t: WorkflowsText,
+  folder: string = PROJECT_DIR,
+): { text: string } | { error: string } => {
   let raw: Record<string, unknown> = {}
   if (prior !== undefined && prior.trim() !== '') {
     let parsed: unknown
     try {
       parsed = JSON.parse(prior)
     } catch {
-      return { error: t.project.edit.notJson }
+      return { error: t.project.edit.notJson(folder) }
     }
-    if (!isRecord(parsed)) return { error: t.project.edit.notObject }
+    if (!isRecord(parsed)) return { error: t.project.edit.notObject(folder) }
     raw = parsed
   }
   const d = differences(draft)

@@ -77,6 +77,7 @@ import {
   registerPending,
   wakePrompt,
   startFlow,
+  normalizeAgents,
 } from './flow'
 import type { Moved } from './flow'
 import { closePhase, finishLoop, isClosed, loopRefusal, loopUnits, phaseSessions, uncommitted, unitRefusal, withEvents } from './lifecycle'
@@ -107,6 +108,7 @@ import { PLUGIN_NAME, readActivation, readAutowake, registryDir } from './activa
 import { STOP_AS_USER, childStops, eligibleChildren, flowProgress, sessionRef, stopPrompt, untracked } from './wake'
 import { WORKFLOWS_PANE, drawWorkflows, startWorkflowsLoad, toggleWorkflowsPane } from './workflows-pane'
 import { findAgent, loadConfig as loadProjectConfig, loadFlows } from './flow-files'
+import { projectDir } from './project-config'
 import { firstSite, issueUrl, jiraKeys, moveFor, parseIssue, parseTransitions, wishes } from './jira'
 import { changeDir, openSpecView } from './openspec'
 import {
@@ -464,7 +466,7 @@ const loadSessions = async (
 const readText = async ($: EngineInterface, path: string): Promise<string | undefined> =>
   (await $.fs.exists(path)) ? $.fs.read(path) : undefined
 
-/** The project's languages from `<repo>/.orquestrador/config.json`, read fresh: an edit shows on the next refresh. */
+/** The project's languages from `<repo>/.orchestrator/config.json` (or the old folder's), read fresh: an edit shows on the next refresh. */
 const loadConfig = async ($: EngineInterface): Promise<{ languages: Languages; problems: string[] }> => loadProjectConfig($)
 
 /** The owner's words now, for a toast raised outside the pane. */
@@ -1452,20 +1454,27 @@ const describeAgent = async ($: EngineInterface, state: FlowState): Promise<stri
   if (state.status !== 'running') return undefined
   const step = state.flow.steps.find(s => s.id === state.current)
   if (step === undefined) return undefined
-  return describeStepAgent(step, step.agent === undefined ? undefined : await findAgent($, step.agent))
+  const folder = await projectDir($, await $.session.root())
+  return describeStepAgent(step, step.agent === undefined ? undefined : await findAgent($, step.agent), folder.name)
 }
 
 const flowFile = async ($: EngineInterface, change: string, ext: 'json' | 'ndjson'): Promise<string> =>
   `${await flowsDir($)}/${runKey(change)}.${ext}`
 
+/** A flow going since before 0.15.0 keeps the definition it started with: its old agent names are read as the new. */
+const readFlowState = async ($: EngineInterface, path: string): Promise<FlowState | undefined> => {
+  const state = await readJson<FlowState>($, path)
+  return state === undefined || !Array.isArray(state.flow?.steps) ? state : { ...state, flow: normalizeAgents(state.flow) }
+}
+
 const loadFlowState = async ($: EngineInterface, change: string): Promise<FlowState | undefined> =>
-  readJson<FlowState>($, await flowFile($, change, 'json'))
+  readFlowState($, await flowFile($, change, 'json'))
 
 const allFlowStates = async ($: EngineInterface): Promise<FlowState[]> => {
   const dir = await flowsDir($)
   if (!(await $.fs.exists(dir))) return []
   const files = (await $.fs.list(dir)).filter(f => f.kind === 'file' && f.name.endsWith('.json'))
-  const states = await Promise.all(files.map(f => readJson<FlowState>($, `${dir}/${f.name}`)))
+  const states = await Promise.all(files.map(f => readFlowState($, `${dir}/${f.name}`)))
   return states.filter((s): s is FlowState => s !== undefined && typeof s.change === 'string')
 }
 

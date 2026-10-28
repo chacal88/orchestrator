@@ -272,7 +272,7 @@ test('an agent name that is not lowercase words joined by hyphens fails the pars
   )
   expect((parse('Revisor') as { error?: string }).error).toMatch(/step "a": `agent` "Revisor"/)
   expect((parse('a--b') as { error?: string }).error).toMatch(/lowercase words/)
-  expect((parse('revisor-codigo-2') as { error?: string }).error).toBeUndefined()
+  expect((parse('code-reviewer-2') as { error?: string }).error).toBeUndefined()
 })
 
 test('findAgent builds no path from a name that is not one', async () => {
@@ -290,5 +290,5 @@ test('findAgent builds no path from a name that is not one', async () => {
   expect(await findAgent(engine, '../x')).toBeUndefined()
   expect(await findAgent(engine, 'x/../../etc')).toBeUndefined()
   expect(asked).toEqual([])
-  expect(await findAgent(engine, 'revisor')).toEqual({ source: 'project', path: '/w/.orquestrador/agents/revisor.md' })
+  expect(await findAgent(engine, 'revisor')).toEqual({ source: 'project', path: '/w/.orchestrator/agents/revisor.md' })
 })

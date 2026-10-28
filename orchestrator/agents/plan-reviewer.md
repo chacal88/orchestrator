@@ -1,5 +1,5 @@
 ---
-name: revisor-plano
+name: plan-reviewer
 description: Revisa o plano da change contra as regras do projeto, ADRs e specs. Use no passo `revisao-plano`.
 model: opus
 tools: Read, Glob, Grep, Bash

@@ -8,12 +8,14 @@ export const PLUGIN_NAME = 'orchestrator'
 export const SETTINGS_PATH = '.claude/settings.local.json'
 export const LEVELS: readonly ActivationLevel[] = ['barrar', 'lembrar']
 /** The word in the hook's command by which "Desativar" finds the hook the mod put there, and only it. */
-export const HOOK_MARK = 'orquestrador:ativar'
+export const HOOK_MARK = 'orchestrator:activate'
+/** The word a hook written before 0.15.0 carries: "Desativar" still finds it, and a reactivation replaces it. */
+export const LEGACY_HOOK_MARK = 'orquestrador:ativar'
 
 /** What the SessionStart hook prints: stdout of a `command` hook becomes context for the session. */
 export const HOOK_COMMAND =
-  'printf \'%s\\n\' "Orquestrador ativo neste clone (nível: ${ORQUESTRADOR:-barrar}). Siga o flow da change em andamento; ' +
-  'passos do dono, só o dono responde no painel (/orquestrador); sem merge --admin e sem pular portões." ' +
+  'printf \'%s\\n\' "Orchestrator ativo neste clone (nível: ${ORCHESTRATOR:-${ORQUESTRADOR:-barrar}}). Siga o flow da change em andamento; ' +
+  'passos do dono, só o dono responde no painel (/orchestrator:panel); sem merge --admin e sem pular portões." ' +
   `# ${HOOK_MARK}`
 
 type Json = Record<string, unknown>
@@ -38,7 +40,8 @@ export const levelOf = (data: Json): ActivationLevel | undefined => {
   return LEVELS.find(l => l === level)
 }
 
-const ours = (hook: unknown): boolean => isRecord(hook) && typeof hook.command === 'string' && hook.command.includes(HOOK_MARK)
+const ours = (hook: unknown): boolean =>
+  isRecord(hook) && typeof hook.command === 'string' && (hook.command.includes(HOOK_MARK) || hook.command.includes(LEGACY_HOOK_MARK))
 
 /** The SessionStart groups without the mod's hook; a group left with no hook goes too. */
 const withoutOurs = (groups: unknown): unknown[] =>

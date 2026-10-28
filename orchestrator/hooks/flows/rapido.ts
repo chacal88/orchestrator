@@ -1,4 +1,4 @@
-/** The mod's default "rapido" flow, in both languages, written as the JSON a project's `.orquestrador/flows/rapido.json` would hold. */
+/** The mod's default "rapido" flow, in both languages, written as the JSON a project's `.orchestrator/flows/rapido.json` would hold. */
 export const rapido: unknown = {
   "id": "rapido",
   "title": { "pt-BR": "Rápido", "en": "Fast" },
@@ -9,7 +9,7 @@ export const rapido: unknown = {
       "title": { "pt-BR": "Planejar OpenSpec", "en": "Plan OpenSpec" },
       "description": { "pt-BR": "Uma sessão escreve só a proposta e as tarefas da change.", "en": "A session writes only the change's proposal and tasks." },
       "kind": "session",
-      "agent": "planejador",
+      "agent": "planner",
       "model": "claude-opus-5-5",
       "effort": "high",
       "details": { "inputs": { "pt-BR": "O pedido do dono para uma change pequena.", "en": "The owner's request for a small change." }, "produces": { "pt-BR": "proposal.md e tasks.md da change.", "en": "The change's proposal.md and tasks.md." }, "blocks": { "pt-BR": "Sem plano escrito, não há validação.", "en": "Without a written plan, there is no validation." } },
@@ -58,7 +58,7 @@ export const rapido: unknown = {
       "title": { "pt-BR": "Revisão de código", "en": "Code review" },
       "description": { "pt-BR": "Revisão de qualidade do código entregue.", "en": "Quality review of the delivered code." },
       "kind": "session",
-      "agent": "revisor-codigo",
+      "agent": "code-reviewer",
       "model": "claude-opus-5-5",
       "effort": "high",
       "details": { "inputs": { "pt-BR": "O diff da change e o tasks.md marcado.", "en": "The change's diff and the ticked tasks.md." }, "produces": { "pt-BR": "Veredito aprovado/rejeitado com achados por arquivo:linha.", "en": "An approved/rejected verdict with findings by file:line." }, "blocks": { "pt-BR": "Rejeitado volta ao executar.", "en": "Rejected goes back to execution." } },
@@ -97,7 +97,7 @@ export const rapido: unknown = {
       "title": { "pt-BR": "PR", "en": "PR" },
       "description": { "pt-BR": "Uma sessão abre o PR da change.", "en": "A session opens the change's PR." },
       "kind": "session",
-      "agent": "abre-pr",
+      "agent": "pr-opener",
       "model": "claude-sonnet-5-5",
       "effort": "medium",
       "details": { "inputs": { "pt-BR": "A branch da change com a checagem passada.", "en": "The change's branch with the check passed." }, "produces": { "pt-BR": "O PR aberto, com o resumo e a evidência.", "en": "The open PR, with the summary and the evidence." }, "blocks": { "pt-BR": "QA e produção esperam o PR.", "en": "QA and production wait on the PR." } },

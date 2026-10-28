@@ -1,6 +1,6 @@
 ---
-name: revisor-codigo
-description: Revisa o código entregue pela change: qualidade, regras e testes. Use no passo `revisao-codigo`.
+name: code-reviewer
+description: "Revisa o código entregue pela change: qualidade, regras e testes. Use no passo `revisao-codigo`."
 model: opus
 tools: Read, Glob, Grep, Bash
 ---

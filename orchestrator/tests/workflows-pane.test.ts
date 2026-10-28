@@ -12,7 +12,7 @@ import { PROJECT, raw as RAPIDO_REPO } from './rapido-repo-flow'
 type On = Parameters<TestBody>[1]
 type Surface = 'desktop' | 'terminal' | 'mobile'
 
-const DIR = '/w/.orquestrador/flows'
+const DIR = '/w/.orchestrator/flows'
 
 type World = { disk: Map<string, string>; panes: { id: string; title: string }[]; toasts: string[] }
 
@@ -20,7 +20,7 @@ type World = { disk: Map<string, string>; panes: { id: string; title: string }[]
 const world = (on: On): World => {
   mock.store(on)
   const w: World = { disk: new Map(), panes: [], toasts: [] }
-  const plugin = ['planejador', 'executor', 'revisor-codigo', 'abre-pr', 'merge', 'merge-pelo-workflow', 'deploy']
+  const plugin = ['planner', 'executor', 'code-reviewer', 'pr-opener', 'merge', 'workflow-merge', 'deploy']
   on('env.get', () => ({ value: '/h' }))
   let now = 1_000
   on('clock.now', () => ({ value: (now += 1_000) }))
@@ -38,7 +38,7 @@ const world = (on: On): World => {
   on('fs.read', ($, e) => {
     const name = pluginFile(e.path)
     if (name !== undefined && !w.disk.has(e.path)) {
-      return { value: `---\nname: ${name}\ndescription: Descrição do ${name}.\nmodel: ${name === 'planejador' || name === 'revisor-codigo' ? 'opus' : 'sonnet'}\ntools: Read\n---\n# ${name}\n` }
+      return { value: `---\nname: ${name}\ndescription: Descrição do ${name}.\nmodel: ${name === 'planner' || name === 'code-reviewer' ? 'opus' : 'sonnet'}\ntools: Read\n---\n# ${name}\n` }
     }
     return { value: w.disk.get(e.path) ?? '' }
   })
@@ -153,7 +153,7 @@ test('4.2 the list shows each workflow with its origin and the files in error; a
       id => `wf-step:${id}`,
     ),
   )
-  expect(await ui.find(text(/^Uma sessão faz, com o agente planejador \(Opus 5\.5, esforço alto\)$/))).toBeDefined()
+  expect(await ui.find(text(/^Uma sessão faz, com o agente planner \(Opus 5\.5, esforço alto\)$/))).toBeDefined()
   expect(await ui.find(text(/Automático · squash em main · só com PR aprovado e CI verde, nunca com --admin/))).toBeDefined()
   expect(await ui.find(text(/Você confirma · espera o CI e roda npm run migrate/))).toBeDefined()
   expect(await ui.find(text(/sessão faz/))).toBeDefined()
@@ -162,7 +162,7 @@ test('4.2 the list shows each workflow with its origin and the files in error; a
   for (const label of ['Quem faz', 'Agente', 'Modelo', 'Recebe', 'Entrega', 'Se rejeitar']) {
     expect(await ui.find(text(new RegExp(`^${label}$`)))).toBeDefined()
   }
-  expect(await ui.find(text(/^planejador \(do plugin\)$/))).toBeDefined()
+  expect(await ui.find(text(/^planner \(do plugin\)$/))).toBeDefined()
 
   await ui.press({ key: 'wf-step:revisao-codigo' })
   expect(await ui.find(text(/^Volta para Executar fases\.$/))).toBeDefined()
@@ -202,11 +202,11 @@ test('4.3 edits stay a draft in the mod until Salvar or Descartar', async ($, on
   await ui.press({ key: 'wf-step:pr' })
   // the agent comes from a list: the plugin's files, the project's, and "Nenhum"
   const agentSelect = await ui.find({ key: 'wf-agent:pr' })
-  expect(JSON.stringify(agentSelect)).toMatch(/revisor-codigo \(do plugin\)/)
+  expect(JSON.stringify(agentSelect)).toMatch(/code-reviewer \(do plugin\)/)
   expect(JSON.stringify(agentSelect)).toMatch(/Nenhum: a sessão segue só o pedido/)
-  expect(await ui.find(text(/Descrição do abre-pr\./))).toBeDefined()
-  await ui.select({ key: 'wf-agent:pr', value: 'revisor-codigo' })
-  expect(await ui.find(text(/Descrição do revisor-codigo\./))).toBeDefined()
+  expect(await ui.find(text(/Descrição do pr-opener\./))).toBeDefined()
+  await ui.select({ key: 'wf-agent:pr', value: 'code-reviewer' })
+  expect(await ui.find(text(/Descrição do code-reviewer\./))).toBeDefined()
   await ui.select({ key: 'wf-model:pr', value: 'claude-haiku-5-5' })
   await ui.select({ key: 'wf-effort:pr', value: 'low' })
   expect(await ui.find(text(/passo "PR": agente, modelo, esforço/))).toBeDefined()
@@ -315,7 +315,7 @@ test('4.4 saving a derived workflow writes the derived form, and the mod loads i
     },
     order: ['planejar', 'validar', 'executar', 'checagem', 'revisao-codigo', 'pr', 'revisao-pr', 'merge', 'producao', 'arquivar'],
   })
-  expect(await ui.find(text(/Salvo em \.orquestrador\/flows\/trunk\.json/))).toBeDefined()
+  expect(await ui.find(text(/Salvo em \.orchestrator\/flows\/trunk\.json/))).toBeDefined()
   expect(await ui.find(text(/^derivado de rapido$/))).toBeDefined()
   await ui.unmount()
 
@@ -391,7 +391,7 @@ test('4.4 editing a default writes a project workflow of the same id, with a war
   const ui = await mount($)
   await ui.press({ key: 'wf-open:rapido' })
   await ui.press({ key: 'wf-edit' })
-  expect(await ui.find(text(/⚠ rapido é um workflow padrão\. Salvar cria \.orquestrador\/flows\/rapido\.json/))).toBeDefined()
+  expect(await ui.find(text(/⚠ rapido é um workflow padrão\. Salvar cria \.orchestrator\/flows\/rapido\.json/))).toBeDefined()
   await ui.press({ key: 'wf-step:qa' })
   await ui.press({ key: 'wf-toggle:qa' })
   await ui.press({ key: 'wf-save' })
@@ -425,11 +425,11 @@ test('7.4 Novo workflow and Salvar never write over a flow file of the same id o
   // creating: the broken file by its name, and the one that does not resolve by its id
   await ui.input({ key: 'wf-new-name', text: 'quebrado' })
   await ui.press({ key: 'wf-new' })
-  expect(w.toasts.at(-1)).toMatch(/Já existe \.orquestrador\/flows\/quebrado\.json com o id ou o nome quebrado; nada foi criado/)
+  expect(w.toasts.at(-1)).toMatch(/Já existe \.orchestrator\/flows\/quebrado\.json com o id ou o nome quebrado; nada foi criado/)
   expect(await ui.find(text(/Os caminhos que uma change pode seguir/))).toBeDefined()
   await ui.input({ key: 'wf-new-name', text: 'orfao' })
   await ui.press({ key: 'wf-new' })
-  expect(w.toasts.at(-1)).toMatch(/Já existe \.orquestrador\/flows\/outro-nome\.json com o id ou o nome orfao/)
+  expect(w.toasts.at(-1)).toMatch(/Já existe \.orchestrator\/flows\/outro-nome\.json com o id ou o nome orfao/)
 
   // saving: a file that turned up under the draft's name after it was created stays as it is
   await ui.input({ key: 'wf-new-name', text: 'novo' })
@@ -437,7 +437,7 @@ test('7.4 Novo workflow and Salvar never write over a flow file of the same id o
   await ui.press({ key: 'wf-new' })
   w.disk.set(`${DIR}/novo.json`, '{ meu rascunho')
   await ui.press({ key: 'wf-save' })
-  expect(await ui.find(text(/Não salvei: já existe \.orquestrador\/flows\/novo\.json com o id ou o nome novo; nada foi gravado/))).toBeDefined()
+  expect(await ui.find(text(/Não salvei: já existe \.orchestrator\/flows\/novo\.json com o id ou o nome novo; nada foi gravado/))).toBeDefined()
   expect(w.disk.get(`${DIR}/novo.json`)).toBe('{ meu rascunho')
   await ui.press({ key: 'wf-discard' })
   await ui.unmount()
@@ -448,7 +448,7 @@ test('7.4 Novo workflow and Salvar never write over a flow file of the same id o
   await edit.press({ key: 'wf-open:rapido' })
   await edit.press({ key: 'wf-edit' })
   await edit.press({ key: 'wf-save' })
-  expect(await edit.find(text(/Não salvei: já existe \.orquestrador\/flows\/rapido\.json/))).toBeDefined()
+  expect(await edit.find(text(/Não salvei: já existe \.orchestrator\/flows\/rapido\.json/))).toBeDefined()
   expect(w.disk.get(`${DIR}/rapido.json`)).toBe('{ rapido meu, quebrado')
   await edit.unmount()
 })
@@ -462,7 +462,7 @@ test('7.4 a project workflow opened for editing is saved over its own file', asy
   await ui.press({ key: 'wf-step:planejar' })
   await ui.select({ key: 'wf-model:planejar', value: 'claude-sonnet-5-5' })
   await ui.press({ key: 'wf-save' })
-  expect(await ui.find(text(/Salvo em \.orquestrador\/flows\/meu-trunk\.json/))).toBeDefined()
+  expect(await ui.find(text(/Salvo em \.orchestrator\/flows\/meu-trunk\.json/))).toBeDefined()
   expect(JSON.parse(w.disk.get(`${DIR}/meu-trunk.json`)!)).toMatchObject({ id: 'trunk', override: { planejar: { model: 'claude-sonnet-5-5' } } })
   expect(w.disk.has(`${DIR}/trunk.json`)).toBe(false)
   await ui.unmount()
@@ -483,8 +483,8 @@ test('7.5 Salvar refuses when a workflow deriving from the saved one would stop 
   await ui.press({ key: 'wf-save' })
   const refusal = await ui.find(text(/Não salvei: os workflows que derivam de trunk deixariam de resolver; nada foi gravado\./))
   const said = (refusal as { text?: string } | undefined)?.text ?? ''
-  expect(said).toMatch(/ \.orquestrador\/flows\/filho\.json: `override`: "merge" is no step of the flow\./)
-  expect(said).toMatch(/ \.orquestrador\/flows\/neto\.json: base "filho" does not resolve/)
+  expect(said).toMatch(/ \.orchestrator\/flows\/filho\.json: `override`: "merge" is no step of the flow\./)
+  expect(said).toMatch(/ \.orchestrator\/flows\/neto\.json: base "filho" does not resolve/)
   expect(said).not.toMatch(/outro\.json/)
   expect(w.disk.get(`${DIR}/trunk.json`)).toBe(before)
 
@@ -493,7 +493,7 @@ test('7.5 Salvar refuses when a workflow deriving from the saved one would stop 
   await ui.press({ key: 'wf-step:planejar' })
   await ui.select({ key: 'wf-effort:planejar', value: 'low' })
   await ui.press({ key: 'wf-save' })
-  expect(await ui.find(text(/Salvo em \.orquestrador\/flows\/trunk\.json/))).toBeDefined()
+  expect(await ui.find(text(/Salvo em \.orchestrator\/flows\/trunk\.json/))).toBeDefined()
   expect(file(w, 'trunk')).toMatchObject({ override: { planejar: { effort: 'low' } } })
   await ui.unmount()
 })
@@ -617,14 +617,14 @@ test('10.2 an open workflow: the legend, numbered steps with a line each, and th
     await see(ui, /você aprova/)
     await see(ui, /o mod confere/)
     await see(ui, /^1$/)
-    await see(ui, /^Uma sessão faz, com o agente planejador \(Opus 5\.5, esforço alto\)$/)
+    await see(ui, /^Uma sessão faz, com o agente planner \(Opus 5\.5, esforço alto\)$/)
     expect(await ui.find({ key: 'wf-save' })).toBeUndefined()
     await ui.press({ key: 'wf-step:revisao-codigo' })
     for (const label of ['Quem faz', 'Agente', 'Modelo', 'Recebe', 'Entrega', 'Se rejeitar']) {
       await see(ui, new RegExp(`^${label}$`))
     }
     await see(ui, /^Uma sessão, com o agente abaixo$/)
-    await see(ui, /^revisor-codigo \(do plugin\)$/)
+    await see(ui, /^code-reviewer \(do plugin\)$/)
     await see(ui, /^Volta para Executar fases\.$/)
     await ui.press({ key: 'wf-back' })
     await ui.unmount()
@@ -635,8 +635,8 @@ test('10.3 10.4 10.5 editing: the bar on top, compact steps with the open one in
   const w = world(on)
   w.disk.set(`${DIR}/trunk.json`, JSON.stringify(TRUNK))
   // the project's own agent of the plugin's name replaces it in the list
-  w.disk.set('/w/.orquestrador/agents/revisor-codigo.md', '---\nname: revisor-codigo\ndescription: O revisor deste projeto.\nmodel: haiku\n---\n')
-  w.disk.set('/w/.orquestrador/agents/seguranca.md', '---\nname: seguranca\ndescription: Procura brechas.\n---\n')
+  w.disk.set('/w/.orchestrator/agents/code-reviewer.md', '---\nname: code-reviewer\ndescription: O revisor deste projeto.\nmodel: haiku\n---\n')
+  w.disk.set('/w/.orchestrator/agents/seguranca.md', '---\nname: seguranca\ndescription: Procura brechas.\n---\n')
 
   for (const [surface, columns] of SURFACES) {
     const ui = await mountAny($, surface, columns)
@@ -664,14 +664,14 @@ test('10.3 10.4 10.5 editing: the bar on top, compact steps with the open one in
       await see(ui, /Os campos de texto e de escolha ficam no desktop e no terminal/)
     } else {
       const agents = JSON.stringify(await ui.find({ key: 'wf-agent:planejar' }))
-      expect(agents).toContain('revisor-codigo (do projeto)')
-      expect(agents).not.toContain('revisor-codigo (do plugin)')
+      expect(agents).toContain('code-reviewer (do projeto)')
+      expect(agents).not.toContain('code-reviewer (do plugin)')
       expect(agents).toContain('seguranca (do projeto)')
       expect(agents).toContain('executor (do plugin)')
       expect(agents).toContain('Nenhum: a sessão segue só o pedido')
       // the chosen agent's description sits under the list
-      await see(ui, /Descrição do planejador\./)
-      await ui.select({ key: 'wf-agent:planejar', value: 'revisor-codigo' })
+      await see(ui, /Descrição do planner\./)
+      await ui.select({ key: 'wf-agent:planejar', value: 'code-reviewer' })
       await see(ui, /O revisor deste projeto\./)
       // model and effort come from the agent until the owner changes them
       await ui.press({ key: 'wf-step:merge' })
@@ -742,7 +742,7 @@ test('10.7 the summary names each change: a step off, back on, an agent swapped,
   const opened = draftOf(def, undefined, false)
   expect(changesOf(opened)).toEqual([])
   let draft = toggleStep(opened, 'qa')
-  draft = setStepField(draft, 'revisao-codigo', { field: 'agent', value: 'revisor-plano' })
+  draft = setStepField(draft, 'revisao-codigo', { field: 'agent', value: 'plan-reviewer' })
   draft = moveStep(draft, 'executar', -1)
   const said = changesOf(draft)
   expect(said).toContain(`passo "${def.steps.find(s => s.id === 'qa')!.title}" desligado`)
@@ -754,12 +754,12 @@ test('10.7 the summary names each change: a step off, back on, an agent swapped,
 
 test('10.7 listAgents: one with no frontmatter shows without a description; a file that is no agent is left out', async () => {
   const disk = new Map<string, string>([
-    ['/p/agents/revisor-codigo.md', '---\nname: revisor-codigo\ndescription: Do plugin.\nmodel: opus\n---\n'],
+    ['/p/agents/code-reviewer.md', '---\nname: code-reviewer\ndescription: Do plugin.\nmodel: opus\n---\n'],
     ['/p/agents/executor.md', '---\nname: executor\ndescription: Executa uma fase.\nmodel: sonnet\n---\n'],
-    ['/w/.orquestrador/agents/sem-cabecalho.md', '# Só o corpo, sem frontmatter\n'],
-    ['/w/.orquestrador/agents/notas.txt', 'não é agente'],
-    ['/w/.orquestrador/agents/Nome Ruim.md', '---\ndescription: nome inválido\n---\n'],
-    ['/w/.orquestrador/agents/revisor-codigo.md', '---\nname: revisor-codigo\ndescription: O revisor deste projeto.\n---\n'],
+    ['/w/.orchestrator/agents/sem-cabecalho.md', '# Só o corpo, sem frontmatter\n'],
+    ['/w/.orchestrator/agents/notas.txt', 'não é agente'],
+    ['/w/.orchestrator/agents/Nome Ruim.md', '---\ndescription: nome inválido\n---\n'],
+    ['/w/.orchestrator/agents/code-reviewer.md', '---\nname: code-reviewer\ndescription: O revisor deste projeto.\n---\n'],
   ])
   const engine = {
     plugin: { root: '/p' },
@@ -779,8 +779,8 @@ test('10.7 listAgents: one with no frontmatter shows without a description; a fi
   expect(bare).toMatchObject({ source: 'project', description: '' })
   expect(bare?.model).toBeUndefined()
   expect(agents.some(a => a.name === 'notas' || a.name.includes(' ') || a.name === 'Nome Ruim')).toBe(false)
-  expect(agents.find(a => a.name === 'revisor-codigo')).toMatchObject({ source: 'project', description: 'O revisor deste projeto.' })
-  expect(agents.filter(a => a.name === 'revisor-codigo')).toHaveLength(1)
+  expect(agents.find(a => a.name === 'code-reviewer')).toMatchObject({ source: 'project', description: 'O revisor deste projeto.' })
+  expect(agents.filter(a => a.name === 'code-reviewer')).toHaveLength(1)
 })
 
 test('11.1 11.3 11.4 11.6 tags are pills, no brackets; the step summary is plain; the card has no "id · origem" line', async ($, on) => {
@@ -796,7 +796,7 @@ test('11.1 11.3 11.4 11.6 tags are pills, no brackets; the step summary is plain
     expect(pill).toContain('substitui o padrão rapido')
     expect(JSON.stringify(await ui.findAll({ type: 'Box', borderStyle: 'round', backgroundColor: '#FDF3E1' } as never))).toContain('substitui o padrão rapido')
     await ui.press({ key: 'wf-open:trunk' })
-    await see(ui, /^Uma sessão faz, com o agente planejador \(Opus 5\.5, esforço alto\)$/)
+    await see(ui, /^Uma sessão faz, com o agente planner \(Opus 5\.5, esforço alto\)$/)
     expect(await ui.find(text(/o da sessão/))).toBeUndefined()
     expect(await ui.find(text(/[▸▾]/))).toBeUndefined()
     await ui.press({ key: 'wf-edit' })
@@ -848,9 +848,9 @@ test('11.6 a step with no agent says so', async ($, on) => {
   await ui.unmount()
 })
 
-test('a merge step with the merge-pelo-workflow agent says the workflow approves it, not GitHub', async ($, on) => {
+test('a merge step with the workflow-merge agent says the workflow approves it, not GitHub', async ($, on) => {
   const w = world(on)
-  const step = { use: 'merge', agent: 'merge-pelo-workflow', merge: { branch: 'main', auto: true } }
+  const step = { use: 'merge', agent: 'workflow-merge', merge: { branch: 'main', auto: true } }
   w.disk.set(`${DIR}/pelowf.json`, JSON.stringify({ ...TRUNK, id: 'pelowf', add: [{ after: 'pr', step }] }))
   const ui = await mount($, 'terminal', 30)
   await ui.press({ key: 'wf-open:pelowf' })
@@ -858,7 +858,7 @@ test('a merge step with the merge-pelo-workflow agent says the workflow approves
   expect(await ui.find(text(/Automático · squash em main · quando o workflow aprovou/))).toBeDefined()
   expect(await ui.find(text(/só com PR aprovado e CI verde/))).toBeUndefined()
   await ui.press({ key: 'wf-step:merge' })
-  expect(await ui.find(text(/^merge-pelo-workflow \(do plugin\)$/))).toBeDefined()
+  expect(await ui.find(text(/^workflow-merge \(do plugin\)$/))).toBeDefined()
   expect(await ui.find(text(/^Aprovação do workflow: a revisão de código do flow aprovada/))).toBeDefined()
   expect(await ui.find(text(/^Aprovação no GitHub e CI verde/))).toBeUndefined()
   expect(await ui.find(text(/declarada pela coordenação/))).toBeDefined()
@@ -869,12 +869,12 @@ test('the merge texts follow the agent: workflow, GitHub, and an unknown project
   const pt = workflowsText('pt-BR')
   const en = workflowsText('en')
   for (const t of [pt, en]) {
-    expect(t.merge.autoHelp('merge-pelo-workflow')).not.toMatch(/GitHub/)
+    expect(t.merge.autoHelp('workflow-merge')).not.toMatch(/GitHub/)
     expect(t.merge.autoHelp('merge')).toMatch(/GitHub/)
     expect(t.merge.autoHelp(undefined)).toMatch(/GitHub/)
     expect(t.merge.autoHelp('meu-merge')).not.toMatch(/GitHub/)
     expect(t.merge.approval('meu-merge')).not.toMatch(/GitHub/)
-    expect(t.merge.approval('merge-pelo-workflow')).toMatch(/aprovado/)
+    expect(t.merge.approval('workflow-merge')).toMatch(/aprovado/)
   }
 })
 
@@ -882,7 +882,7 @@ test('the merge texts follow the agent: workflow, GitHub, and an unknown project
 const repoRapido = (w: World): string => {
   const text$ = `${JSON.stringify(RAPIDO_REPO, null, 2)}\n`
   w.disk.set(`${DIR}/rapido.json`, text$)
-  w.disk.set('/w/.orquestrador/config.json', JSON.stringify({ language: { ui: 'pt-BR' }, ...PROJECT }))
+  w.disk.set('/w/.orchestrator/config.json', JSON.stringify({ language: { ui: 'pt-BR' }, ...PROJECT }))
   return text$
 }
 /** `/reload-plugins`: the mod's code loaded again, its `session.start` run again, the state kept. */
@@ -905,7 +905,7 @@ test('a draft kept from before (the pane drawn again, the command run again) and
   await again.press({ key: 'wf-save' })
   // this press used to write the file again, with method squash, auto and the defaults in every step
   expect(w.disk.get(`${DIR}/rapido.json`)).toBe(before)
-  expect(await again.find(text(/Nada mudou: \.orquestrador\/flows\/rapido\.json ficou como estava/))).toBeDefined()
+  expect(await again.find(text(/Nada mudou: \.orchestrator\/flows\/rapido\.json ficou como estava/))).toBeDefined()
   expect(await again.find(text(/Salvo em/))).toBeUndefined()
   await again.unmount()
 })
@@ -933,7 +933,7 @@ test('after the code reloads, a draft and a notice of the earlier load are set a
   await after.press({ key: 'wf-step:planejar' })
   await after.select({ key: 'wf-agent:planejar', value: 'executor' })
   await after.press({ key: 'wf-save' })
-  expect(await after.find(text(/Salvo em \.orquestrador\/flows\/rapido\.json/))).toBeDefined()
+  expect(await after.find(text(/Salvo em \.orchestrator\/flows\/rapido\.json/))).toBeDefined()
   await after.unmount()
 
   // the "Salvo em" of the earlier load is not shown again after a reload
@@ -985,4 +985,37 @@ test('draftFile: a whole workflow opened from its file and saved unchanged is th
   if ('error' in fresh) throw new Error(fresh.error)
   const text$ = JSON.stringify(fresh.raw)
   for (const field of ['"maxAttempts":3', '"requiresEvidence":false', '"cleanup":false', '"method":"squash"']) expect(text$).not.toContain(field)
+})
+
+test('2.5 2.8 a project still on .orquestrador/: the texts name it, the save goes there, and ⚙️ says to rename it', async ($, on) => {
+  const w = world(on)
+  const OLD = '/w/.orquestrador'
+  w.disk.set(`${OLD}/config.json`, JSON.stringify({ merge: { branch: 'main' } }))
+  const ui = await mount($)
+  expect(await ui.find(text(/Este projeto usa \.orquestrador\/; renomeie para \.orchestrator\//))).toBeDefined()
+  await ui.press({ key: 'wf-open:rapido' })
+  await ui.press({ key: 'wf-edit' })
+  expect(await ui.find(text(/⚠ rapido é um workflow padrão\. Salvar cria \.orquestrador\/flows\/rapido\.json/))).toBeDefined()
+  await ui.press({ key: 'wf-step:qa' })
+  await ui.press({ key: 'wf-toggle:qa' })
+  await ui.press({ key: 'wf-save' })
+  expect(await ui.find(text(/\.orquestrador\/flows\/rapido\.json/))).toBeDefined()
+  expect(JSON.parse(w.disk.get(`${OLD}/flows/rapido.json`) ?? 'null')).toMatchObject({ id: 'rapido', base: 'rapido', remove: ['qa'] })
+  expect([...w.disk.keys()].some(k => k.startsWith('/w/.orchestrator/'))).toBe(false)
+  await ui.unmount()
+})
+
+test('2.8 a new project: the save names .orchestrator/flows/<id>.json, and ⚙️ shows no rename warning', async ($, on) => {
+  const w = world(on)
+  const ui = await mount($)
+  expect(await ui.find(text(/Este projeto usa \.orquestrador\//))).toBeUndefined()
+  await ui.press({ key: 'wf-open:rapido' })
+  await ui.press({ key: 'wf-edit' })
+  await ui.press({ key: 'wf-step:qa' })
+  await ui.press({ key: 'wf-toggle:qa' })
+  await ui.press({ key: 'wf-save' })
+  expect(await ui.find(text(/\.orchestrator\/flows\/rapido\.json/))).toBeDefined()
+  expect(file(w, 'rapido')).toMatchObject({ id: 'rapido', remove: ['qa'] })
+  expect([...w.disk.keys()].some(k => k.startsWith('/w/.orquestrador/'))).toBe(false)
+  await ui.unmount()
 })

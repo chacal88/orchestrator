@@ -30,7 +30,7 @@ const pt = {
   fromAgent: (model: string) => `${model} (do agente)`,
   summary: {
     mergeAuto: (method: string, branch: string, agent?: string) =>
-      agent === 'merge-pelo-workflow'
+      agent === 'workflow-merge'
         ? `Automático · ${method} em ${branch} · quando o workflow aprovou (revisão, portões e CI se houver), nunca com --admin`
         : `Automático · ${method} em ${branch} · só com PR aprovado e CI verde, nunca com --admin`,
     mergeOwner: (method: string, branch: string) => `Você faz o merge · ${method} em ${branch}`,
@@ -85,7 +85,7 @@ const pt = {
     auto: (on: string) => `Fazer o merge sozinho: ${on}`,
     autoHelp: (agent: string | undefined): string =>
       `A coordenação faz o merge assim que ${
-        agent === 'merge-pelo-workflow'
+        agent === 'workflow-merge'
           ? 'o workflow aprovou (a revisão de código do flow) e o CI está verde, se houver'
           : agent === undefined || agent === 'merge'
             ? 'o PR estiver aprovado no GitHub e com o CI verde'
@@ -93,7 +93,7 @@ const pt = {
       }. Nunca com --admin. Desligado, o merge fica com você.`,
     approvalRow: 'Aprovação do merge',
     approval: (agent: string | undefined): string =>
-      agent === 'merge-pelo-workflow'
+      agent === 'workflow-merge'
         ? 'Aprovação do workflow: a revisão de código do flow aprovada (declarada pela coordenação, que reporta "aprovado"), os portões finais passados e o CI verde se houver; não exige aprovação no GitHub.'
         : agent === undefined || agent === 'merge'
           ? 'Aprovação no GitHub e CI verde: o PR precisa estar aprovado no GitHub e com as checagens verdes.'
@@ -139,8 +139,8 @@ const pt = {
     changes: (list: string[]) => `${list.length} ${list.length === 1 ? 'mudança' : 'mudanças'}: ${list.join('; ')}.`,
     notSaved: (error: string) => `Não salvei: ${error}`,
     derived: (base: string) => `Derivado de ${base}: grava só o que muda em relação a ele.`,
-    replacesDefault: (id: string) =>
-      `⚠ ${id} é um workflow padrão. Salvar cria .orquestrador/flows/${id}.json, que passa a valer no lugar do padrão neste projeto.`,
+    replacesDefault: (id: string, dir: string) =>
+      `⚠ ${id} é um workflow padrão. Salvar cria ${dir}/flows/${id}.json, que passa a valer no lugar do padrão neste projeto.`,
     runningKeep: 'Changes em andamento seguem com o workflow com que começaram.',
     staleDraft: (title: string) =>
       `O rascunho de ${title} era de antes de o plugin ser recarregado e foi deixado de lado; nada foi gravado. Use "Editar" para começar de novo.`,
@@ -171,7 +171,7 @@ const pt = {
     retired: 'fora de uso',
     retiredHelp: (title: string) => `Este projeto usa o seu ${title} no lugar deste.`,
     problems: (n: number) => (n === 1 ? '1 arquivo com erro, ignorado' : `${n} arquivos com erro, ignorados`),
-    problemsHelp: 'Corrija ou apague o arquivo em .orquestrador/flows/; até lá o mod não o usa.',
+    problemsHelp: (dir: string) => `Corrija ou apague o arquivo em ${dir}/flows/; até lá o mod não o usa.`,
     newTitle: 'Novo workflow',
     nameLabel: 'Nome',
     namePlaceholder: 'ex.: Dev e master',
@@ -247,6 +247,8 @@ const pt = {
       },
     },
     applies: 'Vale para os passos de merge e deploy de todos os workflows, a menos que um passo diga outra coisa.',
+    legacyFolder:
+      'Este projeto usa .orquestrador/; renomeie para .orchestrator/ (a pasta antiga deixa de ser lida na próxima versão).',
     problems: (n: number) => (n === 1 ? '1 valor do config.json ignorado' : `${n} valores do config.json ignorados`),
     noMergeStep: 'sem passo de merge',
     edit: {
@@ -254,8 +256,8 @@ const pt = {
       draftHelp: 'Rascunho: nada é gravado até salvar.',
       save: 'Salvar',
       discard: 'Descartar',
-      about:
-        'Vale para todos os workflows deste projeto. Um passo de merge ou deploy que tenha valor próprio no workflow continua com o dele. Fica gravado em .orquestrador/config.json.',
+      about: (dir: string) =>
+        `Vale para todos os workflows deste projeto. Um passo de merge ou deploy que tenha valor próprio no workflow continua com o dele. Fica gravado em ${dir}/config.json.`,
       language: 'Idioma',
       uiLabel: 'Caixas e títulos',
       uiHelp: 'Botões, cabeçalhos, status e títulos dos passos nos painéis.',
@@ -282,11 +284,11 @@ const pt = {
       routinesHelp: 'Comandos rodados nesta ordem depois do merge (e do CI). Vazio: só o CI.',
       inWorkflows: 'Nos workflows',
       noChanges: 'Nenhuma mudança ainda.',
-      saved: 'Configurações salvas em .orquestrador/config.json.',
+      saved: (dir: string) => `Configurações salvas em ${dir}/config.json.`,
       nothingToSave: 'Nada mudou; nada foi gravado.',
       notSaved: (why: string) => `Não salvei: ${why}`,
-      notObject: '.orquestrador/config.json não é um objeto JSON; corrija o arquivo antes de salvar.',
-      notJson: '.orquestrador/config.json não é um JSON válido; corrija o arquivo antes de salvar.',
+      notObject: (dir: string) => `${dir}/config.json não é um objeto JSON; corrija o arquivo antes de salvar.`,
+      notJson: (dir: string) => `${dir}/config.json não é um JSON válido; corrija o arquivo antes de salvar.`,
       change: {
         ui: (lang: string) => `caixas e títulos em ${lang}`,
         content: (lang: string) => `descrições e textos em ${lang}`,
@@ -317,7 +319,7 @@ const pt = {
       use: 'Passar a usar o do projeto',
       confirmAdd: (title: string, missing: string[]) => `Acrescentar ${missing.join(' e ')} ao ${title}? O passo entra com o que o projeto define.`,
       confirmUse: (title: string) => `Passar o merge e o deploy de ${title} para o do projeto? Os valores próprios do passo saem.`,
-      replacesDefault: (id: string) => ` Isso cria .orquestrador/flows/${id}.json, que passa a valer no lugar do workflow padrão.`,
+      replacesDefault: (id: string, dir: string) => ` Isso cria ${dir}/flows/${id}.json, que passa a valer no lugar do workflow padrão.`,
       confirm: 'Confirmar',
       cancel: 'Cancelar',
       done: (title: string, path: string) => `${title} salvo em ${path}.`,
@@ -415,7 +417,7 @@ const en: WorkflowsText = {
   fromAgent: model => `${model} (from the agent)`,
   summary: {
     mergeAuto: (method, branch, agent) =>
-      agent === 'merge-pelo-workflow'
+      agent === 'workflow-merge'
         ? `Automatic · ${method} into ${branch} · once the workflow approved (review, gates and CI if any), never with --admin`
         : `Automatic · ${method} into ${branch} · only with an approved PR and green CI, never with --admin`,
     mergeOwner: (method, branch) => `You merge · ${method} into ${branch}`,
@@ -470,7 +472,7 @@ const en: WorkflowsText = {
     auto: on => `Merge on its own: ${on}`,
     autoHelp: agent =>
       `The coordinator merges as soon as ${
-        agent === 'merge-pelo-workflow'
+        agent === 'workflow-merge'
           ? "the workflow approved (the flow's code review) and the CI is green, if there is one"
           : agent === undefined || agent === 'merge'
             ? 'the PR is approved on GitHub and the CI is green'
@@ -478,7 +480,7 @@ const en: WorkflowsText = {
       }. Never with --admin. Off, the merge is yours.`,
     approvalRow: 'Merge approval',
     approval: agent =>
-      agent === 'merge-pelo-workflow'
+      agent === 'workflow-merge'
         ? "The workflow's approval: the flow's code review approved (declared by the coordination, which reports \"aprovado\"), the final gates passed and the CI green if there is one; no GitHub approval needed."
         : agent === undefined || agent === 'merge'
           ? 'GitHub approval and green CI: the PR must be approved on GitHub with its checks green.'
@@ -524,8 +526,8 @@ const en: WorkflowsText = {
     changes: list => `${list.length} ${list.length === 1 ? 'change' : 'changes'}: ${list.join('; ')}.`,
     notSaved: error => `Not saved: ${error}`,
     derived: base => `Derived from ${base}: writes only what differs from it.`,
-    replacesDefault: id =>
-      `⚠ ${id} is a default workflow. Saving creates .orquestrador/flows/${id}.json, which takes the default's place in this project.`,
+    replacesDefault: (id, dir) =>
+      `⚠ ${id} is a default workflow. Saving creates ${dir}/flows/${id}.json, which takes the default's place in this project.`,
     runningKeep: 'Changes in progress keep the workflow they started with.',
     staleDraft: title => `The draft of ${title} was from before the plugin was reloaded and was set aside; nothing was written. Use "Edit" to start again.`,
     nameAndDescription: 'Name and description',
@@ -555,7 +557,7 @@ const en: WorkflowsText = {
     retired: 'not in use',
     retiredHelp: title => `This project uses its own ${title} instead of this one.`,
     problems: n => (n === 1 ? '1 file with errors, ignored' : `${n} files with errors, ignored`),
-    problemsHelp: 'Fix or delete the file in .orquestrador/flows/; until then the mod does not use it.',
+    problemsHelp: dir => `Fix or delete the file in ${dir}/flows/; until then the mod does not use it.`,
     newTitle: 'New workflow',
     nameLabel: 'Name',
     namePlaceholder: 'e.g. Dev and master',
@@ -630,6 +632,7 @@ const en: WorkflowsText = {
       },
     },
     applies: "Applies to the merge and deploy steps of every workflow, unless a step says otherwise.",
+    legacyFolder: 'This project uses .orquestrador/; rename it to .orchestrator/ (the old folder stops being read in the next version).',
     problems: n => (n === 1 ? '1 value in config.json ignored' : `${n} values in config.json ignored`),
     noMergeStep: 'no merge step',
     edit: {
@@ -638,7 +641,7 @@ const en: WorkflowsText = {
       save: 'Save',
       discard: 'Discard',
       about:
-        "Applies to every workflow of this project. A merge or deploy step with a value of its own in the workflow keeps it. Written to .orquestrador/config.json.",
+        dir => `Applies to every workflow of this project. A merge or deploy step with a value of its own in the workflow keeps it. Written to ${dir}/config.json.`,
       language: 'Language',
       uiLabel: 'Boxes and titles',
       uiHelp: "Buttons, headers, status and the steps' titles in the panels.",
@@ -665,11 +668,11 @@ const en: WorkflowsText = {
       routinesHelp: 'Commands run in this order after the merge (and the CI). Empty: only the CI.',
       inWorkflows: 'In the workflows',
       noChanges: 'No changes yet.',
-      saved: 'Settings saved in .orquestrador/config.json.',
+      saved: dir => `Settings saved in ${dir}/config.json.`,
       nothingToSave: 'Nothing changed; nothing was written.',
       notSaved: why => `Not saved: ${why}`,
-      notObject: '.orquestrador/config.json is not a JSON object; fix the file before saving.',
-      notJson: '.orquestrador/config.json is not valid JSON; fix the file before saving.',
+      notObject: dir => `${dir}/config.json is not a JSON object; fix the file before saving.`,
+      notJson: dir => `${dir}/config.json is not valid JSON; fix the file before saving.`,
       change: {
         ui: lang => `boxes and titles in ${lang}`,
         content: lang => `descriptions and texts in ${lang}`,
@@ -700,7 +703,7 @@ const en: WorkflowsText = {
       use: "Use the project's",
       confirmAdd: (title, missing) => `Add ${missing.join(' and ')} to ${title}? The step comes in with what the project sets.`,
       confirmUse: title => `Switch the merge and deploy of ${title} to the project's? The step's own values go.`,
-      replacesDefault: id => ` This creates .orquestrador/flows/${id}.json, which takes the default workflow's place.`,
+      replacesDefault: (id, dir) => ` This creates ${dir}/flows/${id}.json, which takes the default workflow's place.`,
       confirm: 'Confirm',
       cancel: 'Cancel',
       done: (title, path) => `${title} saved in ${path}.`,

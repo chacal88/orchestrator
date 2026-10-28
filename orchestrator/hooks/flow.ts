@@ -28,7 +28,7 @@ import { DEFAULT_LANGUAGES, baseText, localize, parseLocalized, uiText } from '.
 import type { UiText } from './i18n'
 import { MOCKUP_STEP } from './grill'
 import { parseJiraTarget } from './jira'
-import { DEPLOY_KEYS, MERGE_KEYS, isBranchName } from './project-config'
+import { DEPLOY_KEYS, MERGE_KEYS, PROJECT_DIR, isBranchName } from './project-config'
 
 /** The pseudo-step every flow ends on. */
 export const FLOW_END = 'fim'
@@ -107,7 +107,7 @@ export const parseFlow = (raw: unknown, source: string, project: ProjectSettings
         return fail(`step "${stepId}": an automatic step has exactly the outcomes passou and falhou.`)
       }
     }
-    if ((s.agent === CODE_REVIEW_AGENT || stepId === CODE_REVIEW_STEP) && outcomes.aprovado === undefined) {
+    if ((currentAgent(s.agent) === CODE_REVIEW_AGENT || stepId === CODE_REVIEW_STEP) && outcomes.aprovado === undefined) {
       return fail(`step "${stepId}": a code review step declares the outcome aprovado, which the merge waits on.`)
     }
     if (s.when !== undefined && s.when !== 'visual') return fail(`step "${stepId}": \`when\` may only be "visual".`)
@@ -382,6 +382,17 @@ export const resolveFlow = (
   find: (id: string, from: string) => FlowSource | undefined,
   chain: readonly { id: string; source: string }[] = [],
   project: ProjectSettings = {},
+): FlowDef | { error: string } => {
+  const resolved = resolveRaw(raw, source, find, chain, project)
+  return 'error' in resolved ? resolved : normalizeAgents(resolved)
+}
+
+const resolveRaw = (
+  raw: unknown,
+  source: string,
+  find: (id: string, from: string) => FlowSource | undefined,
+  chain: readonly { id: string; source: string }[],
+  project: ProjectSettings,
 ): FlowDef | { error: string } => {
   if (!isRecord(raw) || raw.base === undefined) return parseFlow(raw, source, project)
   const fail = (why: string) => ({ error: `${source}: ${why}` })
@@ -826,11 +837,34 @@ export const pendingReview = (state: FlowState): FlowStep | undefined => {
 }
 
 /** The agent that merges on the workflow's own approval, with no approval on GitHub. */
-export const WORKFLOW_MERGE_AGENT = 'merge-pelo-workflow'
+export const WORKFLOW_MERGE_AGENT = 'workflow-merge'
 
 /** The code review step the workflow itself answers. */
-export const CODE_REVIEW_AGENT = 'revisor-codigo'
+export const CODE_REVIEW_AGENT = 'code-reviewer'
 export const CODE_REVIEW_STEP = 'revisao-codigo'
+
+/**
+ * The agents' names before 0.15.0, each to the name it has now. A flow file or a flow already going may
+ * still name the old one: it is read as the new, so every comparison above sees only the new name.
+ */
+export const LEGACY_AGENTS: Readonly<Record<string, string>> = {
+  planejador: 'planner',
+  'revisor-plano': 'plan-reviewer',
+  'revisor-codigo': 'code-reviewer',
+  'abre-pr': 'pr-opener',
+  publicador: 'publisher',
+  'merge-pelo-workflow': 'workflow-merge',
+}
+
+/** An agent's name as it is now: an old name gives the new one, any other value stays as it is. */
+const currentAgent = (name: unknown): unknown =>
+  typeof name === 'string' && Object.hasOwn(LEGACY_AGENTS, name) ? LEGACY_AGENTS[name] : name
+
+/** The flow with every step's old agent name read as the new one; a new or unknown name stays. */
+export const normalizeAgents = (def: FlowDef): FlowDef =>
+  def.steps.some(s => s.agent !== currentAgent(s.agent))
+    ? { ...def, steps: def.steps.map(s => (s.agent === currentAgent(s.agent) ? s : { ...s, agent: currentAgent(s.agent) as string })) }
+    : def
 
 /**
  * The code review step before the flow's next merge that has no "aprovado" since the flow last
@@ -1251,12 +1285,12 @@ export type AgentFound = { source: 'project' | 'plugin'; path: string } | undefi
 const AGENT_SOURCE = { project: 'do projeto', plugin: 'do plugin' } as const
 
 /** The step as the model must run it: agent (and where it came from), model, effort and details. */
-export const describeStepAgent = (step: FlowStep, found: AgentFound): string | undefined => {
+export const describeStepAgent = (step: FlowStep, found: AgentFound, folder: string = PROJECT_DIR): string | undefined => {
   const lines: string[] = []
   if (step.agent !== undefined) {
     lines.push(
       found === undefined
-        ? `Agente: "${step.agent}" — nenhum arquivo encontrado (nem .orquestrador/agents/${step.agent}.md no projeto nem agents/${step.agent}.md no plugin); siga a descrição do passo sem agente.`
+        ? `Agente: "${step.agent}" — nenhum arquivo encontrado (nem ${folder}/agents/${step.agent}.md no projeto nem agents/${step.agent}.md no plugin); siga a descrição do passo sem agente.`
         : `Agente: "${step.agent}" (${AGENT_SOURCE[found.source]}). Instruções do agente: ${found.path}`,
     )
   }

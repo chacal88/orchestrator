@@ -1,6 +1,6 @@
 ---
 name: deploy
-description: Confirma o deploy depois do merge: o do CI e/ou as rotinas do projeto. Use no passo `deploy`, quando é automático.
+description: "Confirma o deploy depois do merge: o do CI e/ou as rotinas do projeto. Use no passo `deploy`, quando é automático."
 model: sonnet
 tools: Read, Bash
 ---

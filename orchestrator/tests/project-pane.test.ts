@@ -8,8 +8,8 @@ import { workflowsText } from '../hooks/i18n-workflows'
 type On = Parameters<TestBody>[1]
 type Surface = 'desktop' | 'terminal' | 'mobile'
 
-const DIR = '/w/.orquestrador/flows'
-const CONFIG = '/w/.orquestrador/config.json'
+const DIR = '/w/.orchestrator/flows'
+const CONFIG = '/w/.orchestrator/config.json'
 
 type World = { disk: Map<string, string>; panes: { id: string; title: string }[]; toasts: string[] }
 
@@ -17,7 +17,7 @@ type World = { disk: Map<string, string>; panes: { id: string; title: string }[]
 const world = (on: On): World => {
   mock.store(on)
   const w: World = { disk: new Map(), panes: [], toasts: [] }
-  const plugin = ['planejador', 'executor', 'revisor-codigo', 'abre-pr', 'merge', 'deploy']
+  const plugin = ['planner', 'executor', 'code-reviewer', 'pr-opener', 'merge', 'deploy']
   on('env.get', () => ({ value: '/h' }))
   let now = 1_000
   on('clock.now', () => ({ value: (now += 1_000) }))
@@ -133,7 +133,7 @@ test('2.2 "Configurar" opens a draft with the bar, the blocks of the mockup and 
   expect(await ui.find(text(/Nenhuma mudança ainda/))).toBeDefined()
   expect(await ui.find({ key: 'cfg-save' })).toBeDefined()
   expect(await ui.find({ key: 'cfg-discard' })).toBeDefined()
-  expect(await ui.find(text(/Fica gravado em \.orquestrador\/config\.json\./))).toBeDefined()
+  expect(await ui.find(text(/Fica gravado em \.orchestrator\/config\.json\./))).toBeDefined()
   // section labels in capitals
   for (const label of ['IDIOMA', 'MERGE', 'DEPLOY', 'NOS WORKFLOWS']) expect(await ui.find(text(new RegExp(`^${label}$`)))).toBeDefined()
   // buttons say the state; each field has its explanation
@@ -196,7 +196,7 @@ test('2.4 Salvar changes only the keys that changed and keeps the others of the 
   })
   // back on the list, the summary shows what was saved, in the language just saved
   expect(await ui.find({ key: 'cfg-save' })).toBeUndefined()
-  expect(await ui.find(text(/Settings saved in \.orquestrador\/config\.json\./))).toBeDefined()
+  expect(await ui.find(text(/Settings saved in \.orchestrator\/config\.json\./))).toBeDefined()
   expect(await ui.find(text(/^Into main, by squash$/))).toBeDefined()
   await ui.unmount()
 })
@@ -222,7 +222,7 @@ test('2.4 a config.json that is not JSON, or not an object, is never written ove
   await ui.press({ key: 'cfg-open' })
   await ui.press({ key: 'cfg-merge-auto' })
   await ui.press({ key: 'cfg-save' })
-  expect(await ui.find(text(/Não salvei: \.orquestrador\/config\.json não é um JSON válido/))).toBeDefined()
+  expect(await ui.find(text(/Não salvei: \.orchestrator\/config\.json não é um JSON válido/))).toBeDefined()
   expect(w.disk.get(CONFIG)).toBe('{ not json')
   await ui.press({ key: 'cfg-discard' })
   w.disk.set(CONFIG, '[1]')
@@ -258,7 +258,7 @@ test('2.3 "Nos workflows": each workflow says how it stands, and "Acrescentar me
   // the press only asks; nothing is written until the confirmation
   await ui.press({ key: 'cfg-add:rapido' })
   expect(await ui.find(text(/Acrescentar merge e deploy ao Rápido\? O passo entra com o que o projeto define\./))).toBeDefined()
-  expect(await ui.find(text(/Isso cria \.orquestrador\/flows\/rapido\.json/))).toBeDefined()
+  expect(await ui.find(text(/Isso cria \.orchestrator\/flows\/rapido\.json/))).toBeDefined()
   expect(w.disk.has(`${DIR}/rapido.json`)).toBe(false)
   await ui.press({ key: 'cfg-cancel' })
   expect(await ui.find({ key: 'cfg-confirm' })).toBeUndefined()
@@ -271,7 +271,7 @@ test('2.3 "Nos workflows": each workflow says how it stands, and "Acrescentar me
   // the project's values are not copied into the workflow
   expect(JSON.stringify(file)).not.toContain('develop')
   expect(JSON.stringify(file)).not.toContain('migrate:prod')
-  expect(await ui.find(text(/Rápido salvo em \.orquestrador\/flows\/rapido\.json\./))).toBeDefined()
+  expect(await ui.find(text(/Rápido salvo em \.orchestrator\/flows\/rapido\.json\./))).toBeDefined()
   expect(await ui.find(text(/Rápido usa o merge e o deploy daqui\./))).toBeDefined()
   expect(await ui.find({ key: 'cfg-add:rapido' })).toBeUndefined()
   await ui.unmount()
@@ -330,7 +330,7 @@ test('2.3 the action goes through the editor\'s own checks: a file that already 
   await ui.press({ key: 'cfg-open' })
   await ui.press({ key: 'cfg-add:rapido' })
   await ui.press({ key: 'cfg-confirm' })
-  expect(await ui.find(text(/^Não mexi em Rápido: já existe \.orquestrador\/flows\/rapido\.json com o id ou o nome rapido; nada foi gravado/))).toBeDefined()
+  expect(await ui.find(text(/^Não mexi em Rápido: já existe \.orchestrator\/flows\/rapido\.json com o id ou o nome rapido; nada foi gravado/))).toBeDefined()
   expect(w.disk.get(`${DIR}/rapido.json`)).toBe('{ not json')
   expect(w.toasts.some(x => x.startsWith('Não mexi em Rápido'))).toBe(true)
   await ui.unmount()
@@ -346,7 +346,7 @@ test('2.3 a workflow derived from another is taken back to the project the same 
   expect(await ui.find(text(/Outro tem o próprio valor no passo de merge \(branch release, manual\)/))).toBeDefined()
   await ui.press({ key: 'cfg-use:outro' })
   await ui.press({ key: 'cfg-confirm' })
-  expect(await ui.find(text(/Outro salvo em \.orquestrador\/flows\/outro\.json\./))).toBeDefined()
+  expect(await ui.find(text(/Outro salvo em \.orchestrator\/flows\/outro\.json\./))).toBeDefined()
   expect(json(w, `${DIR}/outro.json`)).toMatchObject({ id: 'outro', base: 'trunk' })
   expect(await ui.find(text(/Outro usa o merge e o deploy daqui\./))).toBeDefined()
   await ui.unmount()

@@ -1,5 +1,5 @@
 ---
-name: merge-pelo-workflow
+name: workflow-merge
 description: Faz o merge do PR da change quando o workflow aprovou (revisão de código do flow aprovada, portões finais passados, CI verde se houver), sem exigir aprovação no GitHub. Use no passo `merge`, quando é automático.
 model: sonnet
 tools: Read, Bash

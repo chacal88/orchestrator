@@ -1,4 +1,28 @@
+import type { EngineInterface } from 'claude-code'
+
 import type { ProjectDeploy, ProjectMerge, ProjectSettings } from '../types'
+
+/** The project's own folder, under its repository root. */
+export const PROJECT_DIR = '.orchestrator'
+/** The folder's name before 0.15.0, still read (and written) where the project has only it. */
+export const LEGACY_DIR = '.orquestrador'
+/** The project's settings file, inside its folder. */
+export const CONFIG_FILE = 'config.json'
+
+/** The project's folder: `dir` the absolute path, `name` the folder as a text names it, `legacy` when it is the old one. */
+export type ProjectDir = { dir: string; name: string; legacy: boolean }
+
+/**
+ * Where the project keeps its config, flows and agents: `.orchestrator/` when it exists, else the old
+ * one (`LEGACY_DIR`) when only that one does, else the new one. A write goes where the read went, so a
+ * project never ends up with half of its settings in each folder.
+ */
+export async function projectDir($: EngineInterface, root: string): Promise<ProjectDir> {
+  const fresh = { dir: `${root}/${PROJECT_DIR}`, name: PROJECT_DIR, legacy: false }
+  if (await $.fs.exists(fresh.dir)) return fresh
+  const old = `${root}/${LEGACY_DIR}`
+  return (await $.fs.exists(old)) ? { dir: old, name: LEGACY_DIR, legacy: true } : fresh
+}
 
 export const MERGE_METHODS = ['squash', 'merge', 'rebase'] as const
 /** The fields of each block, in the order the step records which of them came from the project. */

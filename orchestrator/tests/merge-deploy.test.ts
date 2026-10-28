@@ -370,12 +370,12 @@ describe('pendingCodeReview', () => {
     const none = reviewFlow([{ ...runStep, outcomes: { pronto: { next: 'merge' } } }])
     expect(pendingCodeReview({ ...parked(none, 'merge'), records: {} })).toBeUndefined()
 
-    const visual = reviewFlow([runStep, reviewStep({ id: 'review', agent: 'revisor-codigo', when: 'visual' })])
+    const visual = reviewFlow([runStep, reviewStep({ id: 'review', agent: 'code-reviewer', when: 'visual' })])
     const bare = { ...parked(visual, 'merge'), records: {} }
     expect(pendingCodeReview({ ...bare, traits: { ...bare.traits, visual: false } })).toBeUndefined()
     expect(pendingCodeReview({ ...bare, traits: { ...bare.traits, visual: true } })?.id).toBe('review')
 
-    const byAgent = reviewFlow([runStep, reviewStep({ id: 'review', agent: 'revisor-codigo' })])
+    const byAgent = reviewFlow([runStep, reviewStep({ id: 'review', agent: 'code-reviewer' })])
     expect(pendingCodeReview({ ...parked(byAgent, 'merge'), records: {} })?.id).toBe('review')
     const approved = { ...parked(byAgent, 'merge'), records: { review: { outcome: 'aprovado', by: 'session' as const, at: 2 } } }
     expect(pendingCodeReview(approved)).toBeUndefined()
@@ -387,9 +387,9 @@ describe('pendingCodeReview', () => {
   test('parseFlow refuses a code review step without the outcome aprovado, by agent or by id', () => {
     const bad = (extra: Record<string, unknown>) =>
       err(parseFlow({ id: 'x', title: 'X', steps: [{ title: 'R', kind: 'session', outcomes: { ok: { next: 'fim' } }, ...extra }] }, 'x.json'))
-    expect(bad({ id: 'review', agent: 'revisor-codigo' })).toMatch(/code review step declares the outcome aprovado/)
+    expect(bad({ id: 'review', agent: 'code-reviewer' })).toMatch(/code review step declares the outcome aprovado/)
     expect(bad({ id: 'revisao-codigo' })).toMatch(/code review step declares the outcome aprovado/)
-    expect(bad({ id: 'other', agent: 'planejador' })).toBe('')
+    expect(bad({ id: 'other', agent: 'planner' })).toBe('')
   })
 
   test('a rejection turns the flow back to run, and the record is gone until the review is approved again', () => {
@@ -404,7 +404,7 @@ describe('pendingCodeReview', () => {
 describe('the merge agents', () => {
   test('describeFlow says which approval the merge needs, by agent', () => {
     const workflow = trunk({ branch: 'main', auto: true })
-    const withAgent = { ...workflow, steps: workflow.steps.map(s => (s.id === 'merge' ? { ...s, agent: 'merge-pelo-workflow' } : s)) }
+    const withAgent = { ...workflow, steps: workflow.steps.map(s => (s.id === 'merge' ? { ...s, agent: 'workflow-merge' } : s)) }
     const text = describeFlow(parked(withAgent, 'merge'))
     expect(text).toContain("on the workflow's own approval")
     expect(text).toContain('GitHub approval is not required')

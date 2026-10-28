@@ -1,6 +1,6 @@
 ---
-name: planejador
-description: Escreve o plano da change: proposta, design e tarefas. Use no passo `planejar` do workflow.
+name: planner
+description: "Escreve o plano da change: proposta, design e tarefas. Use no passo `planejar` do workflow."
 model: opus
 tools: Read, Write, Edit, Glob, Grep, Bash
 ---

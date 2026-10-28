@@ -36,10 +36,10 @@ describe('parseFlow: describing a step', () => {
   const parse = (s: Record<string, unknown>) => parseFlow({ id: 'x', title: 'X', steps: [s] }, 'x.json')
 
   test('details, agent, model and effort are kept', () => {
-    const flow = ok(parse(step({ details: { inputs: 'O diff', blocks: 'Rejeitado volta' }, outcomes: { aprovado: 'fim' }, agent: 'revisor-codigo', model: 'claude-opus-5-5', effort: 'high' })))
+    const flow = ok(parse(step({ details: { inputs: 'O diff', blocks: 'Rejeitado volta' }, outcomes: { aprovado: 'fim' }, agent: 'code-reviewer', model: 'claude-opus-5-5', effort: 'high' })))
     expect(flow.steps[0]).toMatchObject({
       details: { inputs: 'O diff', blocks: 'Rejeitado volta' },
-      agent: 'revisor-codigo',
+      agent: 'code-reviewer',
       model: 'claude-opus-5-5',
       effort: 'high',
     })
@@ -50,7 +50,7 @@ describe('parseFlow: describing a step', () => {
       'x.json: step "a": `agent` goes only on a session or loop step, or on a merge or deploy step.',
     )
     expect(err(parse(step({ kind: 'automatic', command: 'c', outcomes: { passou: 'fim', falhou: 'a' }, agent: 'x' })))).toMatch(/only on a session/)
-    expect(err(parse(step({ kind: 'loop', outcomes: { concluidas: 'fim' }, agent: 'publicador' })))).toBe('')
+    expect(err(parse(step({ kind: 'loop', outcomes: { concluidas: 'fim' }, agent: 'publisher' })))).toBe('')
     expect(err(parse(step({ kind: 'owner', agent: 'merge', merge: { branch: 'main' } })))).toBe('')
   })
 
@@ -92,11 +92,11 @@ describe('the default flows describe their steps', () => {
       expect(flow.steps.filter(s => s.kind === 'session' && s.agent === undefined)).toEqual([])
     }
     expect(Object.fromEntries(parsed.completo!.steps.filter(s => s.agent).map(s => [s.id, s.agent]))).toEqual({
-      planejar: 'planejador',
-      'revisao-plano': 'revisor-plano',
+      planejar: 'planner',
+      'revisao-plano': 'plan-reviewer',
       executar: 'executor',
-      'revisao-codigo': 'revisor-codigo',
-      pr: 'abre-pr',
+      'revisao-codigo': 'code-reviewer',
+      pr: 'pr-opener',
     })
   })
 })
@@ -137,7 +137,7 @@ describe('resolveFlow', () => {
     expect(wiring(trunk)).toContain('deploy.passou→producao')
     expect(at(trunk, 'merge')).toMatchObject({ kind: 'automatic', command: 'gh pr merge', agent: 'merge', title: 'Merge em main', merge: { branch: 'main', method: 'squash', auto: true } })
     expect(at(trunk, 'deploy')).toMatchObject({ kind: 'automatic', agent: 'deploy', deploy: { ci: true, commands: ['npm run migrate:prod'], auto: true } })
-    expect(at(trunk, 'revisao-codigo')).toMatchObject({ model: 'claude-sonnet-5-5', agent: 'revisor-codigo', effort: 'high' })
+    expect(at(trunk, 'revisao-codigo')).toMatchObject({ model: 'claude-sonnet-5-5', agent: 'code-reviewer', effort: 'high' })
   })
 
   test('remove rewires through a chain of removed steps', () => {
@@ -225,7 +225,7 @@ describe('resolveFlow', () => {
 
     test('a library step that does not exist, and a resolved flow parseFlow refuses', () => {
       expect(err(resolve({ id: 'x', title: 'X', base: 'rapido', add: [{ after: 'pr', step: 'nada' }] }))).toMatch(/"nada" is no step of the library/)
-      expect(err(resolve({ id: 'x', title: 'X', base: 'rapido', override: { pr: { agent: 'abre-pr', effort: 'huge' } } }))).toMatch(
+      expect(err(resolve({ id: 'x', title: 'X', base: 'rapido', override: { pr: { agent: 'pr-opener', effort: 'huge' } } }))).toMatch(
         /^p.json: step "pr": `effort` must be one of/,
       )
     })

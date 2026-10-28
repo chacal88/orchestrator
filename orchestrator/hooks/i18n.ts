@@ -1,12 +1,12 @@
 import type { EvidenceState, GateState, Lang, Languages, Localized, PhaseStatus, ProjectSettings } from '../types'
-import { parseProjectBlocks } from './project-config'
+import { CONFIG_FILE, PROJECT_DIR, parseProjectBlocks } from './project-config'
 
 export const LANGS: readonly Lang[] = ['pt-BR', 'en']
 export const DEFAULT_LANG: Lang = 'pt-BR'
 export const DEFAULT_LANGUAGES: Languages = { ui: DEFAULT_LANG, content: DEFAULT_LANG }
 
-/** Where a project sets its languages, under its repository root. */
-export const CONFIG_PATH = '.orquestrador/config.json'
+/** Where a new project sets its languages, under its repository root; an old one keeps its own folder. */
+export const CONFIG_PATH = `${PROJECT_DIR}/${CONFIG_FILE}`
 
 const isRecord = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v)
 const isLang = (v: unknown): v is Lang => typeof v === 'string' && (LANGS as readonly string[]).includes(v)
@@ -72,11 +72,14 @@ const readConfig = (text: string | undefined, path: string): ConfigRead => {
 }
 
 /**
- * The project's `.orquestrador/config.json`, already read: its languages and its merge and deploy
- * defaults. A file that is not JSON, or a value that is wrong, is named in `problems` and left out.
+ * The project's `config.json`, already read: its languages and its merge and deploy defaults. A file
+ * that is not JSON, or a value that is wrong, is named in `problems` (under `path`) and left out.
  */
-export const parseConfig = (text: string | undefined): { languages: Languages; project: ProjectSettings; problems: string[] } => {
-  const read = readConfig(text, CONFIG_PATH)
+export const parseConfig = (
+  text: string | undefined,
+  path: string = CONFIG_PATH,
+): { languages: Languages; project: ProjectSettings; problems: string[] } => {
+  const read = readConfig(text, path)
   return {
     languages: { ui: read.ui ?? DEFAULT_LANG, content: read.content ?? DEFAULT_LANG },
     project: read.settings,

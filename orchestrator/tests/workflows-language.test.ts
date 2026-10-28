@@ -14,7 +14,7 @@ const EN_UI = JSON.stringify({ language: { ui: 'en', content: 'pt-BR' } })
 const world = (on: On): Map<string, string> => {
   mock.store(on)
   const disk = new Map<string, string>()
-  const plugin = ['planejador', 'executor', 'revisor-codigo', 'abre-pr', 'merge', 'deploy']
+  const plugin = ['planner', 'executor', 'code-reviewer', 'pr-opener', 'merge', 'deploy']
   on('env.get', () => ({ value: '/h' }))
   let now = 1_000
   on('clock.now', () => ({ value: (now += 1_000) }))

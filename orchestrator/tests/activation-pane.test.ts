@@ -15,7 +15,7 @@ type World = { disk: Map<string, string>; panes: { id: string; title: string }[]
 const world = (on: On): World => {
   mock.store(on)
   const w: World = { disk: new Map(), panes: [], toasts: [] }
-  const plugin = ['planejador', 'executor', 'revisor-codigo', 'abre-pr', 'merge', 'deploy']
+  const plugin = ['planner', 'executor', 'code-reviewer', 'pr-opener', 'merge', 'deploy']
   on('env.get', () => ({ value: '/h' }))
   let now = 1_000
   on('clock.now', () => ({ value: (now += 1_000) }))
@@ -130,7 +130,7 @@ test('2.1 "Ativar" writes the mark and the hook, keeps the rest of the file, and
   expect(file.permissions).toEqual(OTHER.permissions)
   expect(file.hooks.Stop).toEqual(OTHER.hooks.Stop)
   expect(file.hooks.SessionStart).toHaveLength(1)
-  expect(file.hooks.SessionStart[0]?.hooks[0]?.command).toContain('orquestrador:ativar')
+  expect(file.hooks.SessionStart[0]?.hooks[0]?.command).toContain('orchestrator:activate')
   expect(await ui.find(text(/^ativo neste clone · lembrar$/))).toBeDefined()
   expect(await ui.find(text(/^Orquestrador ativado neste clone \(lembrar\)\.$/))).toBeDefined()
   expect(await ui.find({ key: 'act-open' })).toBeUndefined()

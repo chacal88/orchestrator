@@ -41,10 +41,10 @@ const flow = ($: Engine, input: Record<string, unknown>) =>
 const status = async ($: Engine) => String((await flow($, { action: 'status' })).result)
 
 test('status names the plugin agent, with its path, model, effort and details', async ($, on) => {
-  world(on, ['planejador'])
+  world(on, ['planner'])
   await flow($, { action: 'start', change: 'demo', flow: 'rapido' })
   const text = await status($)
-  expect(text).toMatch(/Agente: "planejador" \(do plugin\)\. Instruções do agente: \S+\/agents\/planejador\.md/)
+  expect(text).toMatch(/Agente: "planner" \(do plugin\)\. Instruções do agente: \S+\/agents\/planner\.md/)
   expect(text).toMatch(/Modelo: claude-opus-5-5/)
   expect(text).toMatch(/Esforço: high/)
   expect(text).toMatch(/Entrada: O pedido do dono/)
@@ -53,20 +53,66 @@ test('status names the plugin agent, with its path, model, effort and details', 
 })
 
 test("the project's agent wins over the plugin's", async ($, on) => {
-  const disk = world(on, ['planejador'])
-  disk.set('/w/.orquestrador/agents/planejador.md', '# meu planejador')
+  const disk = world(on, ['planner'])
+  disk.set('/w/.orchestrator/agents/planner.md', '# meu planner')
   await flow($, { action: 'start', change: 'demo', flow: 'rapido' })
   const text = await status($)
-  expect(text).toMatch(/\(do projeto\)\. Instruções do agente: \/w\/\.orquestrador\/agents\/planejador\.md/)
+  expect(text).toMatch(/\(do projeto\)\. Instruções do agente: \/w\/\.orchestrator\/agents\/planner\.md/)
   expect(text).not.toMatch(/do plugin/)
 })
 
-test('an agent no file holds is said so, without an error', async ($, on) => {
-  world(on)
+test('2.3 a project agent under the old name (.orquestrador/agents/planejador.md) is the one a flow asking for planner gets', async ($, on) => {
+  const disk = world(on, ['planner'])
+  disk.set('/w/.orquestrador/agents/planejador.md', '# meu planejador')
+  await flow($, { action: 'start', change: 'demo', flow: 'rapido' })
+  const text = await status($)
+  expect(text).toMatch(/Agente: "planner" \(do projeto\)\. Instruções do agente: \/w\/\.orquestrador\/agents\/planejador\.md/)
+  expect(text).not.toMatch(/do plugin/)
+})
+
+test('2.3 with planner.md and planejador.md in the project, planner.md wins', async ($, on) => {
+  const disk = world(on, ['planner'])
+  disk.set('/w/.orchestrator/agents/planejador.md', '# o antigo')
+  disk.set('/w/.orchestrator/agents/planner.md', '# o novo')
+  await flow($, { action: 'start', change: 'demo', flow: 'rapido' })
+  expect(await status($)).toMatch(/\(do projeto\)\. Instruções do agente: \/w\/\.orchestrator\/agents\/planner\.md/)
+})
+
+test("2.3 with neither in the project, the plugin's agent comes", async ($, on) => {
+  const disk = world(on, ['planner'])
+  disk.set('/w/.orchestrator/agents/outro.md', '# outro agente')
+  await flow($, { action: 'start', change: 'demo', flow: 'rapido' })
+  const text = await status($)
+  expect(text).toMatch(/Agente: "planner" \(do plugin\)\. Instruções do agente: \S+\/agents\/planner\.md/)
+  expect(text).not.toMatch(/do projeto/)
+})
+
+test('an agent no file holds is said so, without an error, naming the folder the project uses', async ($, on) => {
+  const disk = world(on)
   await flow($, { action: 'start', change: 'demo', flow: 'rapido' })
   const reply = await flow($, { action: 'status' })
   expect(reply.isError).toBeUndefined()
-  expect(String(reply.result)).toMatch(/Agente: "planejador" — nenhum arquivo encontrado/)
+  expect(String(reply.result)).toMatch(/Agente: "planner" — nenhum arquivo encontrado \(nem \.orchestrator\/agents\/planner\.md no projeto/)
+  disk.set('/w/.orquestrador/config.json', '{}')
+  expect(await status($)).toMatch(/nem \.orquestrador\/agents\/planner\.md no projeto/)
+})
+
+test('2.2 a flow going since 0.14.1, with "revisor-codigo" in its saved state, reads as code-reviewer by change and in the list', async ($, on) => {
+  const disk = world(on, ['code-reviewer'])
+  await flow($, { action: 'start', change: 'demo', flow: 'rapido' })
+  const path = [...disk.keys()].find(k => k.endsWith('/flows/demo.json'))!
+  const saved = JSON.parse(disk.get(path)!) as { current: string; flow: { steps: { id: string; agent?: string }[] } }
+  saved.current = 'revisao-codigo'
+  for (const step of saved.flow.steps) if (step.id === 'revisao-codigo') step.agent = 'revisor-codigo'
+  disk.set(path, JSON.stringify(saved))
+  // by change: loadFlowState
+  const byChange = String((await flow($, { action: 'status', change: 'demo' })).result)
+  expect(byChange).toMatch(/Agente: "code-reviewer" \(do plugin\)/)
+  expect(byChange).not.toMatch(/revisor-codigo/)
+  // with no change named: the list of every flow, allFlowStates
+  const listed = await status($)
+  expect(listed).toMatch(/Agente: "code-reviewer" \(do plugin\)/)
+  expect(listed).not.toMatch(/revisor-codigo/)
 })
 
 test('a step with no agent says no agent, and an owner step carries none', async ($, on) => {

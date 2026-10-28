@@ -51,7 +51,8 @@ import {
 } from './workflow-edit'
 import type { StepField } from './workflow-edit'
 import type { FlowSource } from './flow'
-import { CONFIG_PATH, DEFAULT_LANGUAGES, localize, parseLocalized } from './i18n'
+import { DEFAULT_LANGUAGES, localize, parseLocalized } from './i18n'
+import { CONFIG_FILE, PROJECT_DIR } from './project-config'
 import { workflowsText } from './i18n-workflows'
 import {
   applyConfigChange,
@@ -186,6 +187,8 @@ export type WorkflowsView = {
   config?: ConfigView
   /** The project's languages: `ui` for the pane's words and titles, `content` for descriptions and details; absent, pt-BR. */
   languages?: Languages
+  /** The project's folder as the texts name it (`.orchestrator`), and whether it is the old one; absent, the new one. */
+  folder?: { name: string; legacy: boolean }
 }
 
 export type WorkflowsActions = {
@@ -276,7 +279,7 @@ const problemParts = (t: WorkflowsText, problem: string): { file: string; what: 
   const at = problem.indexOf(': ')
   const path = at === -1 ? problem : problem.slice(0, at)
   const what = at === -1 ? '' : problem.slice(at + 2)
-  const file = path.includes('.orquestrador/flows/') ? path.slice(path.indexOf('.orquestrador/flows/') + '.orquestrador/flows/'.length) : path
+  const file = path.includes('/flows/') ? path.slice(path.lastIndexOf('/flows/') + '/flows/'.length) : path
   return { file, what: what === 'not valid JSON.' ? t.invalidJson : what }
 }
 
@@ -286,6 +289,7 @@ export const renderWorkflows = (els: WorkflowsElements, view: WorkflowsView, act
   const ui = languages.ui
   const content = languages.content
   const t = workflowsText(ui)
+  const folder = view.folder?.name ?? PROJECT_DIR
   const yes = (b: boolean | undefined) => yesNo(t, b)
   const title = (s: StepLike) => titleOf(s, ui)
   const fields = Input !== undefined && Select !== undefined
@@ -773,7 +777,7 @@ export const renderWorkflows = (els: WorkflowsElements, view: WorkflowsView, act
       if (asked !== null) {
         actions$.push(
           line(
-            (asked.what === 'add' ? W.confirmAdd(name, missingNames) : W.confirmUse(name)) + (replaces ? W.replacesDefault(state.id) : ''),
+            (asked.what === 'add' ? W.confirmAdd(name, missingNames) : W.confirmUse(name)) + (replaces ? W.replacesDefault(state.id, folder) : ''),
           ),
           buttons(
             <Button key="cfg-confirm" variant="primary" onPress={actions.confirm}>
@@ -872,7 +876,7 @@ export const renderWorkflows = (els: WorkflowsElements, view: WorkflowsView, act
         </Box>
         {c.error === undefined ? [] : box([line(E.notSaved(c.error), ERROR)], ERROR)}
         <Box marginTop={1} minWidth={0}>
-          {help(E.about)}
+          {help(E.about(folder))}
         </Box>
         <Box flexDirection="column" rowGap={1} marginTop={1} minWidth={0}>
           {label(E.language)}
@@ -981,7 +985,7 @@ export const renderWorkflows = (els: WorkflowsElements, view: WorkflowsView, act
         {d.error === undefined ? [] : box([line(t.edit.notSaved(d.error), ERROR)], ERROR)}
         {d.base === undefined ? [] : help(t.edit.derived(d.base))}
         {d.replacesDefault
-          ? box([line(t.edit.replacesDefault(d.id), WARN)], WARN)
+          ? box([line(t.edit.replacesDefault(d.id, folder), WARN)], WARN)
           : []}
         {help(t.edit.runningKeep)}
         {fields
@@ -1186,6 +1190,7 @@ export const renderWorkflows = (els: WorkflowsElements, view: WorkflowsView, act
           {line$('merge', P.mergeSummary(merge.branch, merge.method), merge.auto ? P.mergeWho.auto : P.mergeWho.owner)}
           {line$('deploy', P.deploySummary(deploy.ci, deploy.commands), deploy.auto ? P.deployWho.auto : P.deployWho.owner)}
           <Text size="caption" color={MUTED} wrap="wrap">{P.applies}</Text>
+          {view.folder?.legacy === true ? <Text key="cfg-legacy" size="footnote" color={WARN} wrap="wrap">{P.legacyFolder}</Text> : []}
           {c.problems.length === 0 ? [] : box(c.problems.map(p => line(p, ERROR)), ERROR)}
           {buttons(
             ...(level === undefined && ask === null && !invalid
@@ -1252,7 +1257,7 @@ export const renderWorkflows = (els: WorkflowsElements, view: WorkflowsView, act
                     const { file, what } = problemParts(t, p)
                     return line(`${file} — ${what}`, ERROR)
                   }),
-                  help(t.list.problemsHelp),
+                  help(t.list.problemsHelp(folder)),
                 ],
                 ERROR,
               )}
@@ -1371,6 +1376,7 @@ export async function drawWorkflows(
     agentList: await listAgents($),
     narrow: columns < NARROW_COLUMNS,
     languages,
+    folder: { name: loaded.config.folder.name, legacy: loaded.config.folder.legacy },
     config: {
       project,
       problems: loaded.config.problems,
@@ -1487,7 +1493,7 @@ export async function drawWorkflows(
         return
       }
       const base = forms$.newBase === '' ? undefined : loaded.flows[forms$.newBase]
-      void takenBy($, loaded.files, loaded.dir, id)
+      void takenBy($, loaded.files, loaded.dir, loaded.name, id)
         .then(taken => {
           if (taken !== undefined) {
             $.ui.toast(t.toast.taken(taken, id))
@@ -1593,12 +1599,12 @@ async function writeDraft(
   t: WorkflowsText,
   draft: WorkflowDraft,
 ): Promise<{ error: string } | { relative: string; target: string; notice?: string; unchanged?: true }> {
-  const { files, dir, config } = await loadFlows($)
-  const relative = (path: string) => `.orquestrador/flows/${path.slice(dir.length + 1)}`
+  const { files, dir, name, config } = await loadFlows($)
+  const relative = (path: string) => `${name}/${path.slice(dir.length + 1)}`
   // only the file the draft was opened from may be written over; any other of the same id or name stays
   const target = draft.source ?? `${dir}/${draft.id}.json`
   if (draft.source === undefined) {
-    const taken = await takenBy($, files, dir, draft.id)
+    const taken = await takenBy($, files, dir, name, draft.id)
     if (taken !== undefined) return { error: t.saved.taken(taken, draft.id) }
   }
   // the file as the owner wrote it: what the draft did not change is written back as it was
@@ -1608,7 +1614,7 @@ async function writeDraft(
   if (original !== undefined && sameFile(result.raw, original)) return { relative: relative(target), target, unchanged: true }
   const broken = brokenDependents(DEFAULT_FLOWS, files, target, result.raw, config.project)
   if (broken.length > 0) {
-    const named = broken.map(p => p.split(`${dir}/`).join('.orquestrador/flows/'))
+    const named = broken.map(p => p.split(`${dir}/`).join(`${name}/`))
     return { error: t.saved.broken(draft.id, named.join(' ')) }
   }
   await $.fs.write(target, `${JSON.stringify(result.raw, null, 2)}\n`)
@@ -1654,13 +1660,13 @@ async function saveConfig($: EngineInterface, t: WorkflowsText): Promise<void> {
     return
   }
   const config = await loadConfig($)
-  const next = configText(config.text, draft, t)
+  const next = configText(config.text, draft, t, config.folder.name)
   if ('error' in next) {
     await refuse(next.error)
     return
   }
-  await $.fs.write(`${await $.session.root()}/${CONFIG_PATH}`, next.text)
-  await Promise.all([$.state.set(CFG, null), $.state.set(ASK, null), noticeOf($, t.project.edit.saved)])
+  await $.fs.write(`${config.folder.dir}/${CONFIG_FILE}`, next.text)
+  await Promise.all([$.state.set(CFG, null), $.state.set(ASK, null), noticeOf($, t.project.edit.saved(config.folder.name))])
 }
 
 /** Writes the clone's activation (or takes it back) and says what happened: the file is the owner's, so a broken one is left as it is. */
@@ -1698,8 +1704,8 @@ const sameFile = (a: unknown, b: unknown): boolean => {
 }
 
 /** The project file, as the owner reads its path, that already holds `id`: by its id, or by its name `<id>.json`, valid or broken. */
-async function takenBy($: EngineInterface, files: readonly FlowSource[], dir: string, id: string): Promise<string | undefined> {
+async function takenBy($: EngineInterface, files: readonly FlowSource[], dir: string, name: string, id: string): Promise<string | undefined> {
   const named = `${dir}/${id}.json`
   const path = files.find(f => idOf(f.raw) === id)?.source ?? ((await $.fs.exists(named)) ? named : undefined)
-  return path === undefined ? undefined : `.orquestrador/flows/${path.slice(dir.length + 1)}`
+  return path === undefined ? undefined : `${name}/${path.slice(dir.length + 1)}`
 }

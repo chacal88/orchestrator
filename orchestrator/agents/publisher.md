@@ -1,5 +1,5 @@
 ---
-name: publicador
+name: publisher
 description: Publica o repositório da change no GitHub (cria o repositório e envia o código). Use no passo `publicar` do workflow rápido.
 model: sonnet
 tools: Read, Bash, Glob, Grep

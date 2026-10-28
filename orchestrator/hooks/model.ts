@@ -216,9 +216,9 @@ export const changePrs = (
   cards: readonly SessionCard[],
 ): { numbers: Set<number>; branches: Set<string> } => {
   const sessions = phaseViews(run, cards).flatMap(phases => phases.flatMap(p => (p.card === undefined ? [] : [p.card])))
-  // the step that opens the PR is the one that cites it: by id (pr, merge) or by agent (abre-pr, publicador)
+  // the step that opens the PR is the one that cites it: by id (pr, merge) or by agent (pr-opener, publisher)
   const prSteps = (flow?.flow.steps ?? []).filter(
-    s => /^(pr|merge)$/i.test(s.id) || s.agent === 'abre-pr' || s.agent === 'publicador',
+    s => /^(pr|merge)$/i.test(s.id) || s.agent === 'pr-opener' || s.agent === 'publisher',
   )
   const numbers = [
     ...sessions.flatMap(c => (c.prNumber === undefined ? [] : [c.prNumber])),

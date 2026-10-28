@@ -1,5 +1,5 @@
 ---
-name: abre-pr
+name: pr-opener
 description: Abre o PR da change com resumo e evidência. Use no passo `pr`.
 model: sonnet
 tools: Read, Bash, Glob, Grep

@@ -30,7 +30,7 @@ const RAPIDO = {
   add: [
     { after: 'revisao-codigo', step: gate('lint', 'Lint', 'npm run lint') },
     { after: 'lint', step: gate('tipos', 'Tipos', 'npm run typecheck') },
-    { after: 'pr', step: { use: 'merge', agent: 'merge-pelo-workflow' } },
+    { after: 'pr', step: { use: 'merge', agent: 'workflow-merge' } },
     { after: 'merge', step: { use: 'deploy' } },
   ],
   override: {
@@ -58,7 +58,7 @@ describe('instalar: the files the skill writes load in the mod', () => {
     expect(step(flow, 'tipos').outcomes.falhou?.next).toBe('executar')
     expect(step(flow, 'checagem').command).toBe('npm test')
     const merge = step(flow, 'merge')
-    expect([merge.kind, merge.agent, merge.merge?.branch, merge.merge?.method]).toEqual(['automatic', 'merge-pelo-workflow', 'main', 'squash'])
+    expect([merge.kind, merge.agent, merge.merge?.branch, merge.merge?.method]).toEqual(['automatic', 'workflow-merge', 'main', 'squash'])
     expect([step(flow, 'deploy').kind, step(flow, 'deploy').deploy?.ci]).toEqual(['automatic', true])
   })
 

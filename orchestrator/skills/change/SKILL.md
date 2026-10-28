@@ -1,6 +1,6 @@
 ---
-name: change-orchestrator
-description: Orquestra uma change (OpenSpec ou qualquer lista de tarefas) do entendimento ao arquivamento, seguindo o flow declarado no mod orquestrador (grill → mockup → plano → validação → revisão → liberação do dono → fases → revisão de código → checagem → PR → QA → produção → arquivo). Pergunta ao mod qual é o próximo passo, dispara uma sessão por fase em ondas, agrupa na sidebar com ícones, acompanha as sessões e resolve sozinho tudo que não exige o dono — pergunta ao usuário só o que é realmente dele. Use quando o usuário pedir "orquestrar", "fan-out", "dividir a change em sessões", "spawn tasks da change", ou ao rodar apply de uma change com mais de ~8 tarefas.
+name: change
+description: Orquestra uma change (OpenSpec ou qualquer lista de tarefas) do entendimento ao arquivamento, seguindo o flow declarado no mod orchestrator (grill → mockup → plano → validação → revisão → liberação do dono → fases → revisão de código → checagem → PR → QA → produção → arquivo). Pergunta ao mod qual é o próximo passo, dispara uma sessão por fase em ondas, agrupa na sidebar com ícones, acompanha as sessões e resolve sozinho tudo que não exige o dono — pergunta ao usuário só o que é realmente dele. Use quando o usuário pedir "orquestrar", "fan-out", "dividir a change em sessões", "spawn tasks da change", ou ao rodar apply de uma change com mais de ~8 tarefas.
 ---
 
 # Orquestrador de change
@@ -9,8 +9,8 @@ Você é o **coordenador**: não implementa fases, despacha e destrava. **Quem d
 próximo passo é o flow do mod**, não você. O usuário só é chamado para o que é dele
 (ver § 7).
 
-Ferramentas do mod (carregue via ToolSearch): `mcp__orquestrador__flow` e
-`mcp__orquestrador__plano`. Sem o mod carregado, avise o dono e pare; não improvise o flow.
+Ferramentas do mod (carregue via ToolSearch): `mcp__orchestrator__flow` e
+`mcp__orchestrator__plan`. Sem o mod carregado, avise o dono e pare; não improvise o flow.
 
 ## 1. Começar o flow
 
@@ -22,7 +22,7 @@ Ferramentas do mod (carregue via ToolSearch): `mcp__orquestrador__flow` e
 
 1. **Antes do `flow start`, mostre sempre ao dono os workflows de `flow list`**: de cada um,
    título, descrição e passos, numa pergunta só, com a sua recomendação. Nunca escolha
-   sozinha, nem quando só há um. Os do projeto (`.orquestrador/flows/`) valem mais que os
+   sozinha, nem quando só há um. Os do projeto (`.orchestrator/flows/`) valem mais que os
    padrões. Para a recomendação:
    - `completo` — feature, tela nova, mudança grande, arquitetural ou irreversível.
    - `rapido` — correção pequena e reversível (sem grill, mockup nem liberação).
@@ -44,7 +44,7 @@ A cada acionamento (mensagem de fase, fim de sessão, clique do dono, tick):
    - **Automático** (`validar` = `openspec validate`, `checagem` = `scripts/check.sh` com
      `evidence.md` preenchido, `arquivar` = `openspec archive`) → rode o comando numa
      sessão; o mod observa o código de saída e avança. **Nunca** informe esse passo.
-   - **Dono** → **nunca** responda. Aponte o botão no painel (`/orquestrador`) e espere:
+   - **Dono** → **nunca** responda. Aponte o botão no painel (`/orchestrator:panel`) e espere:
      termine o turno com `ScheduleWakeup` longo (1200 s ou mais) como reserva e, quando ele
      disparar, confira `flow status`.
 3. O mod recusa pular etapa ou informar passo que não é o atual; diante de uma recusa,
@@ -53,7 +53,7 @@ A cada acionamento (mensagem de fase, fim de sessão, clique do dono, tick):
 **Agente do passo.** Cada passo de sessão (e o laço `executar`) nomeia um agente, com
 `model` e `effort`. Despache assim: o **corpo** do agente vai no prompt da sessão (ele traz
 papel, o que ler, critério de pronto e o que nunca fazer); o agente do projeto em
-`.orquestrador/agents/<nome>.md` **vence** o do plugin (`agents/<nome>.md` na raiz do plugin, `${CLAUDE_PLUGIN_ROOT}`); e o
+`.orchestrator/agents/<nome>.md` **vence** o do plugin (`agents/<nome>.md` na raiz do plugin, `${CLAUDE_PLUGIN_ROOT}`); e o
 modelo e o esforço do passo valem (`set_session_model` / `set_session_effort`), no lugar da
 tabela do § 4. Passo sem agente declarado segue o prompt autocontido do § 4.
 
@@ -77,15 +77,15 @@ sessão usa o modelo e o esforço do passo. Um passo `session` nunca é feito na
   corrente; dali em diante o app recusa toda sessão até o dono escrever de novo. Se recusar,
   registre as sessões recusadas com `flow pending` (ação `pending` do `flow`, com `sessions`, o
   mesmo prompt e sem `wake_when_done`; uma `key` repetida troca a anterior) e diga ao dono, numa
-  linha, para apertar "Abrir as N sessões pendentes" no painel ou rodar `/orquestrador abrir`.
+  linha, para apertar "Abrir as N sessões pendentes" no painel ou rodar `/orchestrator:open`.
   O mod abre todas de uma vez com `wake_when_done`, então espere o aviso de cada uma. Pelo Remote
   Control o app só abre sessão a partir de mensagem digitada no desktop; a resposta do comando
   diz isso ao dono. O cartão (`own_initiative`) fica só para quando o mod não está disponível.
   Nunca faça o passo no lugar da filha.
 
-**Passos do dono por texto.** Além dos botões, o dono responde com `/orquestrador aprovar
-<resultado> [nota]` (igual ao clique) e encerra o flow com `/orquestrador encerrar [motivo]
-confirmar`. Não existe `liberar`: a liberação segue pelo plan mode. Só o dono digitando vale;
+**Passos do dono por texto.** Além dos botões, o dono segue em frente com
+`/orchestrator:approve [nota]` (igual ao clique), pede ajustes com `/orchestrator:reject [nota]`
+e encerra o flow com `/orchestrator:end [motivo]`. Não existe `liberar`: a liberação segue pelo plan mode. Só o dono digitando vale;
 sessão nenhuma usa esses comandos no lugar dele.
 
 **Clique do dono acorda você.** Quando o dono aperta um botão do flow e o próximo passo é
@@ -235,10 +235,10 @@ diagnóstico pronto ao dono.
    turno com `ScheduleWakeup` longo (1200 s ou mais) e confira `flow status` quando disparar.
    Com "Seguir o flow sem clique" ligada, o painel também acorda você a cada fim de turno de
    uma filha que o app não acompanha (§ 2); esse aviso não é turno do dono. Sessão que o app
-   recusar vai para `flow pending`, e o dono abre com o botão ou `/orquestrador abrir`.
+   recusar vai para `flow pending`, e o dono abre com o botão ou `/orchestrator:open`.
 3. **Ledger.** `<changeRoot>/orchestration.md` (fase, ícone, sessão, branch, estado,
    próximo passo) atualizado a cada transição, para qualquer sessão retomar.
-4. **Painel.** Publique com `plano` logo após montar as ondas e a cada transição:
+4. **Painel.** Publique com `plan` logo após montar as ondas e a cada transição:
    `change`, `changePath`, ondas (`summary`) e fases (`id`, `title`, `icon`, `tasks` =
    números do `tasks.md`, `status`, `session`, `dependsOn`, `gates`, `note`, `summary`),
    `finalGates`, `ownerQuestions` `{question, recommendation, session?, pr?, gate?}` e `jira`
@@ -248,7 +248,8 @@ diagnóstico pronto ao dono.
    `summary`, `note` e perguntas são para o dono: linguagem simples, o efeito para ele,
    sem arquivo, versão ou sigla. Escreva-os, e também proposta, design, tarefas e
    perguntas do grill, no idioma `content` do projeto, que as respostas de `flow start`,
-   `flow status` e `plano` informam (`.orquestrador/config.json`; sem ele, pt-BR). "Aceitar
+   `flow status` e `plan` informam (`.orchestrator/config.json`, ou o da pasta antiga
+   `.orquestrador/`, que o mod ainda lê; sem ele, pt-BR). "Aceitar
    recomendação" chega como mensagem dele: siga com ela.
 5. **Jira.** Quando o passo pede mudança de estado, o painel avisa; a issue só se move
    no botão **"Mover no Jira"** do dono.

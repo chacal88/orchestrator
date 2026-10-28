@@ -1,4 +1,4 @@
-/** The mod's default "completo" flow, in both languages, written as the JSON a project's `.orquestrador/flows/completo.json` would hold. */
+/** The mod's default "completo" flow, in both languages, written as the JSON a project's `.orchestrator/flows/completo.json` would hold. */
 export const completo: unknown = {
   "id": "completo",
   "title": { "pt-BR": "Completo", "en": "Full" },
@@ -29,7 +29,7 @@ export const completo: unknown = {
       "title": { "pt-BR": "Planejar OpenSpec", "en": "Plan OpenSpec" },
       "description": { "pt-BR": "Uma sessão escreve proposta, design e tarefas da change.", "en": "A session writes the change's proposal, design and tasks." },
       "kind": "session",
-      "agent": "planejador",
+      "agent": "planner",
       "model": "claude-opus-5-5",
       "effort": "high",
       "details": { "inputs": { "pt-BR": "O entendimento (grill.md) e, se houver, o mockup aprovado.", "en": "The understanding (grill.md) and, if any, the approved mockup." }, "produces": { "pt-BR": "proposal.md, design.md e tasks.md da change.", "en": "The change's proposal.md, design.md and tasks.md." }, "blocks": { "pt-BR": "Sem plano escrito, não há validação.", "en": "Without a written plan, there is no validation." } },
@@ -52,7 +52,7 @@ export const completo: unknown = {
       "title": { "pt-BR": "Revisão do plano", "en": "Plan review" },
       "description": { "pt-BR": "Revisores conferem o plano contra as regras e as specs.", "en": "Reviewers check the plan against the rules and the specs." },
       "kind": "session",
-      "agent": "revisor-plano",
+      "agent": "plan-reviewer",
       "model": "claude-opus-5-5",
       "effort": "high",
       "details": { "inputs": { "pt-BR": "O plano validado, as regras do repositório e as specs.", "en": "The validated plan, the repository's rules and the specs." }, "produces": { "pt-BR": "Veredito aprovado/rejeitado com os achados.", "en": "An approved/rejected verdict with the findings." }, "blocks": { "pt-BR": "Rejeitado volta ao planejar.", "en": "Rejected goes back to planning." } },
@@ -87,7 +87,7 @@ export const completo: unknown = {
       "title": { "pt-BR": "Revisão de código", "en": "Code review" },
       "description": { "pt-BR": "Revisores conferem o código entregue.", "en": "Reviewers check the delivered code." },
       "kind": "session",
-      "agent": "revisor-codigo",
+      "agent": "code-reviewer",
       "model": "claude-opus-5-5",
       "effort": "high",
       "details": { "inputs": { "pt-BR": "O diff da change e o tasks.md marcado.", "en": "The change's diff and the ticked tasks.md." }, "produces": { "pt-BR": "Veredito aprovado/rejeitado com achados por arquivo:linha.", "en": "An approved/rejected verdict with findings by file:line." }, "blocks": { "pt-BR": "Rejeitado volta ao executar.", "en": "Rejected goes back to execution." } },
@@ -114,7 +114,7 @@ export const completo: unknown = {
       "title": { "pt-BR": "PR", "en": "PR" },
       "description": { "pt-BR": "Uma sessão abre o PR da change.", "en": "A session opens the change's PR." },
       "kind": "session",
-      "agent": "abre-pr",
+      "agent": "pr-opener",
       "model": "claude-sonnet-5-5",
       "effort": "medium",
       "details": { "inputs": { "pt-BR": "A branch da change com a checagem passada.", "en": "The change's branch with the check passed." }, "produces": { "pt-BR": "O PR aberto, com o resumo e a evidência.", "en": "The open PR, with the summary and the evidence." }, "blocks": { "pt-BR": "QA e produção esperam o PR.", "en": "QA and production wait on the PR." } },

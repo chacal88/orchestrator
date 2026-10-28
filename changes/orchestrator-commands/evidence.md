@@ -125,11 +125,149 @@ Os nits:
 
 ### Testes
 
-_a preencher_
+Antes, no commit `d9df200` (fim da fase 1): 480 testes em 37 arquivos, todos `(pass)` (seção da fase 1).
+
+Primeira rodada depois do código, antes de mexer nos testes: 456 pass, 24 fail. Todas as falhas eram asserts com os
+nomes antigos: agentes, marcador do hook e `.orquestrador/` num projeto sem pasta, que agora grava em `.orchestrator/`.
+Os testes passaram aos nomes novos, e nenhum foi removido. O `tests/rapido-repo-flow.ts`, cópia do
+`.orquestrador/flows/rapido.json` real deste repo, ficou com os nomes antigos de propósito: é a entrada dos testes da 2.2.
+
+Depois:
+
+```
+$ export PATH="…/claude-code/2.1.309/5af865b9901c/claude.app/Contents/MacOS:$PATH" && command claude plugin test orchestrator
+ 498 pass
+ 0 fail
+Ran 498 tests across 37 files.
+exit=0
+```
+
+480 → 498: 18 testes novos, todos `(pass)`.
+
+- 2.2, em `rapido-repo.test.ts`, com o `rapido.json` real:
+  - `the old agent names of the repository flow load as the new ones`;
+  - `with the old names, the merge stays automatic on the workflow approval, never "The owner merges"`;
+  - `with the old names, the step that opens the PR still cites its number`: o `changePrs` acha o `#812` da nota do
+    `publicar`, cujo agente é `abre-pr`;
+  - `a flow state saved with "revisor-codigo" reads as code-reviewer, and the review still waits on aprovado`. Sem
+    normalizar, um passo de revisão reconhecido só pelo agente não é esperado. Normalizado, é esperado até o `aprovado`;
+  - `normalizeAgents leaves a new name and an unknown name as they are`. Inclui `constructor`, que não cai no protótipo.
+- 2.2, nota da revisão do plano, em `flow-agent-harness.test.ts`: `a flow going since 0.14.1, with "revisor-codigo" in
+  its saved state, reads as code-reviewer by change and in the list`. O teste muda o arquivo de estado em disco para o
+  nome antigo. O `flow status` com `change` passa pelo `loadFlowState`, e sem `change` pelo `allFlowStates`. Os dois
+  dizem `Agente: "code-reviewer" (do plugin)`, e nenhum cita `revisor-codigo`.
+- 2.3, em `flow-agent-harness.test.ts`:
+  - `a project agent under the old name (.orquestrador/agents/planejador.md) is the one a flow asking for planner gets`;
+  - `with planner.md and planejador.md in the project, planner.md wins`;
+  - `with neither in the project, the plugin's agent comes`.
+
+  O `10.7 listAgents` de `workflows-pane.test.ts` passou a conferir que o `revisor-codigo.md` do projeto aparece como
+  `code-reviewer`, uma vez só.
+- 2.5, em `project-config.test.ts`:
+  - `only .orquestrador/: config and flows are read from it, marked legacy`;
+  - `only .orchestrator/: config and flows are read from it`;
+  - `both folders: the new one wins, and nothing of the old is mixed in`;
+  - `a project with no folder reads none, and its folder is the new one`;
+  - `a save of the settings in a legacy project goes to .orquestrador/; with no folder, to .orchestrator/`.
+- 2.6, em `activation.test.ts`:
+  - `the hook cites /orchestrator:panel and reads the new level variable before the old one`;
+  - `the activation file written by 0.14.1 reads as active; "Desativar" takes its hook out, and reactivating leaves one
+    hook`. O hook do teste é o texto exato da 0.14.1, com `# orquestrador:ativar`.
+- 2.8:
+  - em `workflows-pane.test.ts`, `a project still on .orquestrador/: the texts name it, the save goes there, and ⚙️ says
+    to rename it`. O aviso de salvar cita `.orquestrador/flows/rapido.json`, o arquivo é gravado lá, e nada vai para
+    `.orchestrator/`;
+  - em `workflows-pane.test.ts`, `a new project: the save names .orchestrator/flows/<id>.json, and ⚙️ shows no rename
+    warning`;
+  - em `flow-agent-harness.test.ts`, `an agent no file holds is said so, without an error, naming the folder the project
+    uses`. Num projeto novo, o aviso diz `nem .orchestrator/agents/planner.md`. Num projeto `legacy`, diz
+    `nem .orquestrador/…`.
 
 ### Tipos
 
-_a preencher_
+```
+$ npx -y -p typescript@5.6.3 tsc -p <scratchpad>/tc/tsconfig.json   # tipos do engine 2.1.309 (plugin-authoring), hooks + types + tests de orchestrator/
+(sem saída)
+exit=0
+```
+
+### Validação
+
+```
+$ export PATH="…/claude-code/2.1.309/5af865b9901c/claude.app/Contents/MacOS:$PATH" && command claude plugin validate orchestrator
+  ❯ ./register.tsx hooks: session.start, command.run{command=orquestrador}, command.run{command=orquestrador-workflows}, …
+⚠ Found 1 plugin directory warning: ICON_MISSING (já existia; não muda o resultado)
+✔ Validation passed
+exit=0
+```
+
+### Tarefas
+
+- 2.1: `git mv` dos seis agentes, com o `name:` acompanhando: `planner`, `plan-reviewer`, `code-reviewer`, `pr-opener`,
+  `publisher` e `workflow-merge`. Passaram aos nomes novos:
+  - os flows padrão;
+  - `WORKFLOW_MERGE_AGENT` e `CODE_REVIEW_AGENT`;
+  - `model.ts:221`;
+  - as seis comparações de `i18n-workflows.ts`.
+
+  `grep -rn "planejador\|revisor-plano\|revisor-codigo\|abre-pr\|publicador\|merge-pelo-workflow" orchestrator/hooks
+  orchestrator/agents` só acha as seis linhas do mapa `LEGACY_AGENTS` (`flow.ts:851-856`).
+- 2.2: `LEGACY_AGENTS` e `normalizeAgents` ficam em `flow.ts`.
+  - O `resolveFlow` passou a envolver o corpo antigo, agora `resolveRaw`, e normaliza a saída.
+  - O `parseFlow` compara o agente da revisão de código já pelo nome novo (`currentAgent`). Assim, um flow de projeto
+    com `revisor-codigo` continua exigindo `aprovado`.
+  - Em `register.tsx`, um `readFlowState` normaliza o `state.flow`. Ele serve ao `loadFlowState` e também ao
+    `allFlowStates`, como pediu a nota da revisão do plano.
+
+  Desvio: `grep -n "LEGACY_AGENTS" orchestrator/hooks/*.ts*` acha a definição, o `currentAgent` (o helper do
+  `normalizeAgents`), o `findAgent` e o `listAgents`. O `listAgents` é o que a 2.3 pede.
+- 2.3: o `findAgent` procura nesta ordem:
+  1. `<pasta>/agents/<nome>.md`;
+  2. o arquivo do projeto com cada nome antigo que o mapa leva ao nome pedido;
+  3. o arquivo do plugin.
+
+  O `listAgents` mostra o arquivo antigo do projeto sob o nome novo, e o novo ganha quando os dois existem. O leitor de
+  frontmatter passou a tirar as aspas de um valor entre aspas duplas, por causa da 2.7.
+- 2.4: `git mv skills/change-orchestrator skills/change` e `git mv skills/instalar skills/install`, com `name:`
+  `change` e `install`. As skills agora:
+  - chamam `mcp__orchestrator__flow` e `mcp__orchestrator__plan`;
+  - citam `/orchestrator:panel`, `:open`, `:approve`, `:reject`, `:end`, `:workflows`, `:install` e `:change`;
+  - usam os agentes novos (`workflow-merge`);
+  - a `install` grava em `.orchestrator/`.
+
+  `grep -rn "orquestrador\|change-orchestrator\|instalar" orchestrator/skills` só acha as duas menções à pasta antiga,
+  lida por compatibilidade: `change/SKILL.md:252` e `install/SKILL.md:29`.
+- 2.5: `projectDir($, root)`, em `project-config.ts`, devolve `{ dir, name, legacy }`. O `name` é o nome relativo que
+  os textos citam (§4). Passam por ela:
+  - o `loadConfig`, com o campo novo `folder`;
+  - o `loadFlows`, com o campo novo `name`;
+  - o `findAgent` e o `listAgents`;
+  - o "Salvar" das configurações e o do editor de workflows.
+
+  `CONFIG_PATH` passou a `.orchestrator/config.json`, e o `parseConfig` recebe o caminho real para nomear os problemas.
+  O cartão ⚙️ "Este projeto" mostra o aviso de `legacy`, em pt-BR e en.
+- 2.6: `HOOK_MARK = 'orchestrator:activate'` e `LEGACY_HOOK_MARK = 'orquestrador:ativar'`. O "Desativar" e a
+  reativação acham o hook pelos dois. O `HOOK_COMMAND` lê `${ORCHESTRATOR:-${ORQUESTRADOR:-barrar}}` e cita
+  `/orchestrator:panel`. A marca no `env` continua `ORQUESTRADOR`, então um clone ativado na 0.14.1 segue ativo. Os
+  testes de `activation.test.ts` passam, e os dois novos aparecem como `(pass)`.
+- 2.7: o `description` foi para aspas duplas em `planner`, `code-reviewer` e `deploy`, os três com `: `. As skills não
+  têm `: ` na descrição. `grep -nE '^description: [^"].*: ' orchestrator/agents/*.md orchestrator/skills/*/SKILL.md`
+  não acha nada, e o `validate` com o 2.1.309 sai 0.
+- 2.8:
+  - As constantes de `i18n-workflows.ts` viraram funções de `dir`, nas duas línguas: `replacesDefault`,
+    `problemsHelp`, `about`, `saved`, `notObject` e `notJson`.
+  - `workflows-pane.tsx` tira os caminhos relativos do `name` do `loadFlows` e do `loadConfig`. O `problemParts` corta
+    em `/flows/`.
+  - O `configText` recebe a pasta.
+  - O `describeStepAgent` recebe a pasta do `projectDir`.
+
+  `grep -rn "\.orquestrador/" orchestrator/hooks` só acha o aviso de `legacy`, em pt-BR e en. O
+  `LEGACY_DIR = '.orquestrador'` não tem barra.
+
+Ficou fora do escopo, como pedido:
+- os comandos `/orquestrador …` e os textos do `i18n` que os citam, que são da fase 3;
+- a pasta de registros do mod (`registryDir`), que fica com o nome antigo nesta versão (§4);
+- a config deste repo em `.orquestrador/`, que é da tarefa 7.2.
 
 ## Fase 3 — comandos com prefixo
 

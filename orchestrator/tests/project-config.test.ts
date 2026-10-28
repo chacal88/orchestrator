@@ -6,6 +6,8 @@ import { describeFlow, describeWorkflow, resolveFlow, startFlow } from '../hooks
 import type { FlowSource } from '../hooks/flow'
 import { DEFAULT_FLOWS } from '../hooks/flows/index'
 import { parseConfig } from '../hooks/i18n'
+import { loadConfig, loadFlows } from '../hooks/flow-files'
+import { projectDir } from '../hooks/project-config'
 import { draftFile, draftOf, resolveCandidate, setStepField, useProjectValues } from '../hooks/workflow-edit'
 
 type On = Parameters<TestBody>[1]
@@ -34,7 +36,7 @@ const step = (flow: FlowDef, id: string): FlowStep => flow.steps.find(s => s.id 
 describe('1.1 merge and deploy in config.json', () => {
   test('4.1 a deploy with no CI and no routine is named and left out; with routines it stands', () => {
     const bad = parseConfig(JSON.stringify({ deploy: { ci: false } }))
-    expect(bad.problems).toContain('.orquestrador/config.json: deploy.ci is false with no commands: a deploy needs the CI, routines, or both.')
+    expect(bad.problems).toContain('.orchestrator/config.json: deploy.ci is false with no commands: a deploy needs the CI, routines, or both.')
     expect(bad.project.deploy?.ci).toBeUndefined()
     expect(parseConfig(JSON.stringify({ deploy: { ci: false, commands: ['npm run x'] } })).problems).toEqual([])
   })
@@ -73,12 +75,12 @@ describe('1.1 merge and deploy in config.json', () => {
     const c = parseConfig(JSON.stringify({ merge: { auto: 'yes', branch: '', method: 'fast', autto: true }, deploy: { ci: 1, commands: [3] } }))
     expect(c.project).toEqual({ merge: {}, deploy: {} })
     expect(c.problems).toEqual([
-      '.orquestrador/config.json: merge.autto is not a setting (branch, method, auto).',
-      '.orquestrador/config.json: merge.branch must be a branch name (letters, digits, . _ / -).',
-      '.orquestrador/config.json: merge.method must be one of squash, merge, rebase.',
-      '.orquestrador/config.json: merge.auto must be true or false.',
-      '.orquestrador/config.json: deploy.ci must be true or false.',
-      '.orquestrador/config.json: deploy.commands must be a list of commands.',
+      '.orchestrator/config.json: merge.autto is not a setting (branch, method, auto).',
+      '.orchestrator/config.json: merge.branch must be a branch name (letters, digits, . _ / -).',
+      '.orchestrator/config.json: merge.method must be one of squash, merge, rebase.',
+      '.orchestrator/config.json: merge.auto must be true or false.',
+      '.orchestrator/config.json: deploy.ci must be true or false.',
+      '.orchestrator/config.json: deploy.commands must be a list of commands.',
     ])
     expect(parseConfig(JSON.stringify({ merge: 'main' })).problems[0]).toMatch(/merge must be an object/)
   })
@@ -243,4 +245,115 @@ test('1.3 flow list and flow start read config.json from the checkout', async ($
   const saved = JSON.parse(disk.get(key ?? '') ?? '{}') as { flow: FlowDef }
   expect(step(saved.flow, 'merge').merge).toMatchObject({ branch: 'develop', auto: true })
   expect(step(saved.flow, 'merge').kind).toBe('automatic')
+})
+
+describe('2.5 the project folder: .orchestrator/, still reading .orquestrador/', () => {
+  /** An engine at /w over `disk`, a folder existing when a file is under it. */
+  const engineOver = (disk: Map<string, string>) =>
+    ({
+      plugin: { root: '/p' },
+      session: { root: async () => '/w' },
+      fs: {
+        exists: async (path: string) => disk.has(path) || [...disk.keys()].some(k => k.startsWith(`${path}/`)),
+        list: async (path: string) =>
+          [...disk.keys()]
+            .filter(k => k.startsWith(`${path}/`) && !k.slice(path.length + 1).includes('/'))
+            .map(k => ({ name: k.slice(path.length + 1), kind: 'file', size: 1, mtimeMs: 0, isLink: false })),
+        read: async (path: string) => disk.get(path) ?? '',
+      },
+    }) as never
+  const flowFile = (title: string) => JSON.stringify({ id: 'casa', title, base: 'rapido' })
+
+  test('only .orquestrador/: config and flows are read from it, marked legacy', async () => {
+    const disk = new Map([
+      ['/w/.orquestrador/config.json', JSON.stringify({ merge: { branch: 'develop' } })],
+      ['/w/.orquestrador/flows/casa.json', flowFile('Velha')],
+    ])
+    const engine = engineOver(disk)
+    expect(await projectDir(engine, '/w')).toEqual({ dir: '/w/.orquestrador', name: '.orquestrador', legacy: true })
+    expect((await loadConfig(engine)).project.merge).toEqual({ branch: 'develop' })
+    const flows = await loadFlows(engine)
+    expect(flows.flows.casa?.title).toBe('Velha')
+    expect(flows.name).toBe('.orquestrador/flows')
+  })
+
+  test('only .orchestrator/: config and flows are read from it', async () => {
+    const disk = new Map([
+      ['/w/.orchestrator/config.json', JSON.stringify({ merge: { branch: 'trunk' } })],
+      ['/w/.orchestrator/flows/casa.json', flowFile('Nova')],
+    ])
+    const engine = engineOver(disk)
+    expect(await projectDir(engine, '/w')).toEqual({ dir: '/w/.orchestrator', name: '.orchestrator', legacy: false })
+    expect((await loadConfig(engine)).project.merge).toEqual({ branch: 'trunk' })
+    expect((await loadFlows(engine)).flows.casa?.title).toBe('Nova')
+  })
+
+  test('both folders: the new one wins, and nothing of the old is mixed in', async () => {
+    const disk = new Map([
+      ['/w/.orquestrador/config.json', JSON.stringify({ merge: { branch: 'develop' }, deploy: { ci: true } })],
+      ['/w/.orquestrador/flows/casa.json', flowFile('Velha')],
+      ['/w/.orquestrador/flows/so-velho.json', JSON.stringify({ id: 'so-velho', title: 'Só velho', base: 'rapido' })],
+      ['/w/.orchestrator/config.json', JSON.stringify({ merge: { branch: 'trunk' } })],
+      ['/w/.orchestrator/flows/casa.json', flowFile('Nova')],
+    ])
+    const engine = engineOver(disk)
+    expect((await projectDir(engine, '/w')).legacy).toBe(false)
+    const config = await loadConfig(engine)
+    expect(config.project).toEqual({ merge: { branch: 'trunk' }, deploy: {} })
+    const flows = await loadFlows(engine)
+    expect(flows.flows.casa?.title).toBe('Nova')
+    expect(flows.flows['so-velho']).toBeUndefined()
+  })
+
+  test('a project with no folder reads none, and its folder is the new one', async () => {
+    const engine = engineOver(new Map())
+    expect(await projectDir(engine, '/w')).toEqual({ dir: '/w/.orchestrator', name: '.orchestrator', legacy: false })
+    const config = await loadConfig(engine)
+    expect(config.text).toBeUndefined()
+    expect(config.folder.dir).toBe('/w/.orchestrator')
+  })
+})
+
+test('2.5 a save of the settings in a legacy project goes to .orquestrador/; with no folder, to .orchestrator/', async ($, on) => {
+  const disk = new Map<string, string>()
+  mock.store(on)
+  on('env.get', () => ({ value: '/h' }))
+  on('session.root', () => ({ value: '/w' }))
+  on('session.repo', () => ({ value: null }))
+  on('fs.exists', ($$, e) => ({ value: disk.has(e.path) || [...disk.keys()].some(k => k.startsWith(`${e.path}/`)) }))
+  on('fs.read', ($$, e) => ({ value: disk.get(e.path) ?? '' }))
+  on('fs.write', ($$, e) => {
+    disk.set(e.path, e.text)
+    return { value: undefined }
+  })
+  on('fs.list', ($$, e) => ({
+    value: [...disk.keys()]
+      .filter(k => k.startsWith(`${e.path}/`) && !k.slice(e.path.length + 1).includes('/'))
+      .map(k => ({ name: k.slice(e.path.length + 1), kind: 'file', size: 1, mtimeMs: 0, isLink: false })) as never,
+  }))
+  on('tool.list', () => ({ value: [] as never }))
+  on('ui.open', () => ({ value: { isPlaced: true } }) as never)
+  on('ui.panes', () => ({ value: [] }) as never)
+  on('ui.toast', () => ({ value: undefined }) as never)
+  const save = async () => {
+    const ui = await $.ui.mount({
+      plugin: 'orchestrator',
+      surface: 'desktop',
+      component: 'Pane',
+      requestId: 'orchestrator-workflows',
+      props: { title: '⚙️ Workflows', isFocused: false, bodyColumns: 60, placement: 'dock', scroll: { offset: 0, bodyRows: 200 }, view: {} },
+    } as never)
+    await ui.press({ key: 'cfg-open' })
+    await ui.press({ key: 'cfg-deploy-auto' })
+    await ui.press({ key: 'cfg-save' })
+    await ui.unmount()
+  }
+  disk.set('/w/.orquestrador/config.json', JSON.stringify({ merge: { branch: 'develop' } }))
+  await save()
+  expect(JSON.parse(disk.get('/w/.orquestrador/config.json')!)).toEqual({ merge: { branch: 'develop' }, deploy: { auto: true } })
+  expect([...disk.keys()].some(k => k.startsWith('/w/.orchestrator/'))).toBe(false)
+  disk.clear()
+  await save()
+  expect(JSON.parse(disk.get('/w/.orchestrator/config.json') ?? '{}')).toEqual({ deploy: { auto: true } })
+  expect([...disk.keys()].some(k => k.startsWith('/w/.orquestrador/'))).toBe(false)
 })

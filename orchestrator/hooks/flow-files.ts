@@ -1,11 +1,13 @@
 import type { EngineInterface } from 'claude-code'
 
 import type { FlowDef, Languages, ProjectSettings } from '../types'
-import { mergeFlows, resolveProjectFlows } from './flow'
+import { LEGACY_AGENTS, mergeFlows, resolveProjectFlows } from './flow'
 import type { AgentFound, FlowSource } from './flow'
 import { DEFAULT_FLOWS, defaultFlows } from './flows/index'
 import { isAgentName } from './gates'
-import { CONFIG_PATH, parseConfig } from './i18n'
+import { parseConfig } from './i18n'
+import { CONFIG_FILE, projectDir } from './project-config'
+import type { ProjectDir } from './project-config'
 
 // Function declarations: the engine follows `$` past an import only into one of these.
 
@@ -31,6 +33,8 @@ export type LoadedConfig = {
   problems: string[]
   /** The file's text as read, so a save can change only its own keys. */
   text: string | undefined
+  /** The project's folder the file was read from, where a save writes it back. */
+  folder: ProjectDir
 }
 
 /** The project's settings from `config.json`, read fresh; a file that cannot be read counts as absent. */
@@ -43,8 +47,9 @@ export async function loadConfig($: EngineInterface): Promise<LoadedConfig> {
       return undefined
     }
   }
-  const text = await read(`${root}/${CONFIG_PATH}`)
-  return { ...parseConfig(text), text }
+  const folder = await projectDir($, root)
+  const text = await read(`${folder.dir}/${CONFIG_FILE}`)
+  return { ...parseConfig(text, `${folder.name}/${CONFIG_FILE}`), text, folder }
 }
 
 export type LoadedFlows = {
@@ -53,24 +58,26 @@ export type LoadedFlows = {
   flows: Record<string, FlowDef>
   problems: string[]
   projectIds: Set<string>
-  /** The project's flow files as read, and their folder. */
+  /** The project's flow files as read, and their folder (`name` as a text names it, `.orchestrator/flows`). */
   files: FlowSource[]
   dir: string
+  name: string
 }
 
 /**
- * The mod's default flows, then the project's own in `<repo>/.orquestrador/flows`, which win by id;
- * a project flow derived from another is resolved, and one that does not resolve is named in `problems`.
+ * The mod's default flows, then the project's own in `<repo>/.orchestrator/flows` (or the old folder's), which
+ * win by id; a project flow derived from another is resolved, and one that does not resolve is named in `problems`.
  */
 export async function loadFlows($: EngineInterface): Promise<LoadedFlows> {
-  const dir = `${await $.session.root()}/.orquestrador/flows`
-  const read = await readFlowDir($, dir)
   const config = await loadConfig($)
+  const dir = `${config.folder.dir}/flows`
+  const read = await readFlowDir($, dir)
   const project = resolveProjectFlows(DEFAULT_FLOWS, read.files, config.project)
   return {
     config,
     files: read.files,
     dir,
+    name: `${config.folder.name}/flows`,
     flows: mergeFlows(defaultFlows(), project.flows),
     problems: [...read.problems, ...project.problems],
     projectIds: new Set(project.flows.map(f => f.id)),
@@ -78,13 +85,18 @@ export async function loadFlows($: EngineInterface): Promise<LoadedFlows> {
 }
 
 /**
- * A step's agent: the project's `.orquestrador/agents/<name>.md` wins over the plugin's `agents/<name>.md`.
- * A name that is not one (`../x`) builds no path: no agent.
+ * A step's agent: the project's `agents/<name>.md`, then the project's file under an old name of that agent
+ * (as `LEGACY_AGENTS` maps it), win over the plugin's `agents/<name>.md`. A name that is not one (`../x`)
+ * builds no path: no agent.
  */
 export async function findAgent($: EngineInterface, name: string): Promise<AgentFound> {
   if (!isAgentName(name)) return undefined
-  const project = `${await $.session.root()}/.orquestrador/agents/${name}.md`
-  if (await $.fs.exists(project)) return { source: 'project', path: project }
+  const { dir } = await projectDir($, await $.session.root())
+  const older = Object.keys(LEGACY_AGENTS).filter(old => LEGACY_AGENTS[old] === name)
+  for (const file of [name, ...older]) {
+    const project = `${dir}/agents/${file}.md`
+    if (await $.fs.exists(project)) return { source: 'project', path: project }
+  }
   const plugin = `${$.plugin.root}/agents/${name}.md`
   return (await $.fs.exists(plugin)) ? { source: 'plugin', path: plugin } : undefined
 }
@@ -92,32 +104,46 @@ export async function findAgent($: EngineInterface, name: string): Promise<Agent
 /** An agent the owner can pick for a step, as its file's frontmatter says. */
 export type AgentInfo = { name: string; description: string; model: string | undefined; source: 'project' | 'plugin' }
 
+/** A value as YAML writes it: one in double quotes is read with its escapes, any other as it stands. */
+const unquote = (value: string): string => {
+  if (!(value.length >= 2 && value.startsWith('"') && value.endsWith('"'))) return value
+  try {
+    const read: unknown = JSON.parse(value)
+    return typeof read === 'string' ? read : value
+  } catch {
+    return value
+  }
+}
+
 const frontmatter = (text: string): Record<string, string> => {
   const head = /^---\r?\n([\s\S]*?)\r?\n---/.exec(text)?.[1] ?? ''
   return Object.fromEntries(
     head.split(/\r?\n/).flatMap(line => {
       const at = line.indexOf(':')
-      return at <= 0 ? [] : [[line.slice(0, at).trim(), line.slice(at + 1).trim()] as const]
+      return at <= 0 ? [] : [[line.slice(0, at).trim(), unquote(line.slice(at + 1).trim())] as const]
     }),
   )
 }
 
 /**
- * The agents on offer: the plugin's `agents/*.md` and the project's `.orquestrador/agents/*.md`, by name;
- * a project agent of the same name replaces the plugin's, as `findAgent` has it.
+ * The agents on offer: the plugin's `agents/*.md` and the project's `agents/*.md`, by name; a project agent
+ * of the same name replaces the plugin's, as `findAgent` has it. A project file under an old name shows
+ * under the new one, unless the project also has the new one, which wins.
  */
 export async function listAgents($: EngineInterface): Promise<AgentInfo[]> {
   const found = new Map<string, AgentInfo>()
   const dirs = [
     ['plugin', `${$.plugin.root}/agents`],
-    ['project', `${await $.session.root()}/.orquestrador/agents`],
+    ['project', `${(await projectDir($, await $.session.root())).dir}/agents`],
   ] as const
   for (const [source, dir] of dirs) {
     if (!(await $.fs.exists(dir))) continue
     for (const file of await $.fs.list(dir)) {
       if (file.kind !== 'file' || !file.name.endsWith('.md')) continue
-      const name = file.name.slice(0, -3)
-      if (!isAgentName(name)) continue
+      const own = file.name.slice(0, -3)
+      if (!isAgentName(own)) continue
+      const name = Object.hasOwn(LEGACY_AGENTS, own) ? (LEGACY_AGENTS[own] as string) : own
+      if (name !== own && (await $.fs.exists(`${dir}/${name}.md`))) continue
       const head = frontmatter(await $.fs.read(`${dir}/${file.name}`))
       found.set(name, { name, source, description: head.description ?? '', model: head.model === undefined || head.model === '' ? undefined : head.model })
     }

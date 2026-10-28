@@ -4,7 +4,7 @@ import type { Engine, TestBody } from 'claude-code/testing'
 import type { OrchestrationRun } from '../types'
 import { startFlow } from '../hooks/flow'
 import { defaultFlows } from '../hooks/flows/index'
-import { HOOK_COMMAND, HOOK_MARK, activate, deactivate, parseSettings, readActivation, readAutowake, writeActivation, writeAutowake } from '../hooks/activation'
+import { HOOK_COMMAND, HOOK_MARK, LEGACY_HOOK_MARK, activate, deactivate, parseSettings, readActivation, readAutowake, writeActivation, writeAutowake } from '../hooks/activation'
 
 type On = Parameters<TestBody>[1]
 type Reply = { result?: unknown; isError?: boolean; deny?: string }
@@ -197,6 +197,39 @@ test('the file is read as an object; broken JSON and other shapes are named, an 
   expect(parseSettings('  ')).toEqual({ data: {} })
   expect(parseSettings('{ nope')).toEqual({ error: 'notJson' })
   expect(parseSettings('[1]')).toEqual({ error: 'notObject' })
+})
+
+/** The SessionStart hook exactly as the 0.14.1 panel wrote it. */
+const HOOK_0_14_1 =
+  'printf \'%s\\n\' "Orquestrador ativo neste clone (nível: ${ORQUESTRADOR:-barrar}). Siga o flow da change em andamento; ' +
+  'passos do dono, só o dono responde no painel (/orquestrador); sem merge --admin e sem pular portões." # orquestrador:ativar'
+
+test('2.6 the hook cites /orchestrator:panel and reads the new level variable before the old one', () => {
+  expect(HOOK_MARK).toBe('orchestrator:activate')
+  expect(LEGACY_HOOK_MARK).toBe('orquestrador:ativar')
+  expect(HOOK_COMMAND).toContain('${ORCHESTRATOR:-${ORQUESTRADOR:-barrar}}')
+  expect(HOOK_COMMAND).toContain('/orchestrator:panel')
+  expect(HOOK_COMMAND.endsWith(`# ${HOOK_MARK}`)).toBe(true)
+})
+
+test('2.6 the activation file written by 0.14.1 reads as active; "Desativar" takes its hook out, and reactivating leaves one hook', async ($, on) => {
+  const w = world(on)
+  const old = {
+    ...OTHER,
+    env: { ...OTHER.env, ORQUESTRADOR: 'barrar' },
+    hooks: { ...OTHER.hooks, SessionStart: [...OTHER.hooks.SessionStart, { hooks: [{ type: 'command', command: HOOK_0_14_1 }] }] },
+  }
+  w.disk.set(MARK, JSON.stringify(old))
+  expect(await readActivation(engineOf(w))).toEqual({ level: 'barrar', invalid: false, tampered: false })
+  // reactivating swaps the old hook for the new, never two
+  expect(deactivate(activate(old, 'barrar'))).toEqual(OTHER)
+  const again = activate(old, 'barrar') as { hooks: { SessionStart: { hooks: { command: string }[] }[] } }
+  const commands = again.hooks.SessionStart.flatMap(g => g.hooks.map(h => h.command))
+  expect(commands.filter(c => c.includes(HOOK_MARK) || c.includes(LEGACY_HOOK_MARK))).toEqual([HOOK_COMMAND])
+  // "Desativar": the old hook and the mark go, everything else stays
+  expect(await writeActivation(engineOf(w), null)).toEqual({ ok: true })
+  expect(JSON.parse(w.disk.get(MARK) ?? '')).toEqual(OTHER)
+  expect((await readActivation(engineOf(w))).level).toBeUndefined()
 })
 
 test('writing the activation preserves the file, refuses a broken one, and a worktree writes the main checkout', async ($, on) => {
