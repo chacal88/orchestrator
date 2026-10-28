@@ -1,4 +1,4 @@
-# Orquestrador
+# Orchestrator
 
 Plugin para o Claude Code que orquestra uma change com várias sessões em paralelo e mostra tudo num painel lateral: em que passo o trabalho está, o que cada sessão está fazendo, quais gates de qualidade passaram e o que espera uma decisão sua.
 
@@ -13,24 +13,24 @@ Plugin para o Claude Code que orquestra uma change com várias sessões em paral
 - **Dois flows prontos:**
   - `completo`: grill → mockup → plano OpenSpec → validação → revisão do plano → liberação do dono pelo plan mode → fases → revisão de código → checagem final → PR → QA → produção → arquivamento;
   - `rapido`, para correções pequenas.
-  - Um projeto pode ter flows próprios em `.orquestrador/flows/*.json`, escritos do zero ou derivados de outro (veja [Workflows do projeto](#workflows-do-projeto)).
+  - Um projeto pode ter flows próprios em `.orchestrator/flows/*.json`, escritos do zero ou derivados de outro (veja [Workflows do projeto](#workflows-do-projeto)).
   - Ao iniciar uma change, a coordenação sempre mostra os workflows disponíveis para você escolher.
-- **Passos descritos a fundo, com agente especialista.** Cada passo diz o que recebe, o que produz e o que bloqueia. Cada passo de sessão nomeia o agente que o executa, com modelo e esforço. O plugin traz nove agentes em `orquestrador/agents/`: planejador, revisor-plano, executor, revisor-codigo, abre-pr, publicador, merge, merge-pelo-workflow e deploy. Um projeto troca qualquer um deles com um arquivo de mesmo nome em `.orquestrador/agents/`.
+- **Passos descritos a fundo, com agente especialista.** Cada passo diz o que recebe, o que produz e o que bloqueia. Cada passo de sessão nomeia o agente que o executa, com modelo e esforço. O plugin traz nove agentes em `orchestrator/agents/`: planner, plan-reviewer, executor, code-reviewer, pr-opener, publisher, merge, workflow-merge e deploy. Um projeto troca qualquer um deles com um arquivo de mesmo nome em `.orchestrator/agents/`. Os nomes em português ainda são aceitos nos flows e nos arquivos do projeto.
 - **Revisão do PR, merge e deploy como passos.** Servem para projetos trunk-based (um merge na `main`) e para projetos dev/master (merge em `dev` para o QA, em `master` para a produção).
   - **Merge automático, com dois agentes à escolha no passo.** `merge` (o padrão) só mergeia com o PR aprovado no GitHub, o CI verde e os portões finais passados. `merge-pelo-workflow` mergeia quando o workflow aprovou (a revisão de código do flow aprovada, os portões finais passados e o CI verde se houver) e não exige aprovação no GitHub. O mod recusa `gh pr merge` antes da revisão do PR e, enquanto um passo de revisão de código (agente `revisor-codigo` ou id `revisao-codigo`) antes do merge não estiver aprovado desde a última volta do flow; recusa `--admin` sempre. Um passo de revisão de código (agente `revisor-codigo` ou id `revisao-codigo`) precisa declarar o outcome `aprovado`, que a coordenação reporta; o flow que não o declara é recusado ao carregar. O PR da change é reconhecido também pela nota do passo que o abre (agente `abre-pr` ou `publicador`).
   - **Deploy:** espera o deploy do CI, roda rotinas fora do CI, ou faz os dois; pode ser automático, logo depois do merge.
-- **Painel ⚙️ Workflows (`/orquestrador-workflows`).** Fica separado do painel 🧭 e mostra os workflows disponíveis com a configuração de cada passo. Ali você também cria e edita os workflows do projeto.
+- **Painel ⚙️ Workflows (`/orchestrator:workflows`).** Fica separado do painel 🧭 e mostra os workflows disponíveis com a configuração de cada passo. Ali você também cria e edita os workflows do projeto.
 - **Gates de qualidade por fase.** São checagens como testes, lint, `check.sh`, `openspec validate`, print da tela e revisão de regras:
   - **comprovação:** o mod só aceita um gate quando vê o comando rodar e passar;
   - **validade:** editar arquivos depois da comprovação desatualiza o gate;
   - **pulo:** só você pula um gate, com dois cliques.
-- **Painel lateral (`/orquestrador`).** Mostra o andamento da change, o OpenSpec (proposta, tarefas e evidência), os gates do flow, o que precisa de você e as tarefas de cada fase com a sessão que as executa. Uma faixa acima do campo de mensagem resume o estado.
+- **Painel lateral (`/orchestrator:panel`).** Mostra o andamento da change, o OpenSpec (proposta, tarefas e evidência), os gates do flow, o que precisa de você e as tarefas de cada fase com a sessão que as executa. Uma faixa acima do campo de mensagem resume o estado.
 - **Grill com respostas no painel.** As rodadas de perguntas viram critérios de aceite, e você responde cada pergunta num campo do próprio painel.
 - **Sessões em paralelo.** Cada fase roda numa sessão própria, com teto de 3 sessões vivas. As sessões entram sozinhas no grupo da change na barra lateral e são arquivadas quando a fase fecha.
 - **Seguir o flow sem clique.** Opção do cartão "Este projeto" no painel ⚙️. Desligada por padrão e só nesta máquina. Ligada, o painel avisa a coordenação quando termina uma sessão do flow que o app não acompanha (as abertas com `wake_when_done` já acordam a coordenação sozinhas). O painel para de avisar depois de 10 avisos sem o flow andar e mostra um aviso ao dono.
-- **Abrir as sessões pendentes.** Quando o app recusa abrir uma sessão, a coordenação a guarda. O botão "Abrir as N sessões pendentes" no painel, ou `/orquestrador abrir`, abre todas de uma vez. Pelo Remote Control o app só abre sessão a partir de mensagem digitada no desktop, e o comando avisa isso.
-- **Comandos do `/orquestrador`.** Texto simples, só com barra, e funcionam também pelo Remote Control: `status`, `ajuda`, `abrir`, `/orquestrador aprovar <resultado> [nota]` (igual ao clique do botão), `pular-portão <fase> <portão> confirmar` e `encerrar [motivo] confirmar`. Sem argumento, abre e fecha o painel. Não existe `liberar`: a liberação do plano segue pelo plan mode. Só o dono digitando vale; sessão, plugin ou tarefa agendada são recusados.
-- **Encerrar o flow.** Em qualquer momento, só o dono: pelo botão no painel ou por `/orquestrador encerrar confirmar`.
+- **Abrir as sessões pendentes.** Quando o app recusa abrir uma sessão, a coordenação a guarda. O botão "Abrir as N sessões pendentes" no painel, ou `/orchestrator:open`, abre todas de uma vez. Pelo Remote Control o app só abre sessão a partir de mensagem digitada no desktop, e o comando avisa isso.
+- **Onze comandos `/orchestrator:<ação>`.** Nenhum pede palavra-chave: o que vier depois do comando é texto livre e opcional. Funcionam também pelo Remote Control (veja [Comandos](#comandos)). Só o dono digitando vale; sessão, plugin ou tarefa agendada são recusados. Não existe `liberar`: a liberação do plano segue pelo plan mode.
+- **Encerrar o flow.** Em qualquer momento, só o dono: pelo botão no painel ou por `/orchestrator:end`.
 - **Aviso de permissão.** O painel só lê as sessões (`get_session`) com a permissão do app, uma chamada por vez. Se faltar permissão, o painel e a faixa avisam em vez de pedir de novo a cada atualização.
 - **Jira com o seu ok.** O painel avisa quando uma issue deve mudar de estado e só a move depois do seu clique.
 
@@ -47,21 +47,21 @@ A skill `change-orchestrator`, que vem junto, ensina a sessão coordenadora a se
 Dentro do Claude Code:
 
 ```
-/plugin marketplace add chacal88/orquestrador
+/plugin marketplace add chacal88/orchestrator
 ```
 
 ```
-/plugin install orquestrador@orquestrador
+/plugin install orchestrator@orchestrator
 ```
 
 Ou pelo terminal:
 
 ```bash
-claude plugin marketplace add chacal88/orquestrador
+claude plugin marketplace add chacal88/orchestrator
 ```
 
 ```bash
-claude plugin install orquestrador@orquestrador
+claude plugin install orchestrator@orchestrator
 ```
 
 Depois de instalar, reinicie o app ou rode `/reload-plugins`.
@@ -71,25 +71,66 @@ Depois de instalar, reinicie o app ou rode `/reload-plugins`.
 Num projeto novo, rode na sessão:
 
 ```
-/orquestrador:instalar
+/orchestrator:install
 ```
 
-A skill `instalar` analisa o projeto (CI, testes, cobertura, lint, tipos, build, formatação, OpenSpec, branch padrão e proteção), roda cada comando candidato uma vez e recomenda só os que passam. Depois pergunta, um bloco por vez e sempre com a recomendação: o workflow base, os portões, o merge, o deploy e o idioma. Com o seu ok, grava `.orquestrador/config.json` e `.orquestrador/flows/<id>.json`, confere que o mod os carrega e commita numa branch, sem push. Ela nunca ativa o orquestrador: no fim, abra `/orquestrador-workflows` e aperte "Ativar neste clone" no cartão "Este projeto" (veja [Ativar neste clone](#ativar-neste-clone)).
+A skill `instalar` analisa o projeto (CI, testes, cobertura, lint, tipos, build, formatação, OpenSpec, branch padrão e proteção), roda cada comando candidato uma vez e recomenda só os que passam. Depois pergunta, um bloco por vez e sempre com a recomendação: o workflow base, os portões, o merge, o deploy e o idioma. Com o seu ok, grava `.orchestrator/config.json` e `.orchestrator/flows/<id>.json`, confere que o mod os carrega e commita numa branch, sem push. Ela nunca ativa o orchestrator: no fim, abra `/orchestrator:workflows` e aperte "Ativar neste clone" no cartão "Este projeto" (veja [Ativar neste clone](#ativar-neste-clone)).
 
 ## Uso
 
 0. Instalado, o plugin fica quieto até você ativá-lo no clone (veja [Ativar neste clone](#ativar-neste-clone)).
 1. Peça à sessão para orquestrar uma change, ou use a skill `change-orchestrator`.
-2. Escolha um dos workflows que a coordenação mostra e abra o painel com `/orquestrador`.
+2. Escolha um dos workflows que a coordenação mostra e abra o painel com `/orchestrator:panel`.
 3. Acompanhe pelo painel e responda os seus passos pelos botões.
 
-Para ver ou editar os workflows do projeto, abra `/orquestrador-workflows`.
+Para ver ou editar os workflows do projeto, abra `/orchestrator:workflows`.
+
+## Comandos
+
+Digite `/orchestrator` para ver o menu. Os onze comandos:
+
+| Comando | O que faz | Antes |
+|---|---|---|
+| `/orchestrator:status` | Onde o flow está e o que espera de você | `/orquestrador status` |
+| `/orchestrator:approve` | Segue em frente no seu passo (igual ao botão). Texto depois vira nota | `/orquestrador aprovar <resultado>` |
+| `/orchestrator:reject` | Pede ajustes no seu passo. Texto depois vira nota | `/orquestrador aprovar <resultado>` com a saída de ajustes |
+| `/orchestrator:open` | Abre as sessões que ficaram pendentes | `/orquestrador abrir` |
+| `/orchestrator:skip-gate` | Lista os portões abertos; com um número, pula aquele (repetir em até 2 minutos confirma) | `/orquestrador pular-portão <fase> <portão> confirmar` |
+| `/orchestrator:end` | Encerra o flow da change. Texto depois vira o motivo | `/orquestrador encerrar confirmar` |
+| `/orchestrator:panel` | Abre ou fecha o painel da orquestração | `/orquestrador` |
+| `/orchestrator:workflows` | Abre ou fecha o painel de workflows | `/orquestrador-workflows` |
+| `/orchestrator:change` | Orquestra uma change do entendimento ao arquivo | `/orquestrador:change-orchestrator` |
+| `/orchestrator:install` | Configura o orchestrator neste projeto | `/orquestrador:instalar` |
+| `/orchestrator:help` | Esta lista, em texto simples | `/orquestrador ajuda` |
+
+`approve` e `reject` escolhem sozinhos a saída do passo atual; numa escalada, `approve` é "tentar de novo". O painel mostra sempre o flow que roda na sessão da coordenação.
+
+O plugin, o marketplace e as ferramentas do mod mudaram de nome: `orchestrator@orchestrator`, `mcp__orchestrator__flow` e `mcp__orchestrator__plan`. A pasta `.orquestrador/` de um projeto ainda é lida nesta versão, e o flow em andamento continua em `~/.claude/orquestrador/`.
+
+## Reinstalar a partir da 0.15.0
+
+O plugin e o marketplace mudaram de nome, então a 0.15.0 não chega por atualização. Faça logo depois do merge do PR, antes de qualquer `claude plugin marketplace update`.
+
+```bash
+claude plugin uninstall orquestrador@orquestrador
+claude plugin marketplace remove orquestrador
+claude plugin marketplace add chacal88/orchestrator
+claude plugin install orchestrator@orchestrator
+```
+
+Depois:
+
+1. Reinicie o app ou abra uma sessão nova. O plugin carrega com o nome novo.
+2. Em cada projeto ativado, abra `/orchestrator:panel` → ⚙️ e reative. O hook de início passa a citar `/orchestrator:panel`.
+3. Nas permissões (`~/.claude/settings.json` e `.claude/settings*.json` dos projetos), troque `mcp__orquestrador__flow` e `mcp__orquestrador__plano` por `mcp__orchestrator__flow` e `mcp__orchestrator__plan`.
+4. Se o projeto tem `.orquestrador/`, renomeie para `.orchestrator/` (`git mv .orquestrador .orchestrator`) quando quiser. A 0.15.0 ainda lê a pasta antiga.
+5. Um flow em andamento continua. Ele vive em `~/.claude/orquestrador/`, que não muda nesta versão.
 
 ## Ativar neste clone
 
-As configurações do projeto ficam em `.orquestrador/config.json` e vão para o git. O que **liga** o orquestrador é local, deste clone, e nunca vai para o repositório: quem clona o projeto não é afetado.
+As configurações do projeto ficam em `.orchestrator/config.json` e vão para o git. O que **liga** o orchestrator é local, deste clone, e nunca vai para o repositório: quem clona o projeto não é afetado.
 
-- **Quieto sem ativação.** Num clone que não foi ativado, o plugin não abre o painel 🧭 sozinho, não desenha a faixa acima do prompt, não põe regras do flow na conversa e não recusa merge nem portões. `/orquestrador` e `/orquestrador-workflows` continuam disponíveis, e o cartão "Este projeto" do painel ⚙️ mostra o estado "inativo neste clone". Uma change com flow em andamento no clone continua funcionando mesmo sem ativação, para nada parar no meio.
+- **Quieto sem ativação.** Num clone que não foi ativado, o plugin não abre o painel 🧭 sozinho, não desenha a faixa acima do prompt, não põe regras do flow na conversa e não recusa merge nem portões. `/orchestrator:panel` e `/orchestrator:workflows` continuam disponíveis, e o cartão "Este projeto" do painel ⚙️ mostra o estado "inativo neste clone". Uma change com flow em andamento no clone continua funcionando mesmo sem ativação, para nada parar no meio.
 - **Ativar.** No painel ⚙️ Workflows, "Este projeto" → "Ativar neste clone": escolha o nível e confirme.
   - **Barrar** (padrão): segue o flow e recusa merge e deploy fora dele, `--admin` e portões abertos.
   - **Lembrar**: o flow e as regras entram na conversa, mas nada é bloqueado; cada recusa do "barrar" vira só um aviso (merge com `--admin`, merge sem revisão e pulo de portões passam; ficam no log do flow e no painel). Os registros de portão do mod continuam protegidos.
@@ -103,23 +144,23 @@ As configurações do projeto ficam em `.orquestrador/config.json` e vão para o
     "env": { "ORQUESTRADOR": "barrar" },
     "hooks": {
       "SessionStart": [
-        { "hooks": [ { "type": "command", "command": "printf '%s\\n' \"Orquestrador ativo neste clone (nível: ${ORQUESTRADOR:-barrar}). …\" # orquestrador:ativar" } ] }
+        { "hooks": [ { "type": "command", "command": "printf '%s\\n' \"Orchestrator ativo neste clone (nível: ${ORCHESTRATOR:-${ORQUESTRADOR:-barrar}}). …\" # orchestrator:activate" } ] }
       ]
     }
   }
   ```
 
-  `env.ORQUESTRADOR` é a marca (`barrar` ou `lembrar`); o hook `SessionStart` imprime um lembrete do flow e das regras, que entra como contexto de cada sessão. O hook se reconhece pelo `# orquestrador:ativar` no fim do comando.
+  `env.ORQUESTRADOR` é a marca (o nome da variável não mudou na 0.15.0; o hook também lê `ORCHESTRATOR`) (`barrar` ou `lembrar`); o hook `SessionStart` imprime um lembrete do flow e das regras, que entra como contexto de cada sessão. O hook se reconhece pelo `# orchestrator:activate` no fim do comando.
 - **Desativar** tira só a marca e esse hook, preserva todo o resto do arquivo e remove as chaves `env` e `hooks` que ficarem vazias. Um `settings.local.json` que não seja um JSON válido não é gravado: o painel diz por quê e o arquivo fica como está.
 - **Fora do git.** O Claude Code põe `.claude/settings.local.json` no exclude global do git ao criá-lo; se o plugin criar o arquivo e ele não estiver ignorado, acrescenta a linha ao `.git/info/exclude` do clone, nunca ao `.gitignore`. Hooks do git e `CLAUDE.local.md` não são usados.
 
 ## Workflows do projeto
 
-Um projeto tem os workflows padrão (`completo`, `rapido`) e os seus, em `.orquestrador/flows/<id>.json`. Um workflow do projeto com o mesmo `id` de um padrão passa a valer no lugar dele. Uma change em andamento continua com o workflow com que começou, mesmo que o arquivo mude depois.
+Um projeto tem os workflows padrão (`completo`, `rapido`) e os seus, em `.orchestrator/flows/<id>.json`. Um workflow do projeto com o mesmo `id` de um padrão passa a valer no lugar dele. Uma change em andamento continua com o workflow com que começou, mesmo que o arquivo mude depois.
 
 ### Pelo painel ⚙️ Workflows
 
-`/orquestrador-workflows` abre e fecha o painel. Ele pode ficar aberto ao lado do 🧭.
+`/orchestrator:workflows` abre e fecha o painel. Ele pode ficar aberto ao lado do 🧭.
 
 - **Visão:** a lista de workflows, com a origem de cada um (padrão, do projeto ou derivado de outro) e os arquivos com erro. Ao abrir um workflow, você vê os passos em ordem. Cada passo mostra:
   - quem responde e o que entra, sai e bloqueia;
@@ -175,7 +216,7 @@ Num projeto dev/master, use dois merges: `merge-dev` (com `"branch": "dev"`), se
 
 ### Publicação automática (este repositório)
 
-O Rápido deste repositório (`.orquestrador/flows/rapido.json`, com o `.orquestrador/config.json`) publica sem a conferência do dono: planejar, validar, executar, revisão de código, checagem (`plugin test`), tipos (`tsc`), publicar, merge automático com `merge-pelo-workflow`, deploy automático (as rotinas de update do plugin, vindas do `config.json`), lançar a versão (release) e fim. O `/reload-plugins` segue com você: nenhuma rotina o roda.
+O Rápido deste repositório (`.orchestrator/flows/rapido.json`, com o `.orchestrator/config.json`) publica sem a conferência do dono: planejar, validar, executar, revisão de código, checagem (`plugin test`), tipos (`tsc`), publicar, merge automático com `merge-pelo-workflow`, deploy automático (as rotinas de update do plugin, vindas do `config.json`), lançar a versão (release) e fim. O `/reload-plugins` segue com você: nenhuma rotina o roda.
 - `deploy`, com `{ "ci", "commands", "auto" }`.
   - `ci`: espera o deploy do CI. O botão "Deploy do CI concluído" confirma, ou o mod vê `gh run watch … --exit-status` passar.
   - `commands`: as rotinas fora do CI, rodadas na ordem, cada uma como comando próprio.
@@ -184,7 +225,7 @@ O Rápido deste repositório (`.orquestrador/flows/rapido.json`, com o `.orquest
 
 ### Agentes
 
-Cada passo pode ter `agent`, `model`, `effort` e `details` (`inputs`, `produces`, `blocks`). `flow status` diz à coordenação qual agente usar no passo atual, com o caminho do arquivo. Para trocar um agente num projeto, crie `.orquestrador/agents/<nome>.md` com o mesmo nome do agente do plugin.
+Cada passo pode ter `agent`, `model`, `effort` e `details` (`inputs`, `produces`, `blocks`). `flow status` diz à coordenação qual agente usar no passo atual, com o caminho do arquivo. Para trocar um agente num projeto, crie `.orchestrator/agents/<nome>.md` com o mesmo nome do agente do plugin.
 
 ### Workflow do zero
 
@@ -213,7 +254,7 @@ Tipos de passo: `session`, `automatic` (com `command`), `owner` e `loop` (sobre 
 
 ### Idioma
 
-Cada projeto escolhe o idioma em `.orquestrador/config.json`, em dois eixos independentes:
+Cada projeto escolhe o idioma em `.orchestrator/config.json`, em dois eixos independentes:
 
 ```json
 { "language": { "ui": "en", "content": "pt-BR" } }
@@ -226,7 +267,7 @@ Idiomas: `pt-BR` e `en`. `"language": "en"` vale para os dois eixos. Sem o arqui
 
 ### Configurações do projeto
 
-O mesmo `.orquestrador/config.json` guarda o padrão dos passos de merge e deploy de todos os workflows do projeto, ao lado do `language`:
+O mesmo `.orchestrator/config.json` guarda o padrão dos passos de merge e deploy de todos os workflows do projeto, ao lado do `language`:
 
 ```json
 {
@@ -243,17 +284,17 @@ O mesmo `.orquestrador/config.json` guarda o padrão dos passos de merge e deplo
 
 ## Desenvolvimento
 
-O código fica em `orquestrador/hooks/`, os tipos em `orquestrador/types/` e os testes em `orquestrador/tests/`.
+O código fica em `orchestrator/hooks/`, os tipos em `orchestrator/types/` e os testes em `orchestrator/tests/`.
 
 ```bash
-claude plugin test orquestrador
+claude plugin test orchestrator
 ```
 
 ```bash
-claude plugin validate orquestrador
+claude plugin validate orchestrator
 ```
 
-O plano e o histórico de decisões estão em `orquestrador/proposal.md`, `orquestrador/tasks.md` e `orquestrador/evidence.md`.
+O plano e o histórico de decisões estão em `orchestrator/proposal.md`, `orchestrator/tasks.md` e `orchestrator/evidence.md`.
 
 ## Licença
 
