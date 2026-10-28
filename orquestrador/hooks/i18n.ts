@@ -348,6 +348,7 @@ const pt = {
     endAsk: (change: string, step: string) =>
       `Vou encerrar o flow de ${change} no passo ${step}. Nada é arquivado. Para confirmar, digite o mesmo comando com confirmar no fim.`,
     endDone: (change: string) => `Flow de ${change} encerrado por você.`,
+    approveEnd: 'Encerrar o flow pede confirmação: digite /orquestrador encerrar [motivo] confirmar.',
     endButton: 'Encerrar o flow',
     endConfirm: (change: string) => `Confirmar: encerrar o flow de ${change}`,
   },
@@ -594,6 +595,7 @@ const en: UiText = {
     endAsk: (change, step) =>
       `I will end the flow of ${change} at step ${step}. Nothing is archived. To confirm, type the same command with confirmar at the end.`,
     endDone: change => `Flow of ${change} ended by you.`,
+    approveEnd: 'Ending the flow asks for confirmation: type /orquestrador encerrar [reason] confirmar.',
     endButton: 'End the flow',
     endConfirm: change => `Confirm: end the flow of ${change}`,
   },
