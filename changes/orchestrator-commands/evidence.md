@@ -804,3 +804,14 @@ Fica para o QA do dono:
 ## Fase 7 — com o dono
 
 _a preencher_: o ok do dono, o `gh repo view` e a migração da pasta deste repo.
+
+## Rename do repositório (7.1)
+
+Feito com o ok do dono, depois do QA e antes do merge.
+
+```
+$ gh repo rename orchestrator --repo chacal88/orquestrador --yes && git remote set-url origin https://github.com/chacal88/orchestrator.git
+$ gh repo view chacal88/orchestrator --json name,url   → {"name":"orchestrator","url":"https://github.com/chacal88/orchestrator"}
+$ gh repo view chacal88/orquestrador --json name       → {"name":"orchestrator"}   (redirecionamento)
+$ gh pr view 23 --json url,state                       → {"state":"OPEN","url":"https://github.com/chacal88/orchestrator/pull/23"}
+```

@@ -317,7 +317,7 @@ A 6.4 virou a 7.3: a conferência no app só é possível com o plugin instalado
 
 Estas tarefas não são de uma sessão de fase: a coordenação pede o ok do dono e roda cada uma no momento indicado.
 
-- [ ] 7.1 **Precisa do ok do dono.** Renomear o repositório no GitHub, antes do merge do PR (`design.md`, §9):
+- [x] 7.1 **Precisa do ok do dono.** Renomear o repositório no GitHub, antes do merge do PR (`design.md`, §9):
       `gh repo rename orchestrator --repo chacal88/orquestrador`, e depois
       `git remote set-url origin https://github.com/chacal88/orchestrator.git`. Nunca criar um repositório com o nome
       antigo depois disso. Verificação: `gh repo view chacal88/orchestrator --json name` devolve `orchestrator`, e
