@@ -76,13 +76,13 @@ Arquivos: `orquestrador/hooks/flow.ts`, `orquestrador/hooks/wake.ts`, `orquestra
 `orquestrador/tests/pendentes-harness.test.ts` (novo), `changes/fases-sem-clique/evidence.md`. Depende da fase 1.
 Portões: `testes`, `tipos`.
 
-- [ ] 2.1 `FlowState.tracked?: string[]`. No `tool.call`, depois de um `START_SESSION` que deu certo com
+- [x] 2.1 `FlowState.tracked?: string[]`. No `tool.call`, depois de um `START_SESSION` que deu certo com
       `wake_when_done: true`, o id da filha entra em `tracked`, gravado pelo `inFlowQueue` junto com o
       `keepGrouping` (sem fila reentrante). Verificação: o caso de `tracked` da 2.4 passa — cx: moderate
-- [ ] 2.2 `untracked(ids, tracked)` em `wake.ts`. O `wakeOnce` tira de `pending` as filhas em `tracked` antes do
+- [x] 2.2 `untracked(ids, tracked)` em `wake.ts`. O `wakeOnce` tira de `pending` as filhas em `tracked` antes do
       freio e mantém essas filhas no `seen`. Testes em `wake.test.ts`. `STOP_AS_USER` continua `false`. Verificação:
       `grep -n "STOP_AS_USER = false" orquestrador/hooks/wake.ts` acha a linha; `wake.test.ts` passa — cx: simple
-- [ ] 2.3 Ação `pending` do `flow` (`FLOW_SCHEMA` e função pura no `flow.ts`), como no design: `sessions: [{ key,
+- [x] 2.3 Ação `pending` do `flow` (`FLOW_SCHEMA` e função pura no `flow.ts`), como no design: `sessions: [{ key,
       title, prompt, model?, effort?, use_worktree? }]`, `key` repetida substitui a anterior, só no flow `running`
       desta coordenação e num passo de sessão ou `executar`, limites de tamanho (6 entradas, `title` com até 120 e
       `prompt` com até 20 000 caracteres), `FlowState.pendingStarts` e evento `pending` no log, sem o prompt. A
@@ -92,7 +92,7 @@ Portões: `testes`, `tipos`.
       passo, recusar acima dos limites, sair ao fechar, sair ao andar e o texto novo. Verificação: `flow.test.ts`
       passa, e `grep -n "own_initiative" orquestrador/hooks/flow.ts` não acha mais a instrução do card como caminho
       principal — cx: complex
-- [ ] 2.4 `openPending($, words)` em `register.tsx`, como no design: relê o flow, abre cada entrada com
+- [x] 2.4 `openPending($, words)` em `register.tsx`, como no design: relê o flow, abre cada entrada com
       `$.tool.call({ tool: START_SESSION, …, initiation: 'user_asked', wake_when_done: true, consent: words })`,
       aplica modelo e esforço, para na primeira recusa (o teto do `refuseStart` vale), tira da lista as que abriram e
       grava o evento `pending-opened`. O botão "Abrir as N sessões pendentes" fica no bloco do passo atual do
@@ -100,7 +100,7 @@ Portões: `testes`, `tipos`.
       por quê. Uma recusa do app ao `user_asked` mostra a mensagem de digitar no desktop. Verificação: `grep -n
       "consent" orquestrador/hooks/register.tsx` acha o `consent` só dentro de `openPending`; a 2.5 passa — cx:
       complex
-- [ ] 2.5 Harness:
+- [x] 2.5 Harness:
       - em `autowake-harness.test.ts`: com a opção ligada, uma filha aberta com `wake_when_done: true` que termina o
         turno não gera nenhum `$.prompt.submit`, e uma filha sem `wake_when_done` (por exemplo, aberta por card)
         continua gerando o aviso (C2, C8). Os testes existentes do freio passam sem mudar;
@@ -116,7 +116,7 @@ Portões: `testes`, `tipos`.
       consequência (por exemplo, a limitação do Remote Control no texto). Se algum risco depender do dono e não puder
       ser conferido nesta sessão, ele fica marcado como pendente para o passo de QA, sem marcar o checkbox.
       Verificação: a seção preenchida com uma linha por risco — cx: moderate
-- [ ] 2.7 Evidência: seção "Fase 2" do `evidence.md` com a saída dos portões `testes` e `tipos` e os casos novos como
+- [x] 2.7 Evidência: seção "Fase 2" do `evidence.md` com a saída dos portões `testes` e `tipos` e os casos novos como
       `(pass)`. Verificação: a seção preenchida — cx: simple
 
 ## 3. `/orquestrador` com subcomandos

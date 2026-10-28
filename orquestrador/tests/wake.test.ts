@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'claude-code/testing'
 
 import type { OrchestrationRun, SessionRow } from '../types'
-import { childStops, eligibleChildren, flowProgress, sessionRef, stopPrompt } from '../hooks/wake'
+import { STOP_AS_USER, childStops, eligibleChildren, flowProgress, sessionRef, stopPrompt, untracked } from '../hooks/wake'
 
 const row = (sessionId: string, extra: Partial<SessionRow> = {}): SessionRow => ({
   sessionId, title: `Fase ${sessionId}`, cwd: `/w/wt/${sessionId}`, branch: undefined, isRunning: false, isArchived: false,
@@ -118,4 +118,14 @@ test('the flow moves for the brake when its seq, its closed phases or its plan p
   const done = { ...run, waves: run.waves.map(w => ({ ...w, phases: w.phases.map(p => ({ ...p, status: 'done' as const })) })) }
   expect(flowProgress(flow, done)).not.toBe(base)
   expect(flowProgress({ seq: 4 }, undefined)).toBe('4|0|0')
+})
+
+test('untracked leaves out the children the app follows (opened with wake_when_done), in order', () => {
+  expect(untracked(['local_a', 'local_b', 'local_c'], ['local_b'])).toEqual(['local_a', 'local_c'])
+  expect(untracked(['local_a'], undefined)).toEqual(['local_a'])
+  expect(untracked(['local_a'], ['local_a'])).toEqual([])
+})
+
+test('the stop is still the mod telling a fact, never the owner speaking', () => {
+  expect(STOP_AS_USER).toBe(false)
 })

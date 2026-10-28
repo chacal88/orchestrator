@@ -306,6 +306,16 @@ const pt = {
     answerEmpty: 'Escreva a resposta antes de enviar.',
     grillFailed: 'Não consegui registrar sua resposta ao grill.',
   },
+  pending: {
+    button: (n: number) => (n === 1 ? 'Abrir a sessão pendente' : `Abrir as ${n} sessões pendentes`),
+    hint: (titles: readonly string[]) => `O app não abriu no turno da coordenação: ${titles.join(' · ')}.`,
+    result: (opened: number, left: number, why: string | undefined) =>
+      (opened === 0 ? 'Nenhuma sessão pendente abriu.' : `${opened === 1 ? 'Abriu 1 sessão pendente' : `Abriram ${opened} sessões pendentes`}.`) +
+      (left === 0 ? '' : ` ${left === 1 ? 'Ficou 1' : `Ficaram ${left}`}${why === undefined ? '.' : `: ${why}`}`),
+    appRefused: 'O app não aceitou abrir pelo painel; digite /orquestrador abrir no desktop.',
+    appRefusedMobile: 'Pelo celular o app não abre sessões; digite /orquestrador abrir no desktop.',
+    failed: 'Não consegui abrir as sessões pendentes.',
+  },
   command: {
     description: 'Abre ou fecha o painel da orquestração: OpenSpec, gates, pendências e tarefas',
     closed: 'Painel do orquestrador fechado.',
@@ -516,6 +526,16 @@ const en: UiText = {
     adjustEmpty: 'Write what to adjust before sending.',
     answerEmpty: 'Write the answer before sending.',
     grillFailed: 'Could not record your answer to the grill.',
+  },
+  pending: {
+    button: n => (n === 1 ? 'Open the pending session' : `Open the ${n} pending sessions`),
+    hint: titles => `The app did not open these in the coordination's turn: ${titles.join(' · ')}.`,
+    result: (opened, left, why) =>
+      (opened === 0 ? 'No pending session opened.' : `${opened === 1 ? 'Opened 1 pending session' : `Opened ${opened} pending sessions`}.`) +
+      (left === 0 ? '' : ` ${left} left${why === undefined ? '.' : `: ${why}`}`),
+    appRefused: 'The app did not let the panel open them; type /orquestrador abrir on the desktop.',
+    appRefusedMobile: 'From the phone the app opens no sessions; type /orquestrador abrir on the desktop.',
+    failed: 'Could not open the pending sessions.',
   },
   command: {
     description: 'Opens or closes the orchestration panel: OpenSpec, gates, pending items and tasks',

@@ -18,6 +18,7 @@ import type {
   Lang,
   Languages,
   Localized,
+  PendingStart,
   ProjectSettings,
   Translations,
 } from '../types'
@@ -539,7 +540,8 @@ const enter = (state: FlowState, target: string, by: FlowActor, cause: { from: s
   }
   if (id === FLOW_END) {
     push({ kind: 'done', step: FLOW_END, by: 'mod' })
-    return { state: { ...state, current: FLOW_END, status: 'done', escalation: undefined, seq, updatedAt: at }, events }
+    const { pendingStarts: _pending, ...ended } = state
+    return { state: { ...ended, current: FLOW_END, status: 'done', escalation: undefined, seq, updatedAt: at }, events }
   }
   const step = stepOf(state.flow, id) as FlowStep
   const from = indexOf(state.flow, id)
@@ -566,11 +568,14 @@ const enter = (state: FlowState, target: string, by: FlowActor, cause: { from: s
       : state.reopened !== undefined && id !== state.reopened.step
         ? state.reopened
         : undefined
-  const { reopened: _drop, progress: _progress, ...rest } = state
+  const { reopened: _drop, progress: _progress, pendingStarts: _pending, ...rest } = state
+  // a pending session belongs to the step it was registered on: leaving the step drops it
+  const pendingStarts = (state.pendingStarts ?? []).filter(p => p.step === id)
   state = {
     ...rest,
     ...(reopened === undefined ? {} : { reopened }),
     ...(Object.keys(progress).length === 0 ? {} : { progress }),
+    ...(pendingStarts.length === 0 ? {} : { pendingStarts }),
   }
   const attempts = state.attempts[id] ?? 0
   if (by !== 'owner' && attempts >= step.maxAttempts) {
@@ -870,6 +875,80 @@ export const resolveEscalation = (state: FlowState, choice: string, at: number):
   return { state: moved.state, events: [retried, ...moved.events] }
 }
 
+/** How much `flow pending` keeps: a few phases' prompts, never a dump. */
+export const PENDING_LIMITS = { entries: 6, title: 120, prompt: 20_000 } as const
+
+const PENDING_FIELDS = ['key', 'title', 'prompt', 'model', 'effort', 'use_worktree'] as const
+
+/** One entry as the coordination sent it, checked; a string says what is wrong with it. */
+const pendingEntry = (raw: unknown, step: string, n: number): PendingStart | string => {
+  if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) return `session ${n} is not an object.`
+  const o = raw as Record<string, unknown>
+  const extra = Object.keys(o).filter(k => !(PENDING_FIELDS as readonly string[]).includes(k))
+  if (extra.length > 0) return `session ${n} has unknown fields: ${extra.join(', ')}.`
+  const text = (k: 'key' | 'title' | 'prompt'): string => (typeof o[k] === 'string' ? (o[k] as string).trim() : '')
+  const key = text('key')
+  const title = text('title')
+  const prompt = text('prompt')
+  if (key === '' || title === '' || prompt === '') return `session ${n} needs \`key\`, \`title\` and \`prompt\`.`
+  if (title.length > PENDING_LIMITS.title) return `session ${key}: the title has ${title.length} characters; at most ${PENDING_LIMITS.title}.`
+  if (prompt.length > PENDING_LIMITS.prompt) return `session ${key}: the prompt has ${prompt.length} characters; at most ${PENDING_LIMITS.prompt}.`
+  for (const k of ['model', 'effort'] as const) {
+    if (o[k] !== undefined && (typeof o[k] !== 'string' || (o[k] as string).trim() === '')) return `session ${key}: \`${k}\` must be a non-empty string.`
+  }
+  if (o.use_worktree !== undefined && typeof o.use_worktree !== 'boolean') return `session ${key}: \`use_worktree\` must be true or false.`
+  return {
+    key,
+    step,
+    title,
+    prompt,
+    ...(typeof o.model === 'string' ? { model: o.model.trim() } : {}),
+    ...(typeof o.effort === 'string' ? { effort: o.effort.trim() } : {}),
+    ...(typeof o.use_worktree === 'boolean' ? { use_worktree: o.use_worktree } : {}),
+  }
+}
+
+/**
+ * `flow pending`: the sessions the app refused to open in the coordination's turn, kept for the owner's
+ * press. Only on a running flow's session step or its loop; a repeated `key` replaces the one before. The
+ * log names the keys, never the prompt.
+ */
+export const registerPending = (state: FlowState, sessions: unknown, at: number): Moved | { error: string } => {
+  if (state.status !== 'running') return { error: `the flow is ${state.status}; pending sessions are kept only while it runs.` }
+  const step = currentStep(state)
+  if (step === undefined || (step.kind !== 'session' && step.kind !== 'loop')) {
+    return { error: `the current step ${state.current} opens no session; pending sessions are kept only on a session step or the phase loop.` }
+  }
+  if (!Array.isArray(sessions) || sessions.length === 0) return { error: '`sessions` must list at least one session.' }
+  const entries: PendingStart[] = []
+  for (const [i, raw] of sessions.entries()) {
+    const entry = pendingEntry(raw, step.id, i + 1)
+    if (typeof entry === 'string') return { error: entry }
+    entries.push(entry)
+  }
+  // a repeated key replaces the entry before it, in the list kept and in this call alike
+  const byKey = new Map((state.pendingStarts ?? []).map(p => [p.key, p] as const))
+  for (const entry of entries) {
+    byKey.delete(entry.key)
+    byKey.set(entry.key, entry)
+  }
+  const merged = [...byKey.values()]
+  if (merged.length > PENDING_LIMITS.entries) {
+    return { error: `${merged.length} pending sessions; at most ${PENDING_LIMITS.entries}. Open some first.` }
+  }
+  const event: FlowEvent = { seq: state.seq + 1, at, kind: 'pending', step: step.id, by: 'session', note: merged.map(p => p.key).join(', ') }
+  return { state: { ...state, pendingStarts: merged, seq: state.seq + 1, updatedAt: at }, events: [event] }
+}
+
+/** The flow without the pending sessions that match: opened (by key) or started by the model (by title). */
+export const dropPending = (state: FlowState, match: (p: PendingStart) => boolean): FlowState => {
+  const before = state.pendingStarts ?? []
+  const kept = before.filter(p => !match(p))
+  if (kept.length === before.length) return state
+  const { pendingStarts: _pending, ...rest } = state
+  return kept.length === 0 ? rest : { ...rest, pendingStarts: kept }
+}
+
 /** The owner's press: an escalation's choice while one is open, else the owner step's outcome. */
 export const ownerPress = (state: FlowState, step: string, outcome: string, at: number, note?: string): Moved | { error: string } =>
   state.status === 'escalated' && state.escalation?.step === step
@@ -1026,6 +1105,7 @@ export const flowView = (state: FlowState, languages: Languages = DEFAULT_LANGUA
     ownerChoices,
     escalation: state.escalation,
     steps,
+    pendingStarts: state.status === 'running' ? (state.pendingStarts ?? []).map(p => ({ key: p.key, title: p.title })) : [],
   }
 }
 
@@ -1051,6 +1131,15 @@ const projectNote = (step: FlowStep): string => {
   const fields = (step.merge ?? step.deploy)?.fromProject ?? []
   return fields.length === 0 ? '' : ` From the project's settings (not the workflow): ${fields.join(', ')}.`
 }
+
+/**
+ * What the coordination does when the app refuses a start in its turn: the mod keeps the session and the owner
+ * opens every pending one with a single press, instead of one card per phase.
+ */
+const PENDING_RULE =
+  'If the app refuses the start in this turn (it was set off by another session\'s message or an automatic event), ' +
+  'register the session with action "pending" (`sessions`: key = the phase id or this step id, title, the same prompt, model, effort, use_worktree) ' +
+  'and tell the owner it is one press on "Abrir as N sessões pendentes" in the orquestrador panel; then wait, and never do the step here.'
 
 const describeStep = (state: FlowState, step: FlowStep, where: string, outcomes: string): string =>
   describeStepBody(state, step, where, outcomes) + projectNote(step)
@@ -1080,15 +1169,13 @@ const describeStepBody = (state: FlowState, step: FlowStep, where: string, outco
     case 'session':
       return (
         `${where}. Open a session for this step with start_session (initiation "user_asked" with wake_when_done, the owner asked to orchestrate), ` +
-        "using the step's agent, model and effort; do not do the step in this session. If the app refuses the start in this turn " +
-        '(it was set off by another session\'s message or an automatic event), propose it as a card (initiation "own_initiative", same prompt), ' +
-        'without wake_when_done (the app refuses it on a card; it wakes you when the session ends anyway), tell the owner to click it and wait; never do the step here. The session ends its turn with its result. ' +
+        "using the step's agent, model and effort; do not do the step in this session. " + PENDING_RULE + ' The session ends its turn with its result. ' +
         `When it answers, report one of the step's outcomes with action "report": ${outcomes}.`
       )
     case 'loop': {
       const closed = Object.keys(state.closed ?? {})
       return (
-        `${where}. Run the phases of tasks.md, one session per phase (start_session, initiation "user_asked", never this session); close each with action "close" and its \`phase\` id once its gates ` +
+        `${where}. Run the phases of tasks.md, one session per phase (start_session, initiation "user_asked" with wake_when_done, never this session). ${PENDING_RULE} Close each phase with action "close" and its \`phase\` id once its gates ` +
         'passed, its tasks are ticked and its work is committed (the mod then archives its session). The step ends ' +
         `on its own when every phase is closed (→ ${step.outcomes[LOOP_DONE]?.next}).` +
         (closed.length > 0 ? ` Closed: ${closed.join(', ')}.` : '')

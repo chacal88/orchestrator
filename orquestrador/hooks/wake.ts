@@ -77,6 +77,16 @@ export const childStops = <R extends SessionRow>(
 export const sessionRef = (row: SessionRow): string => row.sessionId.replace(/[^A-Za-z0-9_-]/g, '').slice(0, 64)
 
 /**
+ * The children the mod still tells about: the ones the app does not follow. A child opened with
+ * `wake_when_done` (kept in the flow's `tracked`) wakes the coordination by the app itself, so the mod's
+ * stop would tell it twice.
+ */
+export const untracked = (ids: readonly string[], tracked: readonly string[] | undefined): string[] => {
+  const followed = new Set(tracked ?? [])
+  return ids.filter(id => !followed.has(id))
+}
+
+/**
  * Whether the stop goes as the owner's own words. Off: the mod tells a fact, like the click's prompt. The
  * plan B of `design.md`, should the app refuse `user_asked` after it: turn this on, and the text says it is
  * the panel speaking for the owner's option.

@@ -110,14 +110,36 @@ A resposta do `flow` no passo de sessão e no `executar` (`flow.ts` ~1082-1091) 
 Com `pendingStarts` não vazio, o painel mostra, no bloco do passo atual, um botão só: **"Abrir as N sessões
 pendentes"**. O clique chama `openPending($, words)`:
 
-1. relê o flow (dentro da fila);
-2. para cada entrada, em ordem: `$.tool.call({ tool: START_SESSION, title, prompt, initiation: 'user_asked',
-   wake_when_done: true, use_worktree, consent: words })`. Depois, `set_session_model`/`set_session_effort` quando a
-   entrada traz esses campos, como a skill faz hoje;
-3. a chamada passa pelo `tool.call` do mod, que é outro hook. Por isso `refuseStart` (teto de 3 sessões vivas), o
-   agrupamento e o `tracked` valem sem código novo. Uma recusa interrompe o laço: o que sobrou fica na lista, e o
-   toast diz quantas abriram, quantas ficaram e por quê;
-4. tira da lista as entradas que abriram e grava o evento `pending-opened` no log.
+1. relê o flow dentro do `inFlowQueue` e **sai da fila** antes de abrir qualquer sessão. A fila não é reentrante: o
+   agrupamento de cada abertura (`groupQuietly` → `keepGrouping`) grava o flow pela mesma fila, e esperaria por si
+   mesmo se o `openPending` ainda estivesse dentro dela;
+2. para cada entrada, em ordem: o mesmo portão do hook (`refuseStart`, rígido em "barrar", só aviso em "lembrar",
+   nada com o clone inativo); depois `$.tool.call({ tool: START_SESSION, title, prompt, initiation: 'user_asked',
+   wake_when_done: true, use_worktree, consent: words })`; depois `set_session_model`/`set_session_effort` quando a
+   entrada traz esses campos, como a skill faz hoje; e o `groupQuietly` com a filha a guardar em `tracked`;
+3. **a chamada do mod não passa pelo `tool.call` do próprio mod.** O plano supunha que sim ("todo hook menos o que
+   chamou"), mas o harness da fase 2 mostrou o contrário: um `start_session` disparado pelo clique chega ao app sem
+   nenhum `get_session`/`list_sessions` antes, ou seja, sem `refuseStart` e sem agrupamento. Por isso o
+   `openPending` aplica o portão e o agrupamento ele mesmo, fora da fila. Se no app real o hook também rodar, o
+   portão e o agrupamento rodam duas vezes, e as duas são idempotentes (o `keepGrouping` não duplica `sessions` nem
+   `tracked`). Uma recusa interrompe o laço: o que sobrou fica na lista, e o toast diz quantas abriram, quantas
+   ficaram e por quê;
+4. tira da lista as entradas que abriram numa **volta nova da fila**, relendo o disco, e grava o evento
+   `pending-opened` no log (com as `key`, sem o prompt).
+
+**Com a permissão das ferramentas de sessão em "ask".** O portão do passo 2 é o `refuseStart`, que conta as sessões
+vivas com `loadSessions` → `selfRowNow`/`listCall` → `mayList`. Ele não sabe que o pedido veio de um clique do dono:
+com "ask", o `mayList` não chama, o `self` fica indefinido, e a abertura é recusada com o motivo da fase 1 ("allow
+get_session and list_sessions"). Nenhuma sessão abre, a lista fica como estava, o toast diz o motivo e o painel
+mostra o aviso de permissão. Depois que o dono permite, o mesmo clique abre. O harness cobre os dois casos.
+
+O `saveFlow` mantém uma entrada pendente só quando o estado gravado e o disco a têm: uma escrita lida antes de uma
+abertura não traz de volta a entrada que a abertura tirou. A ação `pending` grava pela própria volta da fila, lendo o
+disco. O `tracked` é somado com o do disco, como o `sessions`.
+
+A conferência "B" (descartar ao abrir uma entrada cuja fase do plano já tem sessão viva) não entrou na fase 2: o teto
+do `refuseStart` e a saída por título (um `START_SESSION` do modelo com o mesmo `title`) cobrem os casos vistos. Fica
+como melhoria, se a 2.6 mostrar duplicata.
 
 `words` é a frase do gesto real do dono, no formato que o `ToolCallReserved.consent` descreve:
 
@@ -140,7 +162,10 @@ O harness não reproduz as regras do app. O executor confere no app real e regis
    `origin.kind === 'bridge'`. Se o app recusar, isso fica como limitação: o painel no celular e o comando dizem
    "pelo celular o app não abre sessões; digite `/orquestrador abrir` no desktop".
 3. **O `wake_when_done` de uma filha aberta pelo mod acorda a coordenação?** O `$.tool.call` roda no laço da
-   sessão. Se o app não acordar, o mod não grava essas filhas em `tracked`, e o aviso da opção cobre esses casos.
+   sessão. Se o app não acordar, o plano B é o mod não gravar essas filhas em `tracked`, e o aviso da opção cobre
+   esses casos. **O plano B não está no código da fase 2**: o `openPending` grava em `tracked` toda filha que abre.
+   Ele só acontece depois da conferência 2.6, se ela mostrar que o app não acorda, e com outra mudança de código
+   (tirar o `track` do `groupQuietly` do `openPending`, com um teste que prove o aviso para essas filhas).
 4. **A corrente depois do clique.** O `<side-sessions-event>` de uma filha aberta pelo mod pode não contar como
    corrente do dono. Nesse caso, a próxima onda volta para `pending`, e o pior caso é um clique por onda, não um por
    fase. Fica registrado.

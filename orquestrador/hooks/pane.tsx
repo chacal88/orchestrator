@@ -59,6 +59,8 @@ export type PaneActions = {
   skip: (gate: GateView) => () => void
   /** The owner's answer to a flow step: the only way an owner step moves. */
   answerFlow: (change: string, step: string, outcome: string) => () => void
+  /** The owner's "Abrir as N sessões pendentes": opens what the coordination kept with `flow pending`. */
+  openPending: (change: string, label: string) => () => void
   /** The same answer with the owner's note typed in the panel (a mockup adjustment). */
   noteFlow: (change: string, step: string, outcome: string) => (value: string) => void
   /** What the owner has typed in the grill's answer fields, by question text. */
@@ -1042,6 +1044,26 @@ export const renderPane = (
         ]
   }
 
+  /**
+   * The sessions the app refused in the coordination's turn: their titles and one button for all of them, in
+   * the current step, on every surface (the phone's panel too).
+   */
+  const pendingBlock = (): RenderElement | undefined => {
+    const pending = flow?.status === 'running' ? (flow.pendingStarts ?? []) : []
+    if (flow === undefined || pending.length === 0) return undefined
+    const label = t.pending.button(pending.length)
+    return (
+      <Box flexDirection="column" marginTop={1} minWidth={0}>
+        <Text dimColor wrap="wrap">
+          {t.pending.hint(pending.map(p => p.title))}
+        </Text>
+        <Button key="pending:open" onPress={actions.openPending(flow.change, label)}>
+          {label}
+        </Button>
+      </Box>
+    )
+  }
+
   /** The harness the change follows: the flow's steps, the phases' gates while the loop runs, the final gates. */
   const gatesCard = (): RenderElement[] => {
     const anyPhaseGates = waves.flat().some(p => (p.gates?.length ?? 0) > 0)
@@ -1075,6 +1097,7 @@ export const renderPane = (
                   </Text>
                 )}
                 {step.kind === 'loop' && <Box flexDirection="column" marginTop={1} minWidth={0}>{loopPhases()}</Box>}
+                {pendingBlock()}
               </Box>
             ) : (
               stepLine(step)

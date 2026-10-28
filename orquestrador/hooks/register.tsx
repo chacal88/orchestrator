@@ -62,6 +62,7 @@ import {
   describeStepAgent,
   describeWorkflow,
   detectedOutcome,
+  dropPending,
   executedTextShort,
   noteOwnerStep,
   observeDeploy,
@@ -72,6 +73,7 @@ import {
   stepTitle,
   ownerPress,
   pressedToast,
+  registerPending,
   wakePrompt,
   startFlow,
 } from './flow'
@@ -100,7 +102,7 @@ import { DEFAULT_LANGUAGES, contentRule, uiText } from './i18n'
 import type { UiText } from './i18n'
 import { renderBand, renderPane } from './pane'
 import { readActivation, readAutowake, registryDir } from './activation'
-import { STOP_AS_USER, childStops, eligibleChildren, flowProgress, sessionRef, stopPrompt } from './wake'
+import { STOP_AS_USER, childStops, eligibleChildren, flowProgress, sessionRef, stopPrompt, untracked } from './wake'
 import { WORKFLOWS_PANE, drawWorkflows, startWorkflowsLoad, toggleWorkflowsPane } from './workflows-pane'
 import { findAgent, loadConfig as loadProjectConfig, loadFlows } from './flow-files'
 import { firstSite, issueUrl, jiraKeys, moveFor, parseIssue, parseTransitions, wishes } from './jira'
@@ -168,6 +170,8 @@ const AUTOWAKE_MAX_SAME_CHILD = 3
 const AUTOWAKE_MAX_SAME_PROGRESS = 10
 const GRILL_DRAFTS = { plugin: 'orquestrador', key: 'grillDrafts' } as const
 const START_SESSION = 'mcp__ccd_session__start_session'
+const SET_SESSION_MODEL = 'mcp__ccd_session_mgmt__set_session_model'
+const SET_SESSION_EFFORT = 'mcp__ccd_session_mgmt__set_session_effort'
 const TRANSITION_SUFFIX = '__transitionJiraIssue'
 const ARCHIVE_SESSION = 'mcp__ccd_session_mgmt__archive_session'
 const EDIT_TOOLS = new Set(['Edit', 'Write', 'MultiEdit', 'NotebookEdit'])
@@ -788,7 +792,8 @@ const wakeOnce = async (
   const eligible = eligibleChildren(plan, { sessions: flow.sessions ?? [], excluded }, self.sessionId, children)
   const looked = childStops(seen ?? {}, eligible, await $.clock.now())
   const { value: before } = await $.state.get(AUTOWAKE_PENDING)
-  const pending = [...new Set([...(before ?? []), ...looked.stopped.map(sessionRef)])]
+  // a child opened with wake_when_done is woken for by the app: it stays in `seen`, but the mod tells nothing of it
+  const pending = untracked([...new Set([...(before ?? []), ...looked.stopped.map(sessionRef)])], flow.tracked)
   await $.state.set(AUTOWAKE_SEEN, asJson(looked.seen))
   if (self.isRunning || pending.length === 0) {
     if (pending.length !== (before ?? []).length) await $.state.set(AUTOWAKE_PENDING, pending)
@@ -850,8 +855,15 @@ const siblingFlows = async ($: EngineInterface, change: string, root: string): P
  * never lands ungrouped. Children of other changes stay out, and the ones the app dragged along with
  * the coordinator go back to their own group.
  */
-const groupFamily = async ($: EngineInterface, change: string, started?: string): Promise<string | undefined> => {
-  if (!(await canCall($, MOVE_SESSIONS))) return 'sidebar indisponível para agrupar'
+const groupFamily = async ($: EngineInterface, change: string, started?: string, start: StartSeen = {}): Promise<string | undefined> => {
+  if (!(await canCall($, MOVE_SESSIONS))) {
+    // with no sidebar the flow still learns what the start means for the wake and the pending list
+    if (start.track !== undefined || start.title !== undefined) {
+      const flow = await loadFlowState($, change)
+      if (flow !== undefined && ownsFlow(flow, await $.session.root())) await keepGrouping($, change, [], undefined, start)
+    }
+    return 'sidebar indisponível para agrupar'
+  }
   const root = await $.session.root()
   const self = await selfRowNow($)
   const listedFamily = await listCall($, LIST_SESSIONS, { linked: true, limit: 50 }).catch(() => ({ isError: true }) as CallResult)
@@ -874,7 +886,7 @@ const groupFamily = async ($: EngineInterface, change: string, started?: string)
   // an error text is "do not know", never "no such group": creating one now would duplicate it
   if (listed.isError === true || listed.deny !== undefined || !groupsLegible(listed.text)) {
     $.ui.log(`orquestrador: list_groups não respondeu; o grupo de ${change} fica para o próximo gancho`)
-    if (state !== undefined) await keepGrouping($, change, fresh, undefined)
+    if (state !== undefined) await keepGrouping($, change, fresh, undefined, start)
     return undefined
   }
   const name = groupName(change)
@@ -882,7 +894,7 @@ const groupFamily = async ($: EngineInterface, change: string, started?: string)
   let groupId = state?.groupId !== undefined && known.includes(state.groupId) ? state.groupId : findGroupId(listed.text, name)
   if (groupId === undefined) groupId = findGroupId((await callTool($, { tool: CREATE_GROUP, name })).text)
   if (groupId === undefined) return `não consegui criar o grupo ${name}`
-  const kept = state === undefined ? undefined : await keepGrouping($, change, fresh, groupId)
+  const kept = state === undefined ? undefined : await keepGrouping($, change, fresh, groupId, start)
 
   const run = await loadRun($, root).catch(() => undefined)
   const plan = run?.change === change ? run : undefined
@@ -908,18 +920,40 @@ const groupFamily = async ($: EngineInterface, change: string, started?: string)
 }
 
 /**
- * What the grouping adds to the flow, merged into the flow as it is on disk now: the sidebar calls in
- * between may let a `flow report` write it, and the grouping only owns `sessions` and `groupId`.
+ * What a start that went through says beyond the grouping: the child to keep in `tracked` (it was opened
+ * with `wake_when_done`, so the app wakes the coordination) and the title, which takes a pending session of
+ * the same title out of the list (the model opened it itself).
  */
-const keepGrouping = ($: EngineInterface, change: string, fresh: readonly string[], groupId: string | undefined): Promise<FlowState | undefined> =>
+type StartSeen = { track?: string; title?: string }
+
+/**
+ * What the grouping adds to the flow, merged into the flow as it is on disk now: the sidebar calls in
+ * between may let a `flow report` write it, and the grouping only owns `sessions`, `groupId` and `tracked`
+ * (and drops the pending session a start opened). One write, in the queue, with the grouping's own.
+ */
+const keepGrouping = (
+  $: EngineInterface,
+  change: string,
+  fresh: readonly string[],
+  groupId: string | undefined,
+  start: StartSeen = {},
+): Promise<FlowState | undefined> =>
   inFlowQueue(async () => {
-    const now = await loadFlowState($, change)
-    if (now === undefined) return undefined
+    const disk = await loadFlowState($, change)
+    if (disk === undefined) return undefined
+    const title = start.title?.trim()
+    const now = title === undefined || title === '' ? disk : dropPending(disk, p => p.title === title)
     const sessions = [...new Set([...(now.sessions ?? []), ...fresh])]
     const added = sessions.length !== (now.sessions ?? []).length
     const regrouped = groupId !== undefined && now.groupId !== groupId
-    if (!added && !regrouped) return now
-    const merged: FlowState = { ...now, ...(added ? { sessions } : {}), ...(regrouped ? { groupId } : {}) }
+    const track = start.track !== undefined && !(now.tracked ?? []).includes(start.track) ? start.track : undefined
+    if (!added && !regrouped && track === undefined && now === disk) return now
+    const merged: FlowState = {
+      ...now,
+      ...(added ? { sessions } : {}),
+      ...(regrouped ? { groupId } : {}),
+      ...(track === undefined ? {} : { tracked: [...(now.tracked ?? []), track] }),
+    }
     // already merged with the disk, and its groupId is the new one: written as it is
     await writeFlowNow($, merged, [])
     return merged
@@ -928,11 +962,11 @@ const keepGrouping = ($: EngineInterface, change: string, fresh: readonly string
 /** One grouping at a time: two start_session at once would both miss the group and create it twice. */
 let grouping: Promise<void> = Promise.resolve()
 
-const groupQuietly = ($: EngineInterface, change: string | undefined, started?: string): Promise<void> => {
+const groupQuietly = ($: EngineInterface, change: string | undefined, started?: string, start: StartSeen = {}): Promise<void> => {
   if (change === undefined) return Promise.resolve()
   const turn = grouping.then(async () => {
     try {
-      const problem = await groupFamily($, change, started)
+      const problem = await groupFamily($, change, started, start)
       if (problem !== undefined) $.ui.toast(`Orquestrador: ${problem}`)
     } catch (error) {
       $.ui.log(`orquestrador: ${describeError('agrupar', error)}`)
@@ -1330,7 +1364,7 @@ const FLOW_SCHEMA = {
   properties: {
     action: {
       type: 'string',
-      enum: ['list', 'start', 'status', 'report', 'round', 'mockup', 'close', 'note'],
+      enum: ['list', 'start', 'status', 'report', 'round', 'mockup', 'close', 'note', 'pending'],
       description:
         'list: the flows on offer. start: begin a flow for a change. status: where the change stands and who ' +
         'answers the current step. report: the outcome of the current session step. round: record one ' +
@@ -1338,7 +1372,9 @@ const FLOW_SCHEMA = {
         'mockup the owner reviews while the flow is on the mockup. close: during the phase loop, ' +
         'close `phase` once its gates passed, its tasks are ticked in tasks.md and its work is committed; the mod ' +
         'archives its session and ends the loop when every phase is closed (without `phase`, it only checks that). ' +
-        'note: leave `note` for the owner step that waits (e.g. what QA asked); it joins the owner\'s answer.',
+        'note: leave `note` for the owner step that waits (e.g. what QA asked); it joins the owner\'s answer. ' +
+        'pending: on a session step or the phase loop, keep the `sessions` the app refused to start in this turn; the owner ' +
+        'opens them all with one press on "Abrir as N sessões pendentes" in the panel (a repeated `key` replaces the one before).',
     },
     phase: { type: 'string', description: 'close: the phase id, as in the published plan (e.g. "4.6") or a tasks.md section number.' },
     change: {
@@ -1368,6 +1404,25 @@ const FLOW_SCHEMA = {
     },
     amend: { type: 'boolean', description: 'round: merge into the latest round (fill answers) instead of adding one.' },
     artifact: { type: 'string', description: 'mockup: the mockup\'s Artifact URL or file path.' },
+    sessions: {
+      type: 'array',
+      maxItems: 6,
+      description:
+        'pending: the sessions to keep, each as start_session would take it. `key` is the phase id ("2", "4.6") or the step id ' +
+        '("planejar"). At most 6, a title of at most 120 and a prompt of at most 20000 characters.',
+      items: {
+        type: 'object',
+        properties: {
+          key: { type: 'string' },
+          title: { type: 'string', maxLength: 120 },
+          prompt: { type: 'string', maxLength: 20000 },
+          model: { type: 'string' },
+          effort: { type: 'string' },
+          use_worktree: { type: 'boolean' },
+        },
+        required: ['key', 'title', 'prompt'],
+      },
+    },
   },
   required: ['action'],
 }
@@ -1410,7 +1465,7 @@ const inFlowQueue = <T,>(fn: () => Promise<T>): Promise<T> => {
 }
 
 /**
- * Writes a flow read earlier, keeping what the grouping added to it on disk since (`sessions`, `groupId`):
+ * Writes a flow read earlier, keeping what the grouping added to it on disk since (`sessions`, `groupId`, `tracked`):
  * a session adopted while a `flow report` or `close` worked is not lost. Only the grouping owns those two
  * fields, so the disk wins for `groupId`. A flow started anew (another `startedAt`) takes nothing from the old one.
  */
@@ -1420,7 +1475,23 @@ const saveFlow = ($: EngineInterface, state: FlowState, events: readonly FlowEve
     if (disk === undefined || disk.startedAt !== state.startedAt) return writeFlowNow($, state, events)
     const sessions = [...new Set([...(state.sessions ?? []), ...(disk.sessions ?? [])])]
     const groupId = disk.groupId ?? state.groupId
-    await writeFlowNow($, { ...state, ...(state.sessions === undefined && disk.sessions === undefined ? {} : { sessions }), ...(groupId === undefined ? {} : { groupId }) }, events)
+    const tracked = [...new Set([...(state.tracked ?? []), ...(disk.tracked ?? [])])]
+    // a pending session stays only where both kept it: the write dropped it (a phase closed, the step left),
+    // or a start took it out on disk since the read; `flow pending` adds through its own turn of the queue
+    const onDisk = disk.pendingStarts ?? []
+    const pendingStarts = (state.pendingStarts ?? []).filter(p => onDisk.some(d => d.key === p.key && d.title === p.title))
+    const { pendingStarts: _pending, ...rest } = state
+    await writeFlowNow(
+      $,
+      {
+        ...rest,
+        ...(state.sessions === undefined && disk.sessions === undefined ? {} : { sessions }),
+        ...(groupId === undefined ? {} : { groupId }),
+        ...(tracked.length === 0 ? {} : { tracked }),
+        ...(pendingStarts.length === 0 ? {} : { pendingStarts }),
+      },
+      events,
+    )
   })
 
 /** The state file and its append-only log, both written by the mod alone. Only from inside `inFlowQueue`. */
@@ -1578,7 +1649,8 @@ const handleFlowTool = async ($: EngineInterface, input: Record<string, unknown>
     await saveFlow($, noted.state, noted.events)
     return { result: `Note kept for the owner's answer. ${describeFlow(noted.state)}` }
   }
-  if (action !== 'report') return flowError('action must be list, start, status, report, round, mockup, close or note.')
+  if (action === 'pending') return keepPending($, picked, input.sessions)
+  if (action !== 'report') return flowError('action must be list, start, status, report, round, mockup, close, note or pending.')
   if (typeof input.step !== 'string' || typeof input.outcome !== 'string') {
     return flowError('`step` and `outcome` are required to report.')
   }
@@ -1631,6 +1703,111 @@ const archiveSession = async ($: EngineInterface, sessionId: string, reason: str
  * session's work is committed; the mod then archives that session. Once every phase is closed the
  * mod ends the loop itself: no session reports it.
  */
+/**
+ * `flow pending`: only the coordination of a running flow keeps sessions for the owner's press. Read and
+ * written in one turn of the queue, from the disk: a start's grouping may have dropped an entry since.
+ */
+const keepPending = async ($: EngineInterface, picked: FlowState, sessions: unknown): Promise<FlowReply> => {
+  const self = await selfId($).catch(() => undefined)
+  if (picked.coordinatorSession !== undefined && picked.coordinatorSession !== self) {
+    return flowError('refused: only the session that coordinates this flow keeps its pending sessions.')
+  }
+  const at = await $.clock.now()
+  const kept = await inFlowQueue(async () => {
+    const disk = (await loadFlowState($, picked.change)) ?? picked
+    const moved = registerPending(disk, sessions, at)
+    if (!('error' in moved)) await writeFlowNow($, moved.state, moved.events)
+    return moved
+  })
+  if ('error' in kept) {
+    await logFlowRefusal($, picked, picked.current, 'session', kept.error)
+    return flowError(`refused: ${kept.error}`)
+  }
+  await refreshQuietly($)
+  const n = kept.state.pendingStarts?.length ?? 0
+  return {
+    result:
+      `Kept ${n} pending session(s): ${(kept.state.pendingStarts ?? []).map(p => p.key).join(', ')}. Tell the owner it is one press on ` +
+      `"Abrir as ${n} sessões pendentes" in the orquestrador panel; the mod opens them with wake_when_done, so wait for them to report. ` +
+      describeFlow(kept.state),
+  }
+}
+
+/** What the owner's press on "Abrir as N sessões pendentes" did: the keys opened, how many stayed and why. */
+type PendingOpened = { opened: string[]; left: number; why?: string; byApp: boolean }
+
+/**
+ * Opens the sessions the coordination kept with `flow pending`, on the owner's press. `words` are the owner's
+ * gesture as it happened (the press, or the typed command): the only place the mod hands a start the
+ * owner's words, which the app reads as the owner asking. The flow is read in the queue and the queue let
+ * go before the starts: the grouping of each start writes the flow through the same queue (it would wait
+ * on itself). A start the mod makes from a press does not pass its own `tool.call` hook, so the same gate
+ * and the same grouping run here: `refuseStart` (the ceiling, the session tools on "ask") as the hook holds
+ * it in this mode, then `groupQuietly` with the child to keep in `tracked`. The first refusal stops the loop
+ * and the rest stays. The opened ones leave the list in a turn of their own, with the disk read again.
+ */
+const openPending = async ($: EngineInterface, change: string, words: string): Promise<PendingOpened> => {
+  const read = await inFlowQueue(() => loadFlowState($, change))
+  const entries = read?.status === 'running' ? (read.pendingStarts ?? []) : []
+  if (read === undefined || entries.length === 0) return { opened: [], left: 0, byApp: false }
+  const self = await selfId($).catch(() => undefined)
+  const mode = await activeMode($)
+  const opened: string[] = []
+  let why: string | undefined
+  let byApp = false
+  for (const entry of entries) {
+    // the same gate the hook holds on a start: rigid in "barrar", a warning in "lembrar", nothing when inactive
+    const refusal = mode === undefined ? undefined : await refuseStart($)
+    if (refusal !== undefined && mode === 'barrar') {
+      why = refusal
+      break
+    }
+    if (refusal !== undefined) {
+      $.ui.toast(`Orchestrator gate: ${refusal}`)
+      await noteReminded($, `Orchestrator gate: ${refusal}`).catch(() => undefined)
+    }
+    const ran = (await callTool($, {
+      tool: START_SESSION,
+      title: entry.title,
+      prompt: entry.prompt,
+      initiation: 'user_asked',
+      wake_when_done: true,
+      ...(entry.use_worktree === undefined ? {} : { use_worktree: entry.use_worktree }),
+      consent: words,
+    }).catch(error => ({ isError: true, text: describeError('start_session', error) }) as CallResult)) as CallResult & { result?: unknown }
+    if (ran.deny !== undefined || ran.isError === true) {
+      why = (ran.deny ?? ran.text ?? '').replace(/^Orchestrator gate: /, '').slice(0, 240)
+      // the mod's own refusal (the ceiling, the permission) is not the app refusing a start from the panel
+      byApp = ran.deny === undefined || !ran.deny.startsWith('Orchestrator')
+      break
+    }
+    opened.push(entry.key)
+    const text = ran.text ?? (typeof ran.result === 'string' ? ran.result : JSON.stringify(ran.result ?? ''))
+    const id = startedSessionId(text, self)
+    if (id === undefined) continue
+    await groupQuietly($, change, id, { track: id, title: entry.title })
+    if (entry.model !== undefined) await callTool($, { tool: SET_SESSION_MODEL, session_id: id, model: entry.model }).catch(() => undefined)
+    if (entry.effort !== undefined) await callTool($, { tool: SET_SESSION_EFFORT, session_id: id, effort: entry.effort }).catch(() => undefined)
+  }
+  if (opened.length > 0) {
+    await inFlowQueue(async () => {
+      const now = await loadFlowState($, change)
+      if (now === undefined || now.startedAt !== read.startedAt) return
+      const event: FlowEvent = { seq: now.seq, at: await $.clock.now(), kind: 'pending-opened', step: now.current, by: 'owner', note: opened.join(', ') }
+      await writeFlowNow($, dropPending(now, p => opened.includes(p.key)), [event])
+    })
+  }
+  return { opened, left: entries.length - opened.length, ...(why === undefined ? {} : { why }), byApp }
+}
+
+/** The panel's press: opens the pending sessions and says how many opened, how many stayed and why. */
+const pressPending = async ($: EngineInterface, change: string, label: string, mobile: boolean): Promise<void> => {
+  const t = (await textNow($)).pending
+  const done = await openPending($, change, `The user pressed "${label}" in the orquestrador panel.`)
+  await refreshQuietly($)
+  $.ui.toast(t.result(done.opened.length, done.left, done.why) + (done.byApp ? ` ${mobile ? t.appRefusedMobile : t.appRefused}` : ''))
+}
+
 const closeLoopPhase = async ($: EngineInterface, state: FlowState, phase: unknown): Promise<FlowReply> => {
   const refusal = loopRefusal(state)
   if (refusal !== undefined) {
@@ -2148,7 +2325,11 @@ export const register: Register = on => {
       const change = await currentChange($, await $.session.root()).catch(() => undefined)
       const result = ran as CallResult & { result?: unknown }
       const text = result.text ?? (typeof result.result === 'string' ? result.result : JSON.stringify(result.result ?? ''))
-      await groupQuietly($, change, startedSessionId(text, await selfId($).catch(() => undefined)))
+      const started = startedSessionId(text, await selfId($).catch(() => undefined))
+      await groupQuietly($, change, started, {
+        ...(input.wake_when_done === true && started !== undefined ? { track: started } : {}),
+        ...(typeof input.title === 'string' ? { title: input.title } : {}),
+      })
     }
 
     const { value: waiting } = await $.state.get(WAITING)
@@ -2234,6 +2415,9 @@ export const register: Register = on => {
       },
       answerFlow: (change, step, outcome) => () => {
         void pressFlow($, change, step, outcome).catch(() => $.ui.toast(t.flowFailed))
+      },
+      openPending: (change, label) => () => {
+        void pressPending($, change, label, e.surface === 'mobile').catch(() => $.ui.toast(uiText(view.languages?.ui).pending.failed))
       },
       noteFlow: (change, step, outcome) => (value: string) => {
         if (value.trim() === '') {
