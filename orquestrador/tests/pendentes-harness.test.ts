@@ -280,3 +280,25 @@ test('only the pending press hands a start the owner\'s words: an owner step pre
   expect(w.prompts).toHaveLength(1)
   expect(w.calls.some(c => 'consent' in c)).toBe(false)
 })
+
+/** The clone on "lembrar": the file's mark and the record the panel keeps for it. */
+const lembrar = (w: World) => {
+  w.disk.set(ACTIVE[0], JSON.stringify({ env: { ORQUESTRADOR: 'lembrar' } }))
+  w.disk.set(`${BASE}/activation.json`, JSON.stringify({ '/w': { level: 'lembrar', at: 1 } }))
+}
+
+test('on "lembrar" with the session tools on "ask" the press opens none (it cannot count the ceiling) and shows the permission notice; on "allow" it opens', async ($, on) => {
+  const w = world(on)
+  lembrar(w)
+  await atLoopWithPending($, w)
+  w.permission = 'ask'
+  await press($)
+  expect(starts(w)).toEqual([])
+  expect(saved(w).pendingStarts).toHaveLength(3)
+  expect(w.toasts.at(-1)).toMatch(/^Nenhuma sessão pendente abriu\. Ficaram 3: .*allow get_session and list_sessions/)
+
+  w.permission = 'allow'
+  await press($)
+  expect(starts(w)).toHaveLength(3)
+  expect(saved(w).pendingStarts).toBeUndefined()
+})

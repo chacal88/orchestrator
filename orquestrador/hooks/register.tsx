@@ -320,6 +320,12 @@ const mayList = async ($: EngineInterface, tool: string, input: Record<string, u
   return allowed
 }
 
+/** The permission notice when the session tools wait on the owner (`permission-needed`), else undefined. */
+const permissionWarning = async ($: EngineInterface): Promise<string | undefined> => {
+  const { value: needed } = await $.state.get(PERMISSION_NEEDED)
+  return needed === null || needed === undefined ? undefined : (await textNow($)).warning.permission
+}
+
 /** A background read of the session list: "do not know" (an error result) when the owner has not allowed it. */
 const listCall = async ($: EngineInterface, tool: string, fields: Record<string, unknown>): Promise<CallResult> =>
   (await mayList($, tool, fields)) ? callTool($, { tool, ...fields }) : { isError: true }
@@ -1161,25 +1167,33 @@ const ownChanges = async (
  * Rigid: a fourth live phase session slows the owner's machine, so there is no way around it. Only
  * sessions with live work count; the refusal says why each one does.
  */
-const refuseStart = async ($: EngineInterface): Promise<string | undefined> => {
+const refuseStartWhy = async ($: EngineInterface): Promise<{ text: string; blind: boolean } | undefined> => {
   const { value: ownPlan = [] } = await $.state.get(PLAN)
   const { self, children } = await loadSessions($, await baseDir($), ownPlan)
   if (self === undefined) {
     const { value: needed } = await $.state.get(PERMISSION_NEEDED)
-    return needed === null || needed === undefined
-      ? 'the orchestrator could not read this session, so it cannot count the live phase sessions.'
-      : 'the orchestrator may not read the session list yet, so it cannot count the live phase sessions: allow get_session and list_sessions.'
+    return {
+      blind: true,
+      text:
+        needed === null || needed === undefined
+          ? 'the orchestrator could not read this session, so it cannot count the live phase sessions.'
+          : 'the orchestrator may not read the session list yet, so it cannot count the live phase sessions: allow get_session and list_sessions.',
+    }
   }
   const finished = finishedSessionIds(await ownChanges($, await $.session.root()), children)
   const live = liveSessions(children, self.sessionId, self.cwd, finished)
   if (live.length < MAX_LIVE_SESSIONS) return undefined
-  return (
-    `${live.length} phase sessions are alive: ${live.map(l => `${l.session.name ?? l.session.title} (${l.why})`).join(', ')}; ` +
-    `the ceiling is ${MAX_LIVE_SESSIONS}. A session counts only while it runs, waits on the owner or has open tasks; ` +
-    'one whose phase or flow finished or whose PR merged or closed does not. Wait for one to finish, or archive one ' +
-    '(its gates must have passed), before starting another.'
-  )
+  return {
+    blind: false,
+    text:
+      `${live.length} phase sessions are alive: ${live.map(l => `${l.session.name ?? l.session.title} (${l.why})`).join(', ')}; ` +
+      `the ceiling is ${MAX_LIVE_SESSIONS}. A session counts only while it runs, waits on the owner or has open tasks; ` +
+      'one whose phase or flow finished or whose PR merged or closed does not. Wait for one to finish, or archive one ' +
+      '(its gates must have passed), before starting another.',
+  }
 }
+
+const refuseStart = async ($: EngineInterface): Promise<string | undefined> => (await refuseStartWhy($))?.text
 
 const refuseArchive = async ($: EngineInterface, sessionId: unknown): Promise<string | undefined> => {
   if (typeof sessionId !== 'string' || sessionId === 'self') return undefined
@@ -1713,6 +1727,11 @@ const archiveSession = async ($: EngineInterface, sessionId: string, reason: str
  */
 const keepPending = async ($: EngineInterface, picked: FlowState, sessions: unknown): Promise<FlowReply> => {
   const self = await selfId($).catch(() => undefined)
+  if (picked.coordinatorSession !== undefined && self === undefined) {
+    // this session's id is unknown: with the session tools on "ask" that is the permission, not "another session"
+    const waiting = await permissionWarning($)
+    if (waiting !== undefined) return flowError(`refused: ${waiting}`)
+  }
   if (picked.coordinatorSession !== undefined && picked.coordinatorSession !== self) {
     return flowError('refused: only the session that coordinates this flow keeps its pending sessions.')
   }
@@ -1761,8 +1780,10 @@ const openPending = async ($: EngineInterface, change: string, words: string): P
   let byApp = false
   for (const entry of entries) {
     // the same gate the hook holds on a start: rigid in "barrar", a warning in "lembrar", nothing when inactive
-    const refusal = mode === undefined ? undefined : await refuseStart($)
-    if (refusal !== undefined && mode === 'barrar') {
+    const found = mode === undefined ? undefined : await refuseStartWhy($)
+    const refusal = found?.text
+    // "lembrar" only warns about the ceiling, but blind (no session list) the mod cannot tell whether it is passed: it opens none
+    if (refusal !== undefined && (mode === 'barrar' || found?.blind === true)) {
       why = refusal
       break
     }
@@ -2079,24 +2100,29 @@ const runSubcommand = async ($: EngineInterface, args: string, origin: { readonl
   if (parsed.kind === 'help') return t.command.help
   if (parsed.kind === 'unknown') return `${t.command.unknown(parsed.word)}\n${t.command.help}`
   const flow = await commandFlow($, await $.session.root())
-  if (flow === undefined) return t.command.noFlow
+  if (flow === undefined) {
+    // no flow of this session may be a flow of a session whose id is not read yet: say the permission, not "no flow"
+    const waiting = (await selfId($).catch(() => undefined)) === undefined ? await permissionWarning($) : undefined
+    return waiting ?? t.command.noFlow
+  }
   const change = flow.change
   switch (parsed.kind) {
     case 'status': {
       await refreshQuietly($)
-      const { value: view } = await $.state.get(VIEW)
       const { value: needed } = await $.state.get(PERMISSION_NEEDED)
       return statusText(
         {
           flow: flowView(flow, config.languages),
           gates: (await openGatesNow($)).map(g => `${g.phase}: ${g.gate.gate}`),
           pending: (flow.pendingStarts ?? []).map(p => p.title),
-          permission: needed === null || needed === undefined || view === undefined ? undefined : t.warning.permission,
+          permission: needed === null || needed === undefined ? undefined : t.warning.permission,
         },
         t.command,
       )
     }
     case 'approve': {
+      // ending always asks for confirmation (C11): `aprovar encerrar` on an escalation points to the command that does
+      if (flow.status === 'escalated' && parsed.outcome === 'encerrar') return t.command.approveEnd
       const done = await pressFlow($, change, flow.escalation?.step ?? flow.current, parsed.outcome, parsed.note, false)
       return 'error' in done ? done.error : done.text
     }

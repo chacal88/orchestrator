@@ -282,6 +282,24 @@ exit=0
 
 Verificações das tarefas: `grep -n "flow pending\|/orquestrador abrir" orquestrador/skills/change-orchestrator/SKILL.md` acha as §§ 2 e 5; `grep -n "/orquestrador aprovar\|sessões pendentes\|get_session" README.md` acha as linhas 31 a 34; `"version": "0.14.0"` em `plugin.json`.
 
+## Fase 5 — ajustes do QA
+
+Portões, cada um com o binário do app 2.1.309:
+
+```
+testes: claude plugin test orquestrador   → 480 pass, 0 fail (476 + 4 novos), exit 0
+tipos:  tsc 5.6.3 (tsconfig com os caminhos desta worktree) → sem saída, exit 0
+```
+
+Casos novos, todos `(pass)` na saída dos testes:
+
+- 5.1 `(pass) aprovar encerrar on an escalated flow is refused and points to encerrar confirmar; the flow stays escalated` (`comando-harness`)
+- 5.2 `(pass) with "ask" and this session's id not kept yet, the commands and flow pending answer with the permission notice, not "other session" or "no flow"` (`comando-harness`)
+- 5.3 `(pass) on "lembrar" with the session tools on "ask" the press opens none (it cannot count the ceiling) and shows the permission notice; on "allow" it opens` (`pendentes-harness`); decisão registrada no `design.md`
+- 5.4 `(pass) status shows the permission notice even before the panel has a view` (`comando-harness`) e a extensão do `(pass) untracked leaves out the children the app follows…` (`wake.test.ts`, id limpo dos dois lados)
+
+Mudanças: `register.tsx` (`permissionWarning`, `keepPending`, `runSubcommand` approve/status/sem flow, `refuseStartWhy` e `openPending`), `wake.ts` (`cleanRef`), `i18n.ts` (`approveEnd`).
+
 ## Critérios de aceite
 
 | Critério (`proposal.md`) | Evidência |

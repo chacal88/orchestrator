@@ -74,7 +74,9 @@ export const childStops = <R extends SessionRow>(
  * owner's turn, so nothing a session can write (its title) goes in it; the coordination reads the rest in
  * `flow status`.
  */
-export const sessionRef = (row: SessionRow): string => row.sessionId.replace(/[^A-Za-z0-9_-]/g, '').slice(0, 64)
+export const cleanRef = (id: string): string => id.replace(/[^A-Za-z0-9_-]/g, '').slice(0, 64)
+
+export const sessionRef = (row: SessionRow): string => cleanRef(row.sessionId)
 
 /**
  * The children the mod still tells about: the ones the app does not follow. A child opened with
@@ -82,8 +84,9 @@ export const sessionRef = (row: SessionRow): string => row.sessionId.replace(/[^
  * stop would tell it twice.
  */
 export const untracked = (ids: readonly string[], tracked: readonly string[] | undefined): string[] => {
-  const followed = new Set(tracked ?? [])
-  return ids.filter(id => !followed.has(id))
+  // `tracked` keeps the raw ids and `ids` the cleaned ones (`sessionRef`): both sides are compared cleaned
+  const followed = new Set((tracked ?? []).map(cleanRef))
+  return ids.filter(id => !followed.has(cleanRef(id)))
 }
 
 /**

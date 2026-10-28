@@ -42,16 +42,16 @@ Nits:
 ## Revisão de código (aprovada, 476/476)
 
 Importantes, não bloqueantes, para o QA ("QA pediu ajustes") ou uma correção logo depois:
-1. `/orquestrador aprovar encerrar` num flow escalado encerra sem `confirmar` (`register.tsx:391` → `flow.ts:881`),
+1. (resolvido na fase 5, tarefa 5.1) `/orquestrador aprovar encerrar` num flow escalado encerra sem `confirmar` (`register.tsx:391` → `flow.ts:881`),
    o que contraria o C11. A sugestão é recusar e apontar para `/orquestrador encerrar … confirmar`.
-2. Com "ask" e o próprio id ainda não guardado, o `keepPending` (`register.tsx:120`) e o `commandFlow`
+2. (resolvido na fase 5, tarefa 5.2) Com "ask" e o próprio id ainda não guardado, o `keepPending` (`register.tsx:120`) e o `commandFlow`
    (`register.tsx:327`) tratam a coordenação como se fosse outra sessão. A mensagem deveria ser a de permissão.
-3. No nível "lembrar", o "ask" não recusa a abertura (`register.tsx:169-177`): o `openPending` abre sem contar o teto.
+3. (resolvido na fase 5, tarefa 5.3) No nível "lembrar", o "ask" não recusa a abertura (`register.tsx:169-177`): o `openPending` abre sem contar o teto.
    Falta decidir o comportamento e escrever o teste.
 
 Nits:
-- O `wakeOnce` compara o `sessionRef` (id limpo) com o `tracked` (id bruto).
-- O `status` esconde o aviso de permissão quando ainda não há `VIEW`.
+- (resolvido na fase 5, tarefa 5.4) O `wakeOnce` compara o `sessionRef` (id limpo) com o `tracked` (id bruto).
+- (resolvido na fase 5, tarefa 5.4) O `status` esconde o aviso de permissão quando ainda não há `VIEW`.
 
 Checagem final: `claude plugin test orquestrador` (476 pass) e `tsc` com os tipos do engine 2.1.309, os dois com
 saída 0.
