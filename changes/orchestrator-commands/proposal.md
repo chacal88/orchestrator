@@ -57,7 +57,9 @@ Fontes: `changes/orchestrator-commands/grill.md` (4 rodadas, 14 critérios) e o 
   - `merge-pelo-workflow` → `workflow-merge`
   - `executor`, `merge` e `deploy` mantêm o nome.
 
-  Um flow de projeto que ainda cita o nome antigo continua achando o agente nesta versão.
+  Nesta versão, um nome antigo vira o novo quando o flow é carregado, inclusive num flow já em andamento. Assim, o
+  merge pelo workflow e o PR do `publicar` continuam funcionando. Um `.orquestrador/agents/<nome antigo>.md` do projeto
+  continua personalizando o agente.
 - Pasta de configuração do projeto: `.orquestrador/` → `.orchestrator/`. Na 0.15.0, a pasta antiga ainda é lida
   quando a nova não existe.
 - Repositório no GitHub: `chacal88/orquestrador` → `chacal88/orchestrator`. Marketplace, plugin e documentação apontam
@@ -95,13 +97,13 @@ vez, com passo a passo de reinstalação?" e "Renomear o repositório do GitHub?
 - **C1.** Ao digitar `/orchestrator` no prompt, o menu lista todos os comandos do plugin, um por ação. Tarefas: 3.1,
   3.2 e 6.4 (conferência no app).
 - **C2.** Os comandos são `/orchestrator:status`, `:approve`, `:end`, `:open`, `:skip-gate`, `:panel`, `:workflows`,
-  `:change`, `:install` e `:help`. O mockup aprovado acrescenta `:reject`. Tarefas: 2.3 e 3.2.
+  `:change`, `:install` e `:help`. O mockup aprovado acrescenta `:reject`. Tarefas: 2.4 e 3.2.
 - **C3.** Existe um único `/orchestrator:change` no lugar do `change-orchestrator`, e não há `/orchestrator:propose`.
-  Tarefa: 2.3.
+  Tarefa: 2.4.
 - **C4.** Nenhum comando do plugin exige palavra-chave para funcionar: nem confirmar, nem resultado, nem nome de
   portão. Tarefas: 3.3 e 4.1 a 4.5.
 - **C5.** Plugin, marketplace, ferramentas do mod, agentes e pasta de configuração têm nomes em inglês. Um projeto com
-  `.orquestrador/` continua funcionando nesta versão. Tarefas: 1.1 a 1.5 e 2.1 a 2.6.
+  `.orquestrador/` continua funcionando nesta versão. Tarefas: 1.1 a 1.5 e 2.1 a 2.8.
 - **C6** (grill nº 6). `/orquestrador` sai de vez e o README traz o passo a passo de reinstalação. Tarefas: 3.3 e 6.2.
 - **C7** (grill nº 7). O repositório é renomeado nesta change, como a rodada 2 confirmou. Tarefa: 7.1 (cumprida
   junto com C13).

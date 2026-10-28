@@ -80,7 +80,7 @@ Arquivos: os listados no `design.md`, §11. Portões: `testes`, `tipos`, `lint`.
 
 ## 2. Agentes, skills e a pasta `.orchestrator/`
 
-Portões: `testes`, `tipos`.
+Portões: `testes`, `tipos`, `lint` (a fase mexe nas skills e no frontmatter dos agentes).
 
 - [ ] 2.1 Agentes. `git mv` de `planejador`→`planner`, `revisor-plano`→`plan-reviewer`, `revisor-codigo`→
       `code-reviewer`, `abre-pr`→`pr-opener`, `publicador`→`publisher` e `merge-pelo-workflow`→`workflow-merge`, com o
@@ -88,16 +88,35 @@ Portões: `testes`, `tipos`.
       `CODE_REVIEW_AGENT` (`flow.ts:829-832`), `model.ts:219-221` e as comparações em `i18n-workflows.ts` passam aos
       nomes novos. Verificação: `grep -rn "planejador\|revisor-plano\|revisor-codigo\|abre-pr\|publicador\|merge-pelo-workflow"
       orchestrator/hooks orchestrator/agents` só acha o mapa `LEGACY_AGENTS` (2.2) — cx: moderate
-- [ ] 2.2 `LEGACY_AGENTS` em `flow-files.ts`. O `findAgent` cai no nome novo quando o nome pedido não existe, e o
-      editor de workflows grava o nome novo (`design.md`, §6). Teste: um flow de projeto com `"agent": "planejador"`
-      resolve para `agents/planner.md`, e um `.orquestrador/agents/planejador.md` do projeto ainda ganha do plugin.
-      Verificação: os dois testes novos como `(pass)` — cx: moderate
-- [ ] 2.3 Skills. `git mv skills/change-orchestrator skills/change` e `git mv skills/instalar skills/install`, com o
+- [ ] 2.2 Nome antigo vira o novo na carga do flow (`design.md`, §6). `LEGACY_AGENTS` em `flow.ts` e a função pura
+      `normalizeAgents(def)`, aplicada no fim do `resolveFlow` (`flow.ts:379`) e no `loadFlowState` (`register.tsx`),
+      sobre o `state.flow` de um flow já em andamento. Depois disso, `CODE_REVIEW_AGENT` (`flow.ts:110`, `:852`),
+      `WORKFLOW_MERGE_AGENT` (`flow.ts:1165`, `:1216`) e `model.ts:221` só comparam com o nome novo. O editor de
+      workflows grava o nome novo. Testes:
+      - em `rapido-repo.test.ts`, com o `.orquestrador/flows/rapido.json` real deste repo (`merge-pelo-workflow` em
+        `:122`, `abre-pr` em `:107`): o passo de merge continua automático pelo workflow, e não "The owner merges", e o
+        passo que abre o PR continua citando o número do PR;
+      - um `FlowState` gravado com `"agent": "revisor-codigo"` no `state.flow` é lido com `code-reviewer`, e a revisão
+        de código continua exigindo a saída `aprovado`;
+      - `normalizeAgents` deixa intactos um nome novo e um nome desconhecido.
+
+      Verificação: os testes como `(pass)` e `grep -n "LEGACY_AGENTS" orchestrator/hooks/*.ts*` acha só a definição,
+      o `normalizeAgents` e o `findAgent` — cx: complex
+- [ ] 2.3 A personalização do projeto com o nome antigo continua valendo (`design.md`, §6, e README `:187`). O
+      `findAgent(name)` procura `<projectDir>/agents/<name>.md`, depois `<projectDir>/agents/<antigo>.md` para cada
+      nome antigo que o mapa leva a `name`, e por fim `agents/<name>.md` do plugin. O `listAgents` mostra o arquivo
+      antigo do projeto sob o nome novo. Testes:
+      - um projeto com `.orquestrador/agents/planejador.md`, num flow que pede `planner`, recebe o arquivo do projeto;
+      - com `planner.md` e `planejador.md` no projeto, ganha `planner.md`;
+      - sem nenhum no projeto, vem o do plugin.
+
+      Verificação: os três testes como `(pass)` — cx: moderate
+- [ ] 2.4 Skills. `git mv skills/change-orchestrator skills/change` e `git mv skills/instalar skills/install`, com o
       `name:` acompanhando. As chamadas a `mcp__orchestrator__flow`/`plan`, os nomes de agente e os comandos citados
       (`/orchestrator:panel`, `:approve`, `:open` etc.) ficam atualizados. A skill `install` grava em
       `.orchestrator/`. Verificação: `grep -rn "orquestrador\|change-orchestrator\|instalar" orchestrator/skills` só acha a
       menção à pasta antiga lida por compatibilidade — cx: moderate
-- [ ] 2.4 `.orchestrator/` com leitura da antiga. `projectDir($, root)` em `project-config.ts` devolve
+- [ ] 2.5 `.orchestrator/` com leitura da antiga. `projectDir($, root)` em `project-config.ts` devolve
       `{ dir, legacy }` (`design.md`, §4). `CONFIG_PATH`, `readFlowDir`, os agentes do projeto, o `loadProjectConfig`
       e o editor de workflows passam por ela. O painel ⚙️ mostra o aviso de `legacy`. Testes:
       - só `.orquestrador/` lê config e flows;
@@ -107,17 +126,27 @@ Portões: `testes`, `tipos`.
       - um projeto sem pasta grava em `.orchestrator/`.
 
       Verificação: os cinco testes como `(pass)` em `project-config.test.ts` ou `flow-resolve.test.ts` — cx: complex
-- [ ] 2.5 Ativação. `HOOK_MARK = 'orchestrator:activate'`, e "Desativar" acha o hook pelo marcador novo e pelo antigo.
+- [ ] 2.6 Ativação. `HOOK_MARK = 'orchestrator:activate'`, e "Desativar" acha o hook pelo marcador novo e pelo antigo.
       O `HOOK_COMMAND` lê `${ORCHESTRATOR:-${ORQUESTRADOR:-barrar}}` e cita `/orchestrator:panel`. Testes: um
       `settings.local.json` com o hook da 0.14.1 é lido como ativo e removido pelo "Desativar". Verificação: os testes
       de `activation.test.ts` passam, e os novos aparecem como `(pass)` — cx: moderate
-- [ ] 2.6 Frontmatter em YAML estrito. Nos agentes (`orchestrator/agents/*.md`, os nove, já com os nomes novos), nas
+- [ ] 2.7 Frontmatter em YAML estrito. Nos agentes (`orchestrator/agents/*.md`, os nove, já com os nomes novos), nas
       skills (`skills/change`, `skills/install`) e, na fase 3, nos `commands/*.md`, o `description` vai entre aspas
       duplas sempre que o texto tem `: `, com as aspas internas escapadas. Hoje `planejador`, `revisor-codigo` e
       `deploy` têm `: ` sem aspas. O 2.1.309 aceita, mas o 2.1.227 recusa com erro de YAML. O `hooks.json` com
       `modules` é recusado pelo 2.1.227, que não conhece mods; isso não muda, e os portões continuam com o binário do
       app. Verificação: `grep -nE '^description: [^"].*: ' orchestrator/agents/*.md orchestrator/skills/*/SKILL.md`
       não acha nada, e `claude plugin validate orchestrator` com o 2.1.309 sai 0 — cx: simple
+- [ ] 2.8 Textos com a pasta resolvida (`design.md`, §4, "Textos com a pasta"). Os textos que citam `.orquestrador/`
+      fixo passam a receber o nome relativo devolvido por `projectDir`:
+      - `i18n-workflows.ts:143`, `:174`, `:258`, `:285`, `:288`, `:289` e `:320`, e os equivalentes em en (`:528` a
+        `:703`); as constantes viram funções de `dir`;
+      - `workflows-pane.tsx:279`, `:1597`, `:1611` e `:1704`, com os caminhos relativos saídos do `dir` do `loadFlows`;
+      - `flow.ts:1259`, no aviso de agente não encontrado.
+
+      Testes: num projeto `legacy`, o aviso de salvar cita `.orquestrador/flows/<id>.json`; num projeto novo, cita
+      `.orchestrator/flows/<id>.json`. Verificação: `grep -rn "\.orquestrador/" orchestrator/hooks` só acha o aviso de
+      `legacy` e o `LEGACY_DIR` de `project-config.ts`, e os dois testes como `(pass)` — cx: moderate
 
 ## 3. Comandos com prefixo
 
@@ -139,8 +168,10 @@ Portões: `testes`, `tipos`, `lint`.
 - [ ] 3.3 Corte. Saem `$.command.register` de `orquestrador` e `orquestrador-workflows`, os dois hooks
       `command.run` deles e o `parseCommand` por palavra. `panel` e `workflows` chamam o `togglePane` e o
       `toggleWorkflowsPane` de hoje. Os textos do `i18n` que citam `/orquestrador …` passam a citar
-      `/orchestrator:<ação>`. Verificação: `grep -rn "'orquestrador'\|orquestrador-workflows\|/orquestrador "
-      orchestrator/hooks` não acha nada — cx: moderate
+      `/orchestrator:<ação>`. Isso inclui `i18n.ts:331` e `:578` (a ajuda), `workflows-pane.tsx:1298`,
+      `register.tsx:2186` e o comentário de `command.ts:4`. Verificação: `grep -rn "/orquestrador\b\|'orquestrador'\|orquestrador-workflows"
+      orchestrator/hooks` não acha nada. O padrão pega `/orquestrador` seguido de espaço, `:`, aspas ou fim de linha —
+      cx: moderate
 - [ ] 3.4 Testes de harness em `comando-harness.test.ts`. Os testes de `/orquestrador <sub>` passam a disparar
       `command.run` com `orchestrator:<ação>`:
       - `panel` abre e fecha;
@@ -187,7 +218,13 @@ Portões: `testes`, `tipos`.
       - com a lista mudada entre os dois, não pula o portão errado;
       - `skip-gate x` e `skip-gate 9` devolvem a lista.
 
-      Verificação: os testes como `(pass)` — cx: complex
+      Os portões vêm de `openGatesFor($, flow)` (`design.md`, §3), que lê o plano, os pulos e os registros de portão
+      do disco, e não da vista do painel (`VIEW`), que a reinstalação zera. Na fase 4, `flow` é o do `commandFlow`; a
+      fase 5 o troca pelo `sessionFlow`. O `refresh` e o `status` usam a mesma função. Teste extra: com o `$.state`
+      vazio (sem `VIEW`, como depois da reinstalação), `skip-gate` ainda lista os portões abertos do disco.
+
+      Verificação: os testes como `(pass)`, e `grep -n "openGatesNow" orchestrator/hooks/register.tsx` não acha nada —
+      cx: complex
 - [ ] 4.6 `status` em texto simples, no molde do mockup: flow, passo, `Para seguir: /orchestrator:approve` e
       `Para pedir ajustes: /orchestrator:reject <o que mudar>`, este só quando o passo tem ajustes. Também mostra os
       portões abertos e as sessões pendentes. Teste: com `origin: { kind: 'bridge' }`, a resposta não tem tabela nem
@@ -199,8 +236,8 @@ Portões: `testes`, `tipos`.
 
 - [ ] 5.1 `sessionFlow($, root)` em `register.tsx` (`design.md`, §7). O `commandFlow`, o `currentFlow` e o
       `loadFlowView` passam a usá-la. O `run` só entra no painel se for da change do `sessionFlow` ou, sem flow, se for
-      desta sessão. Verificação: `grep -n "coordinatorCwd === cwd" orchestrator/hooks/register.tsx` não acha o filtro
-      antigo do `loadFlowView` — cx: moderate
+      desta sessão. Verificação: `grep -n "coordinatorCwd === cwd" orchestrator/hooks/register.tsx` só acha a linha do
+      `loadRun` (hoje `register.tsx:421`), que continua legítima, e nenhuma dentro do `loadFlowView` — cx: moderate
 - [ ] 5.2 O `publishPlan` grava `coordinatorSession` no `run`; o campo é novo em `OrchestrationRun`
       (`types/index.d.ts:469`). Um `run` sem o campo segue as regras do design. Verificação: o teste da 5.3 que usa um
       `run` antigo — cx: simple
@@ -238,12 +275,14 @@ Portões: `testes`, `tipos`, `lint`.
       `grep -n '"version": "0.15.0"' orchestrator/.claude-plugin/plugin.json` acha a linha — cx: simple
 - [ ] 6.2 README (C6, C13):
       - a seção de comandos vira a tabela dos onze, com a coluna "Antes";
-      - entra a seção "Reinstalar a partir da 0.15.0", com o passo a passo do `design.md`, §10;
+      - entra a seção "Reinstalar a partir da 0.15.0", com o passo a passo do `design.md`, §10, começando por
+        "faça logo depois do merge, antes de qualquer `claude plugin marketplace update`" (§9, passo 4);
       - os links apontam para `chacal88/orchestrator`;
       - os nomes de plugin, marketplace, agentes e pasta ficam atualizados;
       - entra uma frase sobre `.orquestrador/` ainda ser lida.
 
-      Os `orchestrator/proposal.md`, `tasks.md` e `orchestration.md` da raiz do plugin ficam com os nomes novos.
+      Os `orchestrator/proposal.md`, `tasks.md`, `orchestration.md` e `evidence.md` da raiz do plugin ficam com os
+      nomes novos. O README cita os três em `:256`.
       Verificação: `grep -n "orquestrador" README.md` só acha a seção de reinstalação e a frase da pasta antiga —
       cx: moderate
 - [ ] 6.3 Passo de produção desta change. O `deploy` automático de `.orquestrador/config.json` (`claude plugin

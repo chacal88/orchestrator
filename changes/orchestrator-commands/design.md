@@ -104,8 +104,16 @@ já diz a mesma coisa nos flows que existem. Se um projeto declarar algo fora de
 
 ## 3. O estado de 2 minutos do `skip-gate`
 
-- `skip-gate` sem argumento lista os portões abertos na ordem do `openGatesNow`, que é a ordem do painel: fases
-  primeiro, depois os portões finais. Cada linha vem numerada, por exemplo `1. fase 2: testes`, e no fim aparece
+- **De onde vêm os portões.** Hoje o `openGatesNow` (`register.tsx:2070-2088`) lê a última vista do painel
+  (`$.state` `VIEW`). A reinstalação zera essa chave (§5): sem um refresh, o `skip-gate` e o `status` diriam "nenhum
+  portão aberto". A função passa a `openGatesFor($, flow)` e lê direto do disco:
+  - o plano (`run`) da change do `sessionFlow` (§7);
+  - os pulos do dono (`loadSkips`);
+  - os registros de portão da sessão e das filhas, nos arquivos de atividade que o refresh já lê.
+
+  Ela monta a lista com o mesmo `phaseViews`/`gateViews`/`familyCheck` de hoje, então a ordem é a mesma do painel. O
+  `refresh` passa a usar essa mesma função, e o painel e o comando nunca divergem.
+- `skip-gate` sem argumento lista os portões abertos nessa ordem: fases primeiro, depois os portões finais. Cada linha vem numerada, por exemplo `1. fase 2: testes`, e no fim aparece
   `Para pular: /orchestrator:skip-gate N`.
 - `skip-gate N` grava em `$.state` a chave nova `skip-ask`, com `{ change, phase, gate, n, at }`, e pede a repetição.
   O `gate` é o id do portão, não o número. O texto é:
@@ -125,6 +133,8 @@ já diz a mesma coisa nos flows que existem. Se um projeto declarar algo fora de
 
 - **Palavra de confirmação.** O grill proíbe (C4).
 - **Confirmar num botão do painel.** Pelo Remote Control não há painel, e o grill pediu repetir o comando.
+- **Continuar lendo a vista e forçar um refresh antes.** O refresh chama a lista de sessões, que pode esperar
+  permissão (`mayList`). Pelo Remote Control, a resposta ficaria sem portões ou atrasada.
 - **Gravar o pedido em disco.** Ele só vale por 2 minutos e na sessão. O `$.state` some no restart, e isso é o
   certo: um restart cancela a confirmação.
 
@@ -143,6 +153,18 @@ com `legacy: true`. Se nenhuma existir, devolve a nova. Todas as leituras passam
 **Gravações.** O mod grava na pasta que achou. Se o projeto ainda usa `.orquestrador/`, a gravação vai para lá, e o
 projeto nunca fica com metade da configuração em cada pasta. Um projeto novo, pela skill `install`, nasce em
 `.orchestrator/`.
+
+**Textos com a pasta.** Os textos que hoje citam `.orquestrador/` fixo passam a receber a pasta resolvida, o nome
+relativo devolvido por `projectDir` (`.orchestrator` ou `.orquestrador`). Os pontos são:
+
+- `i18n-workflows.ts:143`, `:174`, `:258`, `:285`, `:288`, `:289` e `:320`, e os equivalentes em en (`:528` a `:703`).
+  As funções de texto ganham um parâmetro `dir`, e as constantes viram funções de `dir`.
+- `workflows-pane.tsx:279`, `:1597`, `:1611` e `:1704`. Os caminhos relativos saem do `dir` do `loadFlows`, que já
+  vem resolvido, e não da string fixa.
+- `flow.ts:1259`, no aviso de agente não encontrado, que recebe a pasta do `describeStepAgent`.
+
+O único texto que pode citar `.orquestrador/` literal é o aviso de `legacy`. Verificação:
+`grep -rn "\.orquestrador/" orchestrator/hooks` só acha esse aviso e o `LEGACY_DIR` de `project-config.ts`.
 
 **Aviso.** Com `legacy: true`, o painel ⚙️ mostra uma linha: "Este projeto usa `.orquestrador/`; renomeie para
 `.orchestrator/` (a pasta antiga deixa de ser lida na próxima versão)." Os textos do `i18n` dizem o mesmo em en.
@@ -201,17 +223,54 @@ marketplace e ferramentas em inglês (C5).
 - Os flows padrão (`hooks/flows/completo.ts` e `rapido.ts`) e as constantes `WORKFLOW_MERGE_AGENT` e
   `CODE_REVIEW_AGENT` (`flow.ts:829-832`) passam aos nomes novos. O mesmo vale para `model.ts:219-221` (`pr-opener`,
   `publisher`) e para os testes de `i18n-workflows.ts`.
-- `LEGACY_AGENTS`, em `flow-files.ts`, é um mapa de nome antigo para nome novo. O `findAgent` tenta o nome pedido. Se
-  não achar, tenta o nome novo do mapa, primeiro no projeto e depois no plugin. O `i18n-workflows` compara pelo nome
-  normalizado. Um `.orquestrador/flows/rapido.json` com `"agent": "planejador"` continua achando o `planner`.
-- O editor de workflows grava sempre o nome novo.
+### O nome antigo vira o novo na carga do flow
 
-**Alternativa descartada: manter cópias dos arquivos antigos.** Seriam duas listas de agentes no Agent tool, e o texto
-de um ficaria velho.
+Achar o arquivo não basta. Há código que compara o nome literal do agente:
+
+- `flow.ts:110` e `:852` (`CODE_REVIEW_AGENT`);
+- `flow.ts:1165` e `:1216` (`WORKFLOW_MERGE_AGENT`);
+- `model.ts:221` (`abre-pr`/`publicador`).
+
+O `.orquestrador/flows/rapido.json` deste repo usa `merge-pelo-workflow` (`:122`) e `abre-pr` (`:107`). Se só o
+`findAgent` conhecesse o nome antigo, o merge desse flow viraria "The owner merges" e o `publicar` perderia o número
+do PR.
+
+**Decisão.** `LEGACY_AGENTS` (em `flow.ts`, ao lado das constantes) é um mapa de nome antigo para nome novo. A função
+pura `normalizeAgents(def: FlowDef): FlowDef` troca `step.agent` pelo nome novo quando ele está no mapa. Ela roda em
+dois pontos de entrada:
+
+- **No fim do `resolveFlow`** (`flow.ts:379`). Todo flow de projeto e todo flow padrão passa por ele antes de qualquer
+  comparação. O editor de workflows também lê por aí.
+- **No `loadFlowState`** (`register.tsx`), sobre o `state.flow`. Um flow já em andamento guarda a definição que tinha
+  quando começou, e o flow desta própria change é um deles. Ele passa a ver os nomes novos sem regravar o arquivo.
+
+Com isso, `CODE_REVIEW_AGENT`, `WORKFLOW_MERGE_AGENT` e `model.ts:221` comparam só com o nome novo, e nenhum outro
+ponto precisa conhecer o mapa. O editor de workflows grava sempre o nome novo.
+
+### A personalização do projeto com o nome antigo continua valendo
+
+O README (`:187`) diz que um projeto troca um agente criando `.orquestrador/agents/<nome>.md` com o nome do agente do
+plugin. Um projeto que tem `.orquestrador/agents/planejador.md` não pode perder essa troca quando o flow passa a pedir
+`planner`. O `findAgent(name)` procura nesta ordem:
+
+1. `<projectDir>/agents/<name>.md` (o nome novo no projeto);
+2. `<projectDir>/agents/<antigo>.md`, para cada nome antigo que o mapa leva a `name` (o nome antigo no projeto);
+3. `agents/<name>.md` do plugin.
+
+O `listAgents` mostra o arquivo antigo do projeto sob o nome novo, para não aparecer um agente "sem par" no editor.
+
+**Alternativas descartadas:**
+
+- **Manter cópias dos arquivos antigos no plugin.** Seriam duas listas de agentes no Agent tool, e o texto de um
+  ficaria velho.
+- **Mapear só no `findAgent` e no `i18n-workflows`.** As comparações literais do `flow.ts` e do `model.ts` ficariam
+  com o nome antigo, como a revisão do plano mostrou.
+- **Trocar os nomes no `rapido.json` deste repo agora.** Isso não cobre outros projetos, e a 0.14.1 instalada, que
+  conduz esta change, não conhece os nomes novos.
 
 ## 7. A correção do painel
 
-**Causa.** O `loadFlowView` (`register.tsx`, perto de `:2260`) escolhe o flow assim:
+**Causa.** O `loadFlowView` (`register.tsx:2199`) escolhe o flow assim:
 
 - com um plano publicado (`run`), o flow da change desse plano. O `run` é o último de `runs/` com o mesmo
   `coordinatorCwd` (`loadRun`, `:415-423`), seja qual for o status do flow dessa change;
@@ -280,7 +339,12 @@ nenhum repositório novo seja criado com o nome antigo.
    redirecionamento cobre esse passo.
 3. **Merge do PR.** `plugin.json` (`homepage`, `repository`), `marketplace.json` e o README já apontam para
    `chacal88/orchestrator`. Depois do passo 1, esses endereços existem.
-4. **Reinstalação pelo dono, no passo `producao`.** O nome do marketplace muda, então
+4. **Reinstalação pelo dono, logo depois do merge**, no passo `producao` e antes de qualquer
+   `claude plugin marketplace update`. O motivo: depois do merge, o marketplace antigo, que chega ao repo novo pelo
+   redirecionamento, passa a ler um `marketplace.json` sem nenhum plugin `orquestrador`. Uma atualização do
+   marketplace, à mão ou automática do app, pode tirar a 0.14.1, que é quem conduz os passos `producao` e `arquivar`
+   desta change. Reinstalada a 0.15.0, ela retoma o flow, que fica em `~/.claude/orquestrador/` (§4), com os nomes
+   de agente normalizados (§6). Além disso, o nome do marketplace muda, então
    `claude plugin marketplace update orquestrador` não serve: o manifesto novo se chama `orchestrator`. O passo
    automático `deploy`, que roda os comandos de `.orquestrador/config.json`, não roda nesta change. Ver a tarefa 6.3.
 5. Depois da reinstalação, a tarefa 7.2 migra o `.orquestrador/` deste repo, e o `deploy.commands` passa a
@@ -293,6 +357,8 @@ que ainda não existe. Quem instalasse no intervalo teria links quebrados.
 **Nunca:** criar um repositório `chacal88/orquestrador` depois do rename, porque isso quebra o redirecionamento.
 
 ## 10. Passo a passo de reinstalação (vai para o README)
+
+Faça logo depois do merge do PR, antes de qualquer `claude plugin marketplace update` (§9, passo 4).
 
 ```bash
 claude plugin uninstall orquestrador@orquestrador
@@ -317,12 +383,12 @@ Depois:
 | Fase | Arquivos |
 | --- | --- |
 | 1. Pacote em inglês | `git mv orquestrador orchestrator`; `orchestrator/.claude-plugin/plugin.json`; `.claude-plugin/marketplace.json`; `orchestrator/hooks/register.tsx`; `orchestrator/hooks/flow.ts`; `orchestrator/hooks/i18n.ts`; `orchestrator/hooks/i18n-workflows.ts`; `orchestrator/hooks/workflows-pane.tsx`; `orchestrator/types/index.d.ts`; `orchestrator/tests/*`; `.gitignore` |
-| 2. Agentes, skills e `.orchestrator/` | `orchestrator/agents/*`; `orchestrator/skills/*`; `orchestrator/hooks/flow-files.ts`; `orchestrator/hooks/project-config.ts`; `orchestrator/hooks/i18n.ts`; `orchestrator/hooks/activation.ts`; `orchestrator/hooks/flows/*.ts`; `orchestrator/hooks/flow.ts`; `orchestrator/hooks/model.ts`; `orchestrator/hooks/i18n-workflows.ts`; `orchestrator/hooks/workflow-edit.ts`; `orchestrator/hooks/workflows-pane.tsx`; `orchestrator/hooks/pane.tsx`; `orchestrator/tests/*` |
-| 3. Comandos com prefixo | `orchestrator/commands/*.md` (novos); `orchestrator/hooks/register.tsx`; `orchestrator/hooks/command.ts`; `orchestrator/hooks/i18n.ts`; `orchestrator/tests/comando-harness.test.ts`; `orchestrator/tests/command.test.ts` |
+| 2. Agentes, skills e `.orchestrator/` | `orchestrator/agents/*`; `orchestrator/skills/*`; `orchestrator/hooks/flow-files.ts`; `orchestrator/hooks/project-config.ts`; `orchestrator/hooks/i18n.ts`; `orchestrator/hooks/activation.ts`; `orchestrator/hooks/flows/*.ts`; `orchestrator/hooks/flow.ts`; `orchestrator/hooks/model.ts`; `orchestrator/hooks/i18n-workflows.ts`; `orchestrator/hooks/workflow-edit.ts`; `orchestrator/hooks/workflows-pane.tsx`; `orchestrator/hooks/pane.tsx`; `orchestrator/hooks/register.tsx` (`loadFlowState`); `orchestrator/tests/*` |
+| 3. Comandos com prefixo | `orchestrator/commands/*.md` (novos); `orchestrator/hooks/register.tsx`; `orchestrator/hooks/command.ts`; `orchestrator/hooks/i18n.ts`; `orchestrator/hooks/workflows-pane.tsx`; `orchestrator/tests/comando-harness.test.ts`; `orchestrator/tests/command.test.ts` |
 | 4. Sem palavras | `orchestrator/hooks/command.ts`; `orchestrator/hooks/register.tsx`; `orchestrator/hooks/i18n.ts`; `orchestrator/types/index.d.ts`; `orchestrator/tests/command.test.ts`; `orchestrator/tests/comando-harness.test.ts` |
 | 5. Painel e sessões pendentes | `orchestrator/hooks/register.tsx`; `orchestrator/hooks/flow.ts`; `orchestrator/types/index.d.ts`; `orchestrator/skills/change/SKILL.md`; `orchestrator/tests/panel-flow.test.ts`; `orchestrator/tests/pendentes-harness.test.ts`; `orchestrator/tests/flow.test.ts` |
-| 6. README, versão e conferência | `README.md`; `orchestrator/.claude-plugin/plugin.json`; `orchestrator/proposal.md`, `tasks.md`, `orchestration.md` (os nomes); `changes/orchestrator-commands/evidence.md` |
+| 6. README, versão e conferência | `README.md`; `orchestrator/.claude-plugin/plugin.json`; `orchestrator/proposal.md`, `tasks.md`, `orchestration.md`, `evidence.md` (os nomes); `changes/orchestrator-commands/evidence.md` |
 | 7. Dono | GitHub (rename); `.orquestrador/` → `.orchestrator/` deste repo; `config.json` (`deploy.commands`) |
 
-`register.tsx`, `i18n.ts` e `tests/` aparecem em todas as fases de código (1 a 5), e `flow.ts` em 1, 2 e 5. Nenhuma
+`register.tsx`, `i18n.ts` e `tests/` aparecem em todas as fases de código (1 a 5), `flow.ts` em 1, 2 e 5, e `workflows-pane.tsx` em 1, 2 e 3. Nenhuma
 fase corre em paralelo com outra; ver `tasks.md`.
