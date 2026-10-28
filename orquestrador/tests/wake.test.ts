@@ -124,6 +124,9 @@ test('untracked leaves out the children the app follows (opened with wake_when_d
   expect(untracked(['local_a', 'local_b', 'local_c'], ['local_b'])).toEqual(['local_a', 'local_c'])
   expect(untracked(['local_a'], undefined)).toEqual(['local_a'])
   expect(untracked(['local_a'], ['local_a'])).toEqual([])
+  // `tracked` keeps the raw id and the pending list the cleaned one: both are compared cleaned
+  expect(untracked(['local_a'], ['local_a\n'])).toEqual([])
+  expect(untracked(['local_a '], ['local_a'])).toEqual([])
 })
 
 test('the stop is still the mod telling a fact, never the owner speaking', () => {

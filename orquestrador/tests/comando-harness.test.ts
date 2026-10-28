@@ -412,3 +412,34 @@ test('no tool of the model ends the flow, and endFlow is reached only by the but
   }
   expect(saved(w).status).toBe('running')
 })
+
+test('aprovar encerrar on an escalated flow is refused and points to encerrar confirmar; the flow stays escalated', async ($, on) => {
+  const w = world(on)
+  await flow($, { action: 'start', change: 'b', flow: 'completo' })
+  w.disk.set(`${BASE}/flows/b.json`, JSON.stringify({ ...saved(w), status: 'escalated', escalation: { step: 'grill', from: 'grill', outcome: 'x', attempts: 3 } }))
+  const answer = await run($, w, 'aprovar encerrar')
+  expect(answer).toMatch(/\/orquestrador encerrar \[motivo\] confirmar/)
+  expect(saved(w).status).toBe('escalated')
+  expect(logOf(w).some(e => (e as { kind?: string }).kind === 'aborted')).toBe(false)
+  // the typed command with confirmar still ends it
+  expect(await run($, w, 'encerrar confirmar')).toBe('Flow de b encerrado por você.')
+})
+
+test('status shows the permission notice even before the panel has a view', async ($, on) => {
+  const w = world(on, 'ask')
+  await flow($, { action: 'start', change: 'b', flow: 'completo' })
+  expect(await run($, w, 'status')).toMatch(/Permita get_session e list_sessions/)
+})
+
+test('with "ask" and this session\'s id not kept yet, the commands and flow pending answer with the permission notice, not "other session" or "no flow"', async ($, on) => {
+  const w = world(on, 'ask')
+  await flow($, { action: 'start', change: 'b', flow: 'completo' })
+  // the coordination of the flow is known (written when the permission was allowed), this session's id is not
+  w.disk.set(`${BASE}/flows/b.json`, JSON.stringify({ ...saved(w), coordinatorSession: 'local_ee' }))
+  expect(await run($, w, 'abrir')).toMatch(/Permita get_session e list_sessions/)
+  expect(await run($, w, 'abrir')).not.toMatch(/Nenhum flow/)
+  const kept = await flow($, { action: 'pending', sessions: [entry('1')] })
+  expect(kept.isError).toBe(true)
+  expect(String(kept.result)).toMatch(/Permita get_session e list_sessions/)
+  expect(String(kept.result)).not.toMatch(/only the session that coordinates/)
+})

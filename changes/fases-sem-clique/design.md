@@ -114,7 +114,9 @@ pendentes"**. O clique chama `openPending($, words)`:
    agrupamento de cada abertura (`groupQuietly` → `keepGrouping`) grava o flow pela mesma fila, e esperaria por si
    mesmo se o `openPending` ainda estivesse dentro dela;
 2. para cada entrada, em ordem: o mesmo portão do hook (`refuseStart`, rígido em "barrar", só aviso em "lembrar",
-   nada com o clone inativo); depois `$.tool.call({ tool: START_SESSION, title, prompt, initiation: 'user_asked',
+   nada com o clone inativo). **Exceção (fase 5, pedido do dono no QA):** em "lembrar" com a permissão em "ask" o mod
+   não consegue listar as sessões e, portanto, não sabe se passaria do teto; ele não abre nenhuma e responde com o
+   aviso de permissão, igual ao "barrar" (o teto contado e passado continua só aviso em "lembrar"); depois `$.tool.call({ tool: START_SESSION, title, prompt, initiation: 'user_asked',
    wake_when_done: true, use_worktree, consent: words })`; depois `set_session_model`/`set_session_effort` quando a
    entrada traz esses campos, como a skill faz hoje; e o `groupQuietly` com a filha a guardar em `tracked`;
 3. **a chamada do mod não passa pelo `tool.call` do próprio mod.** O plano supunha que sim ("todo hook menos o que
