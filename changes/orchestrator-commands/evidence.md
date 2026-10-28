@@ -273,20 +273,142 @@ Ficou fora do escopo, como pedido:
 
 ### Prova do prefixo
 
-_a preencher_: o que aparece ao digitar `/orchestrator:status`, o que o `validate` lista para o hook e o caminho
-escolhido (hook ou plano B).
+Primeiro foram criados só o `orchestrator/commands/status.md` e um hook provisório,
+`on('command.run', { command: 'orchestrator:status' }, …)`, que respondia `{ text: 'PROVA: o mod respondeu
+/orchestrator:status' }` sem `next`. O plugin foi carregado por `--plugin-dir`, com o binário do app (2.1.309):
+
+```
+$ export PATH="…/claude-code/2.1.309/5af865b9901c/claude.app/Contents/MacOS:$PATH" && command claude -p "/orchestrator:status" --plugin-dir orchestrator --max-turns 1
+orchestrator: PROVA: o mod respondeu /orchestrator:status
+exit=0
+```
+
+Apareceu o texto do mod, com o nome do plugin na frente, e não o prompt do arquivo. O modelo não foi chamado. O comando de
+markdown chega ao `command.run` como `orchestrator:status`, então o matcher literal pega.
+
+O `validate` listou o hook como `command.run{command=orchestrator:status}`, com a nota `gating hook without .catch`. Os
+antigos apareciam como `answers its own command`, porque o comando era do próprio `$.command.register`. Na versão final,
+os nove hooks têm o mesmo `.catch` dos outros hooks de portão do arquivo, e o `validate` os lista como
+`gating hook with .catch`. Se um hook falhar, o comando segue para o texto do `.md`.
+
+**Caminho escolhido: o hook.** O plano B (`mcp__orchestrator__command`) não entra. O corpo de cada `.md` é só o texto de
+reserva do §1: diz ao modelo que o mod não respondeu, pede que ele não tente a ação e que avise o dono para abrir o
+app ou reinstalar.
+
+Desvio: a prova rodou numa sessão headless (`claude -p`) do binário do app, e não numa sessão interativa do desktop. O
+engine é o mesmo, e o `CommandRunResult.exitCode` documenta o `command.run` no modo headless. A conferência no desktop,
+com o menu `/orchestrator`, é a tarefa 6.4.
+
+Com os hooks finais, a mesma chamada responde:
+
+```
+$ … command claude -p "/orchestrator:status" --plugin-dir orchestrator --max-turns 1
+orchestrator: Esse comando só vale digitado por você, no prompt ou no Remote Control.
+$ … command claude -p "/orchestrator:help" --plugin-dir orchestrator --max-turns 1
+orchestrator: Esse comando só vale digitado por você, no prompt ou no Remote Control.
+```
+
+O `-p` chega com a origem `sdk`, que não é o dono. A recusa é o comportamento certo, e mostra que o hook pegou os dois
+nomes, sem passar pelo modelo.
 
 ### Testes
 
-_a preencher_
+Antes, no commit `e6b468a` (fim da fase 2): 498 testes em 37 arquivos, todos `(pass)`.
+
+Depois:
+
+```
+$ export PATH="…/claude-code/2.1.309/5af865b9901c/claude.app/Contents/MacOS:$PATH" && command claude plugin test orchestrator
+ 500 pass
+ 0 fail
+Ran 500 tests across 37 files.
+exit=0
+```
+
+498 → 500: 2 testes novos, e nenhum foi removido.
+
+- Novos, em `comando-harness.test.ts`:
+  - `help lists the eleven commands, one per line, in plain text`;
+  - `/orquestrador and /orquestrador-workflows are no longer registered, and no command is: the plugin's come from
+    commands/`. Ele roda o `session.start`, confere que as ferramentas `plan` e `flow` foram registradas e que nenhum
+    `$.command.register` aconteceu.
+- Mudados em `comando-harness.test.ts`: o `run` passou a disparar `command.run` com `orchestrator:<ação>`, e todos os
+  testes de `/orquestrador <sub>` foram portados:
+  - `panel opens and closes the pane as /orquestrador with no argument did, for any origin`: abre com o `composer` e
+    fecha com uma origem `plugin`;
+  - `only composer and bridge are the owner…`: cada ação que decide algo (`approve`, `reject`, `open`, `status`,
+    `help`, `skip-gate`, `end`) recebe `notFromOwner` de uma origem `plugin`, `peer` etc. `panel` e `workflows` abrem
+    para qualquer origem;
+  - `the release step is refused…, and approve with nothing after it is only the help`: substitui o caso do
+    `liberar`, que não existe mais como palavra;
+  - os textos esperados citam `/orchestrator:open` e `/orchestrator:end`, e o `consent` do `start_session` passou a
+    `The user typed "/orchestrator:open".`.
+- `command.test.ts`: os 6 testes de `parseCommand` viraram 6 de `parseAction(action, args)`.
+- `workflows-pane.test.ts` e `panel-flow.test.ts` disparam `orchestrator:panel` e `orchestrator:workflows`.
+  `pendentes-harness.test.ts` espera `/orchestrator:open` no toast.
 
 ### Tipos
 
-_a preencher_
+```
+$ npx -y -p typescript@5.6.3 tsc -p <scratchpad>/tc/tsconfig.json   # tipos do engine 2.1.309 (plugin-authoring), hooks + types + tests de orchestrator/
+(sem saída)
+exit=0
+```
 
 ### Validação
 
-_a preencher_
+```
+$ export PATH="…/claude-code/2.1.309/5af865b9901c/claude.app/Contents/MacOS:$PATH" && command claude plugin validate orchestrator
+  ❯ ./register.tsx hooks: session.start, command.run{command=orchestrator:status}, command.run{command=orchestrator:approve},
+    command.run{command=orchestrator:reject}, command.run{command=orchestrator:open}, command.run{command=orchestrator:skip-gate},
+    command.run{command=orchestrator:end}, command.run{command=orchestrator:panel}, command.run{command=orchestrator:workflows},
+    command.run{command=orchestrator:help}, ui.render{component=Pane, requestId=?}, …
+  ❯ ./register.tsx gating hook with .catch: command.run{command=orchestrator:status} (e os outros oito)
+⚠ Found 1 plugin directory warning: ICON_MISSING (já existia; não muda o resultado)
+✔ Validation passed
+exit=0
+```
+
+### Tarefas
+
+- 3.1: a prova está acima. O caminho é o hook.
+- 3.2: há nove arquivos em `orchestrator/commands/` (`ls | wc -l` = 9): `status`, `approve`, `reject`, `open`,
+  `skip-gate`, `end`, `panel`, `workflows` e `help`. Cada um tem o `description` do mockup, entre aspas duplas (2.7).
+  `approve`, `reject`, `skip-gate` e `end` têm `argument-hint` (`[nota]`, `[nota]`, `[N]` e `[motivo]`). O corpo é o
+  texto de reserva do §1. Em `register.tsx`, cada arquivo tem um hook `command.run` com o nome literal
+  (`orchestrator:<ação>`), e todos chamam o mesmo `runCommand($, action, args, origin)`, por meio de
+  `answerCommand`. O `validate` lista os nove.
+
+  Desvio: o matcher e o hook são literais escritos nove vezes, sem laço e sem `${PLUGIN_NAME}`. Com uma função de
+  fábrica (`answer('status')`), o engine recusou o módulo: `the hook is not a function literal or the name of one`.
+  Com um nome montado, o `validate` mostraria `command=?`, como no `requestId=?` do painel de workflows.
+
+  Para a fase 4, `command.ts` ganhou `ACTIONS`, o tipo `Action` e o `parseAction(action, args)`. `approve`,
+  `skip-gate` e `end` mantêm a forma de hoje (`<saída> [nota]`, `<fase> <portão> confirmar`, `[motivo] confirmar`).
+  `reject` é o esboço: guarda a nota e responde `Por enquanto, peça ajustes pelo botão do painel.`. A fase 4 troca
+  isso pelo `pickOutcome`.
+- 3.3: saíram os dois `$.command.register` (`orquestrador` e `orquestrador-workflows`), os hooks deles, o
+  `parseCommand` por palavra e os textos `description` e `workflowsDescription` do `i18n`, que só o registro usava.
+  `panel` e `workflows` chamam o `togglePane` e o `toggleWorkflowsPane` de hoje. Os textos citam `/orchestrator:<ação>`:
+  - a ajuda (`i18n.ts`, pt-BR e en), agora com os onze comandos e as descrições do mockup;
+  - o `appRefused`, o `appRefusedMobile` e o `approveEnd`;
+  - o `consent` do `openPending`;
+  - os comentários de `register.tsx`, `command.ts` e `workflows-pane.tsx`.
+
+  Desvio na verificação: `grep -rn "/orquestrador\b\|'orquestrador'\|orquestrador-workflows" orchestrator/hooks` ainda
+  acha quatro linhas, todas da pasta de registros `~/.claude/orquestrador`: `activation.ts:114` (`registryDir`),
+  `register.tsx:1111-1112` (`MENTIONS_PROTECTED_DIR`) e `gates.ts:370` (`PROTECTED_DIR`). O `\b` do grep também casa
+  `/` e crase, além do que a tarefa descreve. Essa pasta fica com o nome antigo nesta versão (§4 e fase 2). Com o padrão
+  que a tarefa descreve (espaço, `:`, aspas ou fim de linha), `grep -rnE "/orquestrador([ :'\"]|$)|'orquestrador'|orquestrador-workflows"
+  orchestrator/hooks` não acha nada (exit 1).
+- 3.4: os testes de harness estão listados acima: `panel` abre e fecha, `help` lista os onze comandos, uma origem
+  `plugin` recebe `notFromOwner` e `/orquestrador` não é mais registrado. Todos aparecem como `(pass)`.
+
+Ficou fora do escopo, como pedido:
+- o comportamento sem palavra-chave (`approve` e `reject` automáticos, `end` sem `confirmar`, `skip-gate` por número),
+  que é da fase 4;
+- a pasta `~/.claude/orquestrador` dos registros do mod;
+- a config deste repo em `.orquestrador/`.
 
 ## Fase 4 — nenhum comando exige palavra
 

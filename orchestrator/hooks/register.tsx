@@ -100,7 +100,8 @@ import {
   rejectPlan,
 } from './grill'
 import { bandSummary, parseEvents, stepTimes } from './glance'
-import { fromOwner, parseCommand, statusText } from './command'
+import { fromOwner, parseAction, statusText } from './command'
+import type { Action } from './command'
 import { DEFAULT_LANGUAGES, contentRule, uiText } from './i18n'
 import type { UiText } from './i18n'
 import { renderBand, renderPane } from './pane'
@@ -2001,7 +2002,7 @@ const observeFlows = async ($: EngineInterface, command: string, failed: boolean
 type Pressed = { ok: true; text: string } | { error: string }
 
 /**
- * Only the owner reaches this (the panel's press, or `/orquestrador aprovar` typed by them): no tool call
+ * Only the owner reaches this (the panel's press, or `/orchestrator:approve` typed by them): no tool call
  * answers an owner step. When the flow lands on a step the coordinator drives, the press also wakes it with
  * a message in the mod's name. The click waits for that message; the command does not (it would hold its answer).
  */
@@ -2044,7 +2045,7 @@ const clickFlow = async ($: EngineInterface, change: string, step: string, outco
 }
 
 /**
- * The owner ends the flow (the second press of "Encerrar o flow", or `/orquestrador encerrar ... confirmar`).
+ * The owner ends the flow (the second press of "Encerrar o flow", or `/orchestrator:end ... confirmar`).
  * Nothing is archived, the group stays, and no message goes to the coordination: the `aborted` flow stops the
  * warnings by itself. The only caller of `endFlow` besides the escalation's answer.
  */
@@ -2096,18 +2097,25 @@ const openGatesNow = async ($: EngineInterface): Promise<{ phase: string; gate: 
   return [...phaseGates, ...final]
 }
 
-/** `/orquestrador <subcommand>`: the owner's chat, which the Remote Control reaches too. Plain text answers. */
-const runSubcommand = async ($: EngineInterface, args: string, origin: { readonly kind: string }): Promise<string> => {
+/**
+ * `/orchestrator:<action> <args>`: the owner's chat, which the Remote Control reaches too. Plain text answers.
+ * Opening a pane decides nothing, so any origin may; every other action counts only typed by the owner.
+ */
+const runCommand = async ($: EngineInterface, action: Action, args: string, origin: { readonly kind: string }): Promise<string> => {
   const config = await loadConfig($)
   const t = uiText(config.languages.ui)
-  const parsed = parseCommand(args)
+  const parsed = parseAction(action, args)
   if (parsed.kind === 'toggle') {
     const done = await togglePane($)
     return done === 'closed' ? t.command.closed : done === 'opened' ? t.command.opened : t.command.waiting
   }
+  if (parsed.kind === 'workflows') {
+    const done = await toggleWorkflowsPane($)
+    return done === 'closed' ? t.command.workflowsClosed : done === 'opened' ? t.command.workflowsOpened : t.command.workflowsWaiting
+  }
   if (!fromOwner(origin)) return t.command.notFromOwner
   if (parsed.kind === 'help') return t.command.help
-  if (parsed.kind === 'unknown') return `${t.command.unknown(parsed.word)}\n${t.command.help}`
+  if (parsed.kind === 'usage') return `${t.command.usage(parsed.action)}\n${t.command.help}`
   const flow = await commandFlow($, await $.session.root())
   if (flow === undefined) {
     // no flow of this session may be a flow of a session whose id is not read yet: say the permission, not "no flow"
@@ -2137,7 +2145,7 @@ const runSubcommand = async ($: EngineInterface, args: string, origin: { readonl
     }
     case 'open': {
       if ((flow.pendingStarts ?? []).length === 0) return t.command.noPending
-      const done = await openPending($, change, 'The user typed "/orquestrador abrir".')
+      const done = await openPending($, change, 'The user typed "/orchestrator:open".')
       await refreshQuietly($)
       return t.pending.result(done.opened.length, done.left, done.why) + (done.byApp ? ` ${origin.kind === 'bridge' ? t.pending.appRefusedMobile : t.pending.appRefused}` : '')
     }
@@ -2150,6 +2158,9 @@ const runSubcommand = async ($: EngineInterface, args: string, origin: { readonl
       await refreshQuietly($)
       return t.command.skipDone(hit.gate.gate)
     }
+    case 'reject':
+      // the outcome "adjust" of the current step is chosen in phase 4 (pickOutcome); until then the panel's button asks
+      return t.command.rejectLater
     case 'end': {
       if (!parsed.confirmed) return t.command.endAsk(change, flow.escalation?.step ?? flow.current)
       const done = await endByOwner($, change, parsed.reason)
@@ -2157,6 +2168,10 @@ const runSubcommand = async ($: EngineInterface, args: string, origin: { readonl
     }
   }
 }
+
+/** A command's answer, or the error it met, as the text the owner reads. */
+const answerCommand = ($: EngineInterface, action: Action, args: string | undefined, origin: { readonly kind: string }): Promise<string> =>
+  runCommand($, action, args ?? '', origin).catch(error => describeError(action, error))
 
 /**
  * The owner's answers typed in the panel: recorded in the latest grill round (grill.md and the
@@ -2192,7 +2207,7 @@ const showPane = async ($: EngineInterface): Promise<boolean> => {
   return opened.isPlaced
 }
 
-/** `/orquestrador` and the band's button: close the pane when it is up, else open it. */
+/** `/orchestrator:panel` and the band's button: close the pane when it is up, else open it. */
 const togglePane = async ($: EngineInterface): Promise<'opened' | 'waiting' | 'closed'> => {
   const isUp = (await $.ui.panes()).some(pane => pane.id === PANE)
   if (isUp) {
@@ -2348,14 +2363,6 @@ export const register: Register = on => {
   on('session.start', async ($, e, next) => {
     await restoreActivity($).catch(() => undefined)
     await startWorkflowsLoad($)
-    await $.command.register({
-      name: 'orquestrador',
-      description: (await textNow($)).command.description,
-    })
-    await $.command.register({
-      name: 'orquestrador-workflows',
-      description: (await textNow($)).command.workflowsDescription,
-    })
     await $.tool.register({
       name: 'plan',
       description:
@@ -2381,15 +2388,17 @@ export const register: Register = on => {
     return next(e)
   })
 
-  on('command.run', { command: 'orquestrador' }, async ($, e) => ({
-    text: await runSubcommand($, e.args ?? '', e.origin).catch(error => describeError('orquestrador', error)),
-  }))
-
-  on('command.run', { command: 'orquestrador-workflows' }, async $ => {
-    const done = await toggleWorkflowsPane($)
-    const t = (await textNow($)).command
-    return { text: done === 'closed' ? t.workflowsClosed : done === 'opened' ? t.workflowsOpened : t.workflowsWaiting }
-  })
+  // one hook per `commands/<action>.md`, each a literal: the engine reads the matcher and the hook as written.
+  // A hook that fails hands the command on, and its file's text tells the owner the mod did not answer.
+  on('command.run', { command: 'orchestrator:status' }, async ($, e) => ({ text: await answerCommand($, 'status', e.args, e.origin) })).catch(($, e, next) => (next.called ? undefined : next(e)))
+  on('command.run', { command: 'orchestrator:approve' }, async ($, e) => ({ text: await answerCommand($, 'approve', e.args, e.origin) })).catch(($, e, next) => (next.called ? undefined : next(e)))
+  on('command.run', { command: 'orchestrator:reject' }, async ($, e) => ({ text: await answerCommand($, 'reject', e.args, e.origin) })).catch(($, e, next) => (next.called ? undefined : next(e)))
+  on('command.run', { command: 'orchestrator:open' }, async ($, e) => ({ text: await answerCommand($, 'open', e.args, e.origin) })).catch(($, e, next) => (next.called ? undefined : next(e)))
+  on('command.run', { command: 'orchestrator:skip-gate' }, async ($, e) => ({ text: await answerCommand($, 'skip-gate', e.args, e.origin) })).catch(($, e, next) => (next.called ? undefined : next(e)))
+  on('command.run', { command: 'orchestrator:end' }, async ($, e) => ({ text: await answerCommand($, 'end', e.args, e.origin) })).catch(($, e, next) => (next.called ? undefined : next(e)))
+  on('command.run', { command: 'orchestrator:panel' }, async ($, e) => ({ text: await answerCommand($, 'panel', e.args, e.origin) })).catch(($, e, next) => (next.called ? undefined : next(e)))
+  on('command.run', { command: 'orchestrator:workflows' }, async ($, e) => ({ text: await answerCommand($, 'workflows', e.args, e.origin) })).catch(($, e, next) => (next.called ? undefined : next(e)))
+  on('command.run', { command: 'orchestrator:help' }, async ($, e) => ({ text: await answerCommand($, 'help', e.args, e.origin) })).catch(($, e, next) => (next.called ? undefined : next(e)))
 
   on('ui.render', { component: 'Pane', requestId: WORKFLOWS_PANE }, async ($, e) => {
     const { Box, Text, Button } = $.ui.resolve(e)

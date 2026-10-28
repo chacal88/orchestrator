@@ -103,10 +103,10 @@ const TRUNK = {
   ],
 }
 
-test('4.1 /orquestrador-workflows opens and closes its own pane, beside the 🧭 one', async ($, on) => {
+test('4.1 /orchestrator:workflows opens and closes its own pane, beside the 🧭 one', async ($, on) => {
   const w = world(on)
-  await $.command.run({ command: 'orquestrador' } as never)
-  const opened = await $.command.run({ command: 'orquestrador-workflows' } as never)
+  await $.command.run({ command: 'orchestrator:panel' } as never)
+  const opened = await $.command.run({ command: 'orchestrator:workflows' } as never)
   expect(String((opened as { text?: string }).text)).toMatch(/Painel de workflows aberto/)
   expect(w.panes).toEqual([
     { id: 'orchestrator', title: '🧭 Orchestrator' },
@@ -116,7 +116,7 @@ test('4.1 /orquestrador-workflows opens and closes its own pane, beside the 🧭
   expect(await ui.find(text(/Os caminhos que uma change pode seguir/))).toBeDefined()
   await ui.unmount()
 
-  const closed = await $.command.run({ command: 'orquestrador-workflows' } as never)
+  const closed = await $.command.run({ command: 'orchestrator:workflows' } as never)
   expect(String((closed as { text?: string }).text)).toMatch(/Painel de workflows fechado/)
   expect(w.panes.map(p => p.id)).toEqual(['orchestrator'])
 })
@@ -897,8 +897,8 @@ test('a draft kept from before (the pane drawn again, the command run again) and
   await ui.press({ key: 'wf-edit' })
   await ui.unmount()
   // the pane closed and opened again: the editor comes back with the draft, "Salvar" its first button
-  await $.command.run({ command: 'orquestrador-workflows' } as never)
-  await $.command.run({ command: 'orquestrador-workflows' } as never)
+  await $.command.run({ command: 'orchestrator:workflows' } as never)
+  await $.command.run({ command: 'orchestrator:workflows' } as never)
   const again = await mount($)
   expect(await again.find(text(/Editando Rápido \(plugin\)/))).toBeDefined()
   expect(await again.find(text(/Nenhuma mudança ainda/))).toBeDefined()

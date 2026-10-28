@@ -159,27 +159,27 @@ e o `.orquestrador/` do `LEGACY_DIR` não tem barra, então o grep da 2.8 só ac
 
 Portões: `testes`, `tipos`, `lint`.
 
-- [ ] 3.1 Prova (`design.md`, §1). Criar `orchestrator/commands/status.md` e um hook `command.run` com o matcher
+- [x] 3.1 Prova (`design.md`, §1). Criar `orchestrator/commands/status.md` e um hook `command.run` com o matcher
       `{ command: 'orchestrator:status' }` que responde `{ text }` sem `next`. Carregar com `--plugin-dir` numa
       sessão do app, digitar `/orchestrator:status` e anotar no `evidence.md` o que aparece: o texto do mod ou o prompt
       do arquivo. Anotar também o que o `claude plugin validate orchestrator` lista para esse hook. Se o hook não
       pegar o comando, seguir o plano B do design: a ferramenta `mcp__orchestrator__command` e o corpo do `.md`
       chamando essa ferramenta. Verificação: a seção "Prova do prefixo" do `evidence.md` preenchida, com o caminho
       escolhido — cx: complex
-- [ ] 3.2 Os nove arquivos `commands/<ação>.md`: `status`, `approve`, `reject`, `open`, `skip-gate`, `end`, `panel`,
+- [x] 3.2 Os nove arquivos `commands/<ação>.md`: `status`, `approve`, `reject`, `open`, `skip-gate`, `end`, `panel`,
       `workflows` e `help`. Cada um tem `description` com o texto do mockup e `argument-hint` quando aceita texto
       (`[nota]`, `[N]`, `[motivo]`). O corpo é o plano B (§1). Para cada um há um hook `command.run` com o nome
       literal (`${PLUGIN_NAME}:<ação>`), e todos chamam o mesmo `runCommand($, action, args, origin)`. Verificação:
       `claude plugin validate orchestrator` lista os nove hooks, e `ls orchestrator/commands` mostra nove arquivos —
       cx: moderate
-- [ ] 3.3 Corte. Saem `$.command.register` de `orquestrador` e `orquestrador-workflows`, os dois hooks
+- [x] 3.3 Corte. Saem `$.command.register` de `orquestrador` e `orquestrador-workflows`, os dois hooks
       `command.run` deles e o `parseCommand` por palavra. `panel` e `workflows` chamam o `togglePane` e o
       `toggleWorkflowsPane` de hoje. Os textos do `i18n` que citam `/orquestrador …` passam a citar
       `/orchestrator:<ação>`. Isso inclui `i18n.ts:331` e `:578` (a ajuda), `workflows-pane.tsx:1298`,
       `register.tsx:2186` e o comentário de `command.ts:4`. Verificação: `grep -rn "/orquestrador\b\|'orquestrador'\|orquestrador-workflows"
       orchestrator/hooks` não acha nada. O padrão pega `/orquestrador` seguido de espaço, `:`, aspas ou fim de linha —
       cx: moderate
-- [ ] 3.4 Testes de harness em `comando-harness.test.ts`. Os testes de `/orquestrador <sub>` passam a disparar
+- [x] 3.4 Testes de harness em `comando-harness.test.ts`. Os testes de `/orquestrador <sub>` passam a disparar
       `command.run` com `orchestrator:<ação>`:
       - `panel` abre e fecha;
       - `help` devolve a lista dos onze comandos;
@@ -187,6 +187,12 @@ Portões: `testes`, `tipos`, `lint`.
       - `/orquestrador` não é mais registrado.
 
       Verificação: `claude plugin test orchestrator` sai com 0, com os testes novos como `(pass)` — cx: moderate
+
+Feito com três desvios, registrados no `evidence.md`:
+- a prova da 3.1 rodou em `claude -p` com o binário do app, e não numa sessão interativa; a 6.4 confere no desktop;
+- os nove hooks são literais escritos um a um, porque o engine recusa um hook que não é função literal;
+- o grep da 3.3 com `\b` ainda acha a pasta de registros `~/.claude/orquestrador`, que fica com o nome antigo (§4); com o
+  padrão que a tarefa descreve, não acha nada.
 
 ## 4. Nenhum comando exige palavra
 

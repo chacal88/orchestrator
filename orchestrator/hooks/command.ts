@@ -1,20 +1,27 @@
 import type { FlowView } from '../types'
 import type { UiText } from './i18n'
 
-/** What the owner typed after `/orquestrador`. */
+/** The plugin's chat commands, each `/orchestrator:<action>` (a `commands/<action>.md` the mod answers). */
+export const ACTIONS = ['status', 'approve', 'reject', 'open', 'skip-gate', 'end', 'panel', 'workflows', 'help'] as const
+
+export type Action = (typeof ACTIONS)[number]
+
+/** What the owner asked for with `/orchestrator:<action> <args>`. */
 export type Command =
   | { kind: 'toggle' }
+  | { kind: 'workflows' }
   | { kind: 'status' }
   | { kind: 'help' }
   | { kind: 'open' }
   | { kind: 'approve'; outcome: string; note?: string }
+  | { kind: 'reject'; note?: string }
   | { kind: 'skip'; phase: string; gate: string; confirmed: boolean }
   | { kind: 'end'; reason?: string; confirmed: boolean }
-  | { kind: 'unknown'; word: string }
+  | { kind: 'usage'; action: Action }
 
 const CONFIRM = 'confirmar'
 
-/** The words of a line, the first one lowercased: the subcommand. */
+/** The words of a line, the first one lowercased. */
 const split = (args: string): { word: string; rest: string } => {
   const text = args.trim()
   const space = text.search(/\s/)
@@ -28,37 +35,37 @@ const confirmation = (rest: string): { text: string; confirmed: boolean } => {
   return { text: (confirmed ? words.slice(0, -1) : words).join(' '), confirmed }
 }
 
-/** No argument toggles the panel; each subcommand has one form, and anything else is `unknown` (the help). */
-export const parseCommand = (args: string): Command => {
-  const { word, rest } = split(args)
-  switch (word) {
-    case '':
+/** The line after the command, read for its action; a line the action cannot take is `usage` (the help). */
+export const parseAction = (action: Action, args: string): Command => {
+  const text = args.trim()
+  switch (action) {
+    case 'panel':
       return { kind: 'toggle' }
+    case 'workflows':
+      return { kind: 'workflows' }
     case 'status':
       return { kind: 'status' }
-    case 'ajuda':
     case 'help':
       return { kind: 'help' }
-    case 'abrir':
+    case 'open':
       return { kind: 'open' }
-    case 'aprovar': {
-      const outcome = split(rest)
-      if (outcome.word === '') return { kind: 'unknown', word }
-      return { kind: 'approve', outcome: outcome.word, ...(outcome.rest === '' ? {} : { note: outcome.rest }) }
+    case 'approve': {
+      const { word, rest } = split(text)
+      if (word === '') return { kind: 'usage', action }
+      return { kind: 'approve', outcome: word, ...(rest === '' ? {} : { note: rest }) }
     }
-    case 'pular-portão':
-    case 'pular-portao': {
-      const { text, confirmed } = confirmation(rest)
-      const [phase, gate, ...extra] = text.split(/\s+/)
-      if (phase === undefined || phase === '' || gate === undefined || extra.length > 0) return { kind: 'unknown', word }
+    case 'reject':
+      return { kind: 'reject', ...(text === '' ? {} : { note: text }) }
+    case 'skip-gate': {
+      const { text: words, confirmed } = confirmation(text)
+      const [phase, gate, ...extra] = words.split(/\s+/)
+      if (phase === undefined || phase === '' || gate === undefined || extra.length > 0) return { kind: 'usage', action }
       return { kind: 'skip', phase, gate, confirmed }
     }
-    case 'encerrar': {
-      const { text, confirmed } = confirmation(rest)
-      return { kind: 'end', ...(text === '' ? {} : { reason: text }), confirmed }
+    case 'end': {
+      const { text: reason, confirmed } = confirmation(text)
+      return { kind: 'end', ...(reason === '' ? {} : { reason }), confirmed }
     }
-    default:
-      return { kind: 'unknown', word }
   }
 }
 

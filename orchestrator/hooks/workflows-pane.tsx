@@ -1300,7 +1300,7 @@ export const renderWorkflows = (els: WorkflowsElements, view: WorkflowsView, act
   )
 }
 
-/** `/orquestrador-workflows`: closes the pane when it is up, else opens it; the 🧭 pane is left as it is. */
+/** `/orchestrator:workflows`: closes the pane when it is up, else opens it; the 🧭 pane is left as it is. */
 export async function toggleWorkflowsPane($: EngineInterface): Promise<'opened' | 'waiting' | 'closed'> {
   if ((await $.ui.panes()).some(pane => pane.id === WORKFLOWS_PANE)) {
     await $.ui.close({ id: WORKFLOWS_PANE })

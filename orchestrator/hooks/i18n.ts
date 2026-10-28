@@ -315,30 +315,34 @@ const pt = {
     result: (opened: number, left: number, why: string | undefined) =>
       (opened === 0 ? 'Nenhuma sessão pendente abriu.' : `${opened === 1 ? 'Abriu 1 sessão pendente' : `Abriram ${opened} sessões pendentes`}.`) +
       (left === 0 ? '' : ` ${left === 1 ? 'Ficou 1' : `Ficaram ${left}`}${why === undefined ? '.' : `: ${why}`}`),
-    appRefused: 'O app não aceitou abrir pelo painel; digite /orquestrador abrir no desktop.',
-    appRefusedMobile: 'Pelo celular o app não abre sessões; digite /orquestrador abrir no desktop.',
+    appRefused: 'O app não aceitou abrir pelo painel; digite /orchestrator:open no desktop.',
+    appRefusedMobile: 'Pelo celular o app não abre sessões; digite /orchestrator:open no desktop.',
     failed: 'Não consegui abrir as sessões pendentes.',
   },
   command: {
-    description: 'Abre ou fecha o painel da orquestração. Subcomandos: status, aprovar, abrir, pular-portão, encerrar, ajuda',
     closed: 'Painel do Orchestrator fechado.',
     opened: 'Painel do Orchestrator aberto.',
     waiting: 'Painel pronto; amplie a janela para vê-lo.',
-    workflowsDescription: 'Abre ou fecha o painel ⚙️ Workflows: ver e editar os workflows do projeto',
     workflowsClosed: 'Painel de workflows fechado.',
     workflowsOpened: 'Painel de workflows aberto.',
     workflowsWaiting: 'Painel de workflows pronto; amplie a janela para vê-lo.',
-    notFromOwner: 'Esse subcomando só vale digitado por você, no prompt ou no Remote Control.',
+    notFromOwner: 'Esse comando só vale digitado por você, no prompt ou no Remote Control.',
     noFlow: 'Nenhum flow em andamento nesta sessão; use na sessão da coordenação.',
     help:
-      'Subcomandos de /orquestrador:\n' +
-      'status: onde o flow está\n' +
-      'aprovar <saída> [nota]: responde o passo do dono (a liberação vem do plan mode)\n' +
-      'abrir: abre as sessões pendentes\n' +
-      'pular-portão <fase> <portão> confirmar: pula um portão\n' +
-      'encerrar [motivo] confirmar: encerra o flow\n' +
-      'ajuda: esta lista',
-    unknown: (word: string) => `Não conheço "${word}".`,
+      'Comandos do orchestrator:\n' +
+      '/orchestrator:status: onde o flow está e o que espera de você\n' +
+      '/orchestrator:approve: segue em frente no seu passo (igual ao botão). Texto depois vira nota\n' +
+      '/orchestrator:reject: pede ajustes no seu passo. Texto depois vira nota\n' +
+      '/orchestrator:open: abre as sessões que ficaram pendentes\n' +
+      '/orchestrator:skip-gate: lista os portões abertos; com um número, pula aquele\n' +
+      '/orchestrator:end: encerra o flow da change. Texto depois vira o motivo\n' +
+      '/orchestrator:panel: abre ou fecha o painel da orquestração\n' +
+      '/orchestrator:workflows: abre ou fecha o painel de workflows\n' +
+      '/orchestrator:change: orquestra uma change do entendimento ao arquivo\n' +
+      '/orchestrator:install: configura o orchestrator neste projeto\n' +
+      '/orchestrator:help: esta lista, em texto simples',
+    usage: (action: string) => `Faltou o que /orchestrator:${action} pede.`,
+    rejectLater: 'Por enquanto, peça ajustes pelo botão do painel.',
     statusFlow: (change: string, title: string, status: string) => `Flow de ${change} (${title}): ${status}`,
     statusStep: (step: string) => `Passo: ${step}`,
     statusChoices: (outcomes: string) => `Você responde com: ${outcomes}`,
@@ -351,7 +355,7 @@ const pt = {
     endAsk: (change: string, step: string) =>
       `Vou encerrar o flow de ${change} no passo ${step}. Nada é arquivado. Para confirmar, digite o mesmo comando com confirmar no fim.`,
     endDone: (change: string) => `Flow de ${change} encerrado por você.`,
-    approveEnd: 'Encerrar o flow pede confirmação: digite /orquestrador encerrar [motivo] confirmar.',
+    approveEnd: 'Encerrar o flow pede confirmação: digite /orchestrator:end [motivo] confirmar.',
     endButton: 'Encerrar o flow',
     endConfirm: (change: string) => `Confirmar: encerrar o flow de ${change}`,
   },
@@ -562,30 +566,34 @@ const en: UiText = {
     result: (opened, left, why) =>
       (opened === 0 ? 'No pending session opened.' : `${opened === 1 ? 'Opened 1 pending session' : `Opened ${opened} pending sessions`}.`) +
       (left === 0 ? '' : ` ${left} left${why === undefined ? '.' : `: ${why}`}`),
-    appRefused: 'The app did not let the panel open them; type /orquestrador abrir on the desktop.',
-    appRefusedMobile: 'From the phone the app opens no sessions; type /orquestrador abrir on the desktop.',
+    appRefused: 'The app did not let the panel open them; type /orchestrator:open on the desktop.',
+    appRefusedMobile: 'From the phone the app opens no sessions; type /orchestrator:open on the desktop.',
     failed: 'Could not open the pending sessions.',
   },
   command: {
-    description: 'Opens or closes the orchestration panel. Subcommands: status, aprovar, abrir, pular-portão, encerrar, ajuda',
     closed: 'Orchestrator panel closed.',
     opened: 'Orchestrator panel opened.',
     waiting: 'Panel ready; widen the window to see it.',
-    workflowsDescription: "Opens or closes the ⚙️ Workflows panel: view and edit the project's workflows",
     workflowsClosed: 'Workflows panel closed.',
     workflowsOpened: 'Workflows panel opened.',
     workflowsWaiting: 'Workflows panel ready; widen the window to see it.',
-    notFromOwner: 'This subcommand only counts when you type it, at the prompt or in Remote Control.',
+    notFromOwner: 'This command only counts when you type it, at the prompt or in Remote Control.',
     noFlow: 'No flow running in this session; use it in the coordination session.',
     help:
-      'Subcommands of /orquestrador:\n' +
-      'status: where the flow is\n' +
-      "aprovar <outcome> [note]: answers the owner's step (the release comes from plan mode)\n" +
-      'abrir: opens the pending sessions\n' +
-      'pular-portão <phase> <gate> confirmar: skips a gate\n' +
-      'encerrar [reason] confirmar: ends the flow\n' +
-      'ajuda: this list',
-    unknown: word => `I do not know "${word}".`,
+      'Orchestrator commands:\n' +
+      '/orchestrator:status: where the flow is and what it waits on from you\n' +
+      '/orchestrator:approve: moves on at your step (same as the button). Text after it becomes a note\n' +
+      '/orchestrator:reject: asks for changes at your step. Text after it becomes a note\n' +
+      '/orchestrator:open: opens the sessions left pending\n' +
+      '/orchestrator:skip-gate: lists the open gates; with a number, skips that one\n' +
+      "/orchestrator:end: ends the change's flow. Text after it becomes the reason\n" +
+      '/orchestrator:panel: opens or closes the orchestration panel\n' +
+      '/orchestrator:workflows: opens or closes the workflows panel\n' +
+      '/orchestrator:change: orchestrates a change from understanding to archive\n' +
+      '/orchestrator:install: sets up the orchestrator in this project\n' +
+      '/orchestrator:help: this list, in plain text',
+    usage: action => `Missing what /orchestrator:${action} asks for.`,
+    rejectLater: 'For now, ask for changes with the panel button.',
     statusFlow: (change, title, status) => `Flow of ${change} (${title}): ${status}`,
     statusStep: step => `Step: ${step}`,
     statusChoices: outcomes => `You answer with: ${outcomes}`,
@@ -598,7 +606,7 @@ const en: UiText = {
     endAsk: (change, step) =>
       `I will end the flow of ${change} at step ${step}. Nothing is archived. To confirm, type the same command with confirmar at the end.`,
     endDone: change => `Flow of ${change} ended by you.`,
-    approveEnd: 'Ending the flow asks for confirmation: type /orquestrador encerrar [reason] confirmar.',
+    approveEnd: 'Ending the flow asks for confirmation: type /orchestrator:end [reason] confirmar.',
     endButton: 'End the flow',
     endConfirm: change => `Confirm: end the flow of ${change}`,
   },

@@ -40,6 +40,12 @@ type World = {
   permission: Decision
   /** The app refuses a start the panel asks for (its rule on `user_asked`). */
   appRefuses: boolean
+  /** When set, the app keeps the panes the mod opens, by id, so a second toggle closes them. */
+  panes: boolean
+  open: string[]
+  /** The names the mod asked `$.command.register` and `$.tool.register` for. */
+  registered: string[]
+  tools: string[]
 }
 
 /**
@@ -56,6 +62,10 @@ const world = (on: On, permission: Decision = 'allow'): World => {
     prompts: [],
     permission,
     appRefuses: false,
+    panes: false,
+    open: [],
+    registered: [],
+    tools: [],
   }
   const groups: { id: string; name: string }[] = []
   on('env.get', () => ({ value: '/h' }))
@@ -107,8 +117,24 @@ const world = (on: On, permission: Decision = 'allow'): World => {
   })
   // the wake of a typed `aprovar` goes through a timer, past the command's hook: the test lets it elapse at once
   on('clock.after', () => ({ value: undefined }) as never)
-  on('ui.open', () => ({ value: { isPlaced: true } }) as never)
-  on('ui.panes', () => ({ value: [] }) as never)
+  on('ui.open', ($, e) => {
+    if (w.panes && !w.open.includes(e.id)) w.open.push(e.id)
+    return { value: { isPlaced: true } } as never
+  })
+  on('ui.close', ($, e) => {
+    w.open = w.open.filter(id => id !== e.id)
+    return { value: undefined } as never
+  })
+  on('ui.panes', () => ({ value: w.open.map(id => ({ id })) }) as never)
+  on('command.register', ($, e) => {
+    w.registered.push(e.name)
+    return { value: undefined } as never
+  })
+  on('tool.register', ($, e) => {
+    w.tools.push(e.name)
+    return { value: undefined } as never
+  })
+  on('session.start', () => ({ cwd: '/w' }) as never)
   on('ui.log', () => ({ value: undefined }) as never)
   on('ui.toast', ($, e) => {
     w.toasts.push(e.text)
@@ -149,9 +175,9 @@ const atLoopWithPending = async ($: Engine, w: World) => {
 type Origin = { kind: string; name?: string }
 const COMPOSER: Origin = { kind: 'composer' }
 
-/** The person (or whoever `origin` says) typing `/orquestrador <args>`; the text the command answers. */
-const run = async ($: Engine, w: World, args: string, origin: Origin = COMPOSER): Promise<string> => {
-  const done = (await $.command.run({ command: 'orquestrador', args, origin } as never)) as { text?: string }
+/** The person (or whoever `origin` says) typing `/orchestrator:<action> <args>`; the text the command answers. */
+const run = async ($: Engine, w: World, action: string, args = '', origin: Origin = COMPOSER): Promise<string> => {
+  const done = (await $.command.run({ command: `orchestrator:${action}`, args, origin } as never)) as { text?: string }
   await settle()
   return done.text ?? ''
 }
@@ -207,7 +233,7 @@ test('aprovar from the composer leaves the flow, the log and the wake as a click
   expect(clicked.prompts.length).toBeGreaterThan(0)
   expect((clicked.state as FlowState).current).not.toBe('grill')
 
-  const typed = await run($, w, 'aprovar fechado')
+  const typed = await run($, w, 'approve', 'fechado')
   expect(typed).toMatch(/Entendimento/)
   const after = snapshot(w)
   expect(after.prompts).toEqual(clicked.prompts)
@@ -219,7 +245,7 @@ test('aprovar with a note records it like the "Pedir ajuste" press, and an outco
   const w = world(on)
   await flow($, { action: 'start', change: 'b', flow: 'completo' })
   const before = snapshot(w)
-  const refused = await run($, w, 'aprovar inventado')
+  const refused = await run($, w, 'approve', 'inventado')
   expect(refused).toMatch(/^Não consegui registrar: /)
   expect(refused).toMatch(/inventado/)
   expect(snapshot(w)).toEqual(before)
@@ -238,27 +264,37 @@ test('only composer and bridge are the owner: plugin, peer and the rest are refu
     { kind: 'unclassified' },
   ]
   for (const origin of origins) {
-    for (const args of ['aprovar fechado', 'abrir', 'status', 'pular-portão 2 testes confirmar', 'encerrar confirmar']) {
-      expect([origin.kind, await run($, w, args, origin)]).toEqual([origin.kind, expect.stringMatching(/só vale digitado por você/)])
+    const typed: [string, string][] = [
+      ['approve', 'fechado'],
+      ['reject', ''],
+      ['open', ''],
+      ['status', ''],
+      ['help', ''],
+      ['skip-gate', '2 testes confirmar'],
+      ['end', 'confirmar'],
+    ]
+    for (const [action, args] of typed) {
+      expect([origin.kind, action, await run($, w, action, args, origin)]).toEqual([origin.kind, action, expect.stringMatching(/só vale digitado por você/)])
     }
   }
   expect(snapshot(w)).toEqual(before)
   expect(w.calls.filter(c => c.tool === T.start)).toEqual([])
-  // opening the panel decides nothing, so any origin may
-  expect(await run($, w, '', { kind: 'plugin', name: 'x' })).toMatch(/Painel/)
+  // opening a pane decides nothing, so any origin may
+  expect(await run($, w, 'panel', '', { kind: 'plugin', name: 'x' })).toMatch(/Painel/)
+  expect(await run($, w, 'workflows', '', { kind: 'plugin', name: 'x' })).toMatch(/Painel de workflows/)
 })
 
 test('through the bridge it works, and the answer is plain text: no table, no heading, no bold', async ($, on) => {
   const w = world(on)
   await flow($, { action: 'start', change: 'b', flow: 'completo' })
-  const status = await run($, w, 'status', { kind: 'bridge' })
+  const status = await run($, w, 'status', '', { kind: 'bridge' })
   expect(status).toMatch(/^Flow de b \(Completo\): running\nPasso: Entendimento/)
   expect(status).toMatch(/Você responde com: fechado/)
   expect(status).not.toMatch(/[|#*]|```/)
-  const help = await run($, w, 'ajuda', { kind: 'bridge' })
-  expect(help).toMatch(/status:.*\naprovar .*\nabrir:/)
+  const help = await run($, w, 'help', '', { kind: 'bridge' })
+  expect(help).toMatch(/\/orchestrator:status: .*\n\/orchestrator:approve: .*\n\/orchestrator:reject: /)
   expect(help).not.toMatch(/[|#*]|```/)
-  const moved = await run($, w, 'aprovar fechado', { kind: 'bridge' })
+  const moved = await run($, w, 'approve', 'fechado', { kind: 'bridge' })
   expect(moved).not.toMatch(/[|#*]/)
   expect(saved(w).current).not.toBe('grill')
 })
@@ -272,25 +308,25 @@ test('status does not list sessions beyond what the permission lets, and says so
   expect(w.calls.slice(before).filter(c => c.tool === T.list || c.tool === T.get)).toEqual([])
 })
 
-test('the release step is refused with the plan-mode notice, and liberar is only the help', async ($, on) => {
+test('the release step is refused with the plan-mode notice, and approve with nothing after it is only the help', async ($, on) => {
   const w = world(on)
   await flow($, { action: 'start', change: 'b', flow: 'completo' })
   w.disk.set(`${BASE}/flows/b.json`, JSON.stringify({ ...saved(w), current: 'liberacao' }))
   const before = snapshot(w)
-  const refused = await run($, w, 'aprovar liberado')
+  const refused = await run($, w, 'approve', 'liberado')
   expect(refused).toBe('A liberação vem do plan mode: aprove o plano de execução no diálogo do app.')
   expect(snapshot(w)).toEqual(before)
-  const liberar = await run($, w, 'liberar')
-  expect(liberar).toMatch(/^Não conheço "liberar"\.\nSubcomandos de \/orquestrador:/)
+  const bare = await run($, w, 'approve')
+  expect(bare).toMatch(/^Faltou o que \/orchestrator:approve pede\.\nComandos do orchestrator:/)
   expect(snapshot(w)).toEqual(before)
 })
 
 test('abrir opens the pending sessions as the owner typed it, and the phone is told when the app refuses', async ($, on) => {
   const w = world(on)
   await atLoopWithPending($, w)
-  const typed = await run($, w, 'abrir')
+  const typed = await run($, w, 'open')
   expect(typed).toBe('Abriram 3 sessões pendentes.')
-  const consent = 'The user typed "/orquestrador abrir".'
+  const consent = 'The user typed "/orchestrator:open".'
   expect(starts(w).map(c => [c.title, c.initiation, c.consent])).toEqual([
     ['Fase 1', 'user_asked', consent],
     ['Fase 2', 'user_asked', consent],
@@ -299,16 +335,16 @@ test('abrir opens the pending sessions as the owner typed it, and the phone is t
   expect(saved(w).pendingStarts).toBeUndefined()
   expect(saved(w).tracked).toEqual(['local_c1', 'local_c2', 'local_c3'])
   expect(logOf(w).filter(e => (e as { kind: string }).kind === 'pending-opened')).toEqual([expect.objectContaining({ by: 'owner', note: '1, 2, 3' })])
-  expect(await run($, w, 'abrir')).toBe('Nenhuma sessão pendente para abrir.')
+  expect(await run($, w, 'open')).toBe('Nenhuma sessão pendente para abrir.')
 })
 
 test('abrir through the bridge, with the app refusing, says the phone cannot open sessions', async ($, on) => {
   const w = world(on)
   await atLoopWithPending($, w)
   w.appRefuses = true
-  expect(await run($, w, 'abrir', { kind: 'bridge' })).toMatch(/Pelo celular o app não abre sessões; digite \/orquestrador abrir no desktop\.$/)
+  expect(await run($, w, 'open', '', { kind: 'bridge' })).toMatch(/Pelo celular o app não abre sessões; digite \/orchestrator:open no desktop\.$/)
   expect(saved(w).pendingStarts).toHaveLength(3)
-  expect(await run($, w, 'abrir')).toMatch(/O app não aceitou abrir pelo painel; digite \/orquestrador abrir no desktop\.$/)
+  expect(await run($, w, 'open')).toMatch(/O app não aceitou abrir pelo painel; digite \/orchestrator:open no desktop\.$/)
 })
 
 const PLAN = {
@@ -330,19 +366,57 @@ test('pular-portão asks for confirmar; with it, it records the skip the panel r
   const clicked = await rewound(w, () => click($, 'arm:2:testes', 'skip:2:testes'))
   expect(clicked.skips).toEqual({ skips: { '2:testes': {} } })
 
-  const ask = await run($, w, 'pular-portão 2 testes')
+  const ask = await run($, w, 'skip-gate', '2 testes')
   expect(ask).toMatch(/Vou pular o portão testes da fase 2\. Para confirmar, digite o mesmo comando com confirmar no fim\./)
   expect(snapshot(w)).toEqual(none)
-  expect(await run($, w, 'pular-portão 2 inventado confirmar')).toMatch(/Não achei o portão "inventado"/)
+  expect(await run($, w, 'skip-gate', '2 inventado confirmar')).toMatch(/Não achei o portão "inventado"/)
   expect(snapshot(w)).toEqual(none)
 
-  expect(await run($, w, 'pular-portao 2 testes confirmar')).toBe('Portão testes pulado por você.')
+  expect(await run($, w, 'skip-gate', '2 testes confirmar')).toBe('Portão testes pulado por você.')
   expect(snapshot(w)).toEqual(clicked)
 })
 
-test('with no argument the command opens and closes the pane as before, for any origin', async ($, on) => {
+test('panel opens and closes the pane as /orquestrador with no argument did, for any origin', async ($, on) => {
   const w = world(on)
-  expect(await run($, w, '')).toBe('Painel do Orchestrator aberto.')
+  w.panes = true
+  expect(await run($, w, 'panel')).toBe('Painel do Orchestrator aberto.')
+  expect(w.open).toEqual(['orchestrator'])
+  expect(await run($, w, 'panel', '', { kind: 'plugin', name: 'x' })).toBe('Painel do Orchestrator fechado.')
+  expect(w.open).toEqual([])
+})
+
+test('help lists the eleven commands, one per line, in plain text', async ($, on) => {
+  const w = world(on)
+  const help = await run($, w, 'help')
+  const names = help
+    .split('\n')
+    .slice(1)
+    .map(line => line.split(':').slice(0, 2).join(':'))
+  expect(names).toEqual([
+    '/orchestrator:status',
+    '/orchestrator:approve',
+    '/orchestrator:reject',
+    '/orchestrator:open',
+    '/orchestrator:skip-gate',
+    '/orchestrator:end',
+    '/orchestrator:panel',
+    '/orchestrator:workflows',
+    '/orchestrator:change',
+    '/orchestrator:install',
+    '/orchestrator:help',
+  ])
+  expect(help).not.toMatch(/[|#*]|```/)
+})
+
+test('/orquestrador and /orquestrador-workflows are no longer registered, and no command is: the plugin\'s come from commands/', async ($, on) => {
+  const w = world(on)
+  await $.session.start({ cwd: '/w', surface: 'desktop', isInteractive: true } as never)
+  await settle()
+  // the start ran: the tools are there, and no command beside them
+  expect(w.tools).toEqual(['plan', 'flow'])
+  expect(w.registered).toEqual([])
+  const old = (await $.command.run({ command: 'orquestrador', args: 'status', origin: COMPOSER } as never).catch(() => ({}))) as { text?: string }
+  expect(old.text ?? '').not.toMatch(/Flow de|Painel/)
 })
 
 test('encerrar without confirmar changes nothing; with it, the flow is aborted like the second press of the button, and nothing is sent', async ($, on) => {
@@ -351,7 +425,7 @@ test('encerrar without confirmar changes nothing; with it, the flow is aborted l
   await flow($, { action: 'start', change: 'b', flow: 'completo' })
   const before = snapshot(w)
 
-  const ask = await run($, w, 'encerrar')
+  const ask = await run($, w, 'end')
   expect(ask).toMatch(/Vou encerrar o flow de b no passo grill\. Nada é arquivado\. Para confirmar, digite o mesmo comando com confirmar no fim\./)
   expect(snapshot(w)).toEqual(before)
 
@@ -368,7 +442,7 @@ test('encerrar without confirmar changes nothing; with it, the flow is aborted l
   expect((clicked.state as FlowState).status).toBe('aborted')
 
   const prompts = w.prompts.length
-  expect(await run($, w, 'encerrar confirmar')).toBe('Flow de b encerrado por você.')
+  expect(await run($, w, 'end', 'confirmar')).toBe('Flow de b encerrado por você.')
   expect(saved(w).status).toBe('aborted')
   expect(logOf(w).at(-1)).toEqual(expect.objectContaining({ kind: 'aborted', by: 'owner' }))
   expect(snapshot(w)).toEqual(clicked)
@@ -379,9 +453,9 @@ test('encerrar without confirmar changes nothing; with it, the flow is aborted l
 test('encerrar with a reason keeps it on the event; a plugin origin is refused and the flow runs on', async ($, on) => {
   const w = world(on)
   await flow($, { action: 'start', change: 'b', flow: 'completo' })
-  expect(await run($, w, 'encerrar confirmar', { kind: 'plugin', name: 'x' })).toMatch(/só vale digitado por você/)
+  expect(await run($, w, 'end', 'confirmar', { kind: 'plugin', name: 'x' })).toMatch(/só vale digitado por você/)
   expect(saved(w).status).toBe('running')
-  await run($, w, 'encerrar mudou o escopo confirmar', { kind: 'bridge' })
+  await run($, w, 'end', 'mudou o escopo confirmar', { kind: 'bridge' })
   expect(saved(w).status).toBe('aborted')
   expect(logOf(w).at(-1)).toEqual(expect.objectContaining({ kind: 'aborted', by: 'owner', note: 'mudou o escopo' }))
 })
@@ -393,11 +467,11 @@ test('an escalated flow ends by the command and by the button; a flow already en
   const ui = await $.ui.mount(mount())
   expect(await ui.find({ type: 'Button', text: 'Encerrar o flow' })).toBeDefined()
   await ui.unmount()
-  expect(await run($, w, 'encerrar confirmar')).toBe('Flow de b encerrado por você.')
+  expect(await run($, w, 'end', 'confirmar')).toBe('Flow de b encerrado por você.')
   expect(saved(w).status).toBe('aborted')
 
   // an ended flow is no flow of this coordination any more; the command says so, and the button is gone
-  expect(await run($, w, 'encerrar confirmar')).toMatch(/Nenhum flow em andamento/)
+  expect(await run($, w, 'end', 'confirmar')).toMatch(/Nenhum flow em andamento/)
   const after = await $.ui.mount(mount())
   expect(await after.find({ type: 'Button', text: 'Encerrar o flow' })).toBeUndefined()
   await after.unmount()
@@ -417,12 +491,12 @@ test('aprovar encerrar on an escalated flow is refused and points to encerrar co
   const w = world(on)
   await flow($, { action: 'start', change: 'b', flow: 'completo' })
   w.disk.set(`${BASE}/flows/b.json`, JSON.stringify({ ...saved(w), status: 'escalated', escalation: { step: 'grill', from: 'grill', outcome: 'x', attempts: 3 } }))
-  const answer = await run($, w, 'aprovar encerrar')
-  expect(answer).toMatch(/\/orquestrador encerrar \[motivo\] confirmar/)
+  const answer = await run($, w, 'approve', 'encerrar')
+  expect(answer).toMatch(/\/orchestrator:end \[motivo\] confirmar/)
   expect(saved(w).status).toBe('escalated')
   expect(logOf(w).some(e => (e as { kind?: string }).kind === 'aborted')).toBe(false)
   // the typed command with confirmar still ends it
-  expect(await run($, w, 'encerrar confirmar')).toBe('Flow de b encerrado por você.')
+  expect(await run($, w, 'end', 'confirmar')).toBe('Flow de b encerrado por você.')
 })
 
 test('status shows the permission notice even before the panel has a view', async ($, on) => {
@@ -436,8 +510,8 @@ test('with "ask" and this session\'s id not kept yet, the commands and flow pend
   await flow($, { action: 'start', change: 'b', flow: 'completo' })
   // the coordination of the flow is known (written when the permission was allowed), this session's id is not
   w.disk.set(`${BASE}/flows/b.json`, JSON.stringify({ ...saved(w), coordinatorSession: 'local_ee' }))
-  expect(await run($, w, 'abrir')).toMatch(/Permita get_session e list_sessions/)
-  expect(await run($, w, 'abrir')).not.toMatch(/Nenhum flow/)
+  expect(await run($, w, 'open')).toMatch(/Permita get_session e list_sessions/)
+  expect(await run($, w, 'open')).not.toMatch(/Nenhum flow/)
   const kept = await flow($, { action: 'pending', sessions: [entry('1')] })
   expect(kept.isError).toBe(true)
   expect(String(kept.result)).toMatch(/Permita get_session e list_sessions/)

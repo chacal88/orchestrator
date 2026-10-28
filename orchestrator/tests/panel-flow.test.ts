@@ -59,8 +59,8 @@ const world = (on: On): World => {
   return w
 }
 
-/** The person typing `/orquestrador`. */
-const toggle = ($: Engine) => $.command.run({ command: 'orquestrador' } as never)
+/** The person typing `/orchestrator:panel`. */
+const toggle = ($: Engine) => $.command.run({ command: 'orchestrator:panel' } as never)
 const flow = ($: Engine, input: Record<string, unknown>) => $.tool.call({ tool: 'mcp__orchestrator__flow', ...input } as never)
 const plan = ($: Engine) =>
   $.tool.call({
@@ -169,7 +169,7 @@ test('without a flow, the Gates card still lists the phases and their gates', as
   await ui.unmount()
 })
 
-test('/orquestrador opens the pane, and closes it when it is up', async ($, on) => {
+test('/orchestrator:panel opens the pane, and closes it when it is up', async ($, on) => {
   const w = world(on)
   expect((await toggle($)).text).toBe('Painel do Orchestrator aberto.')
   expect(w.panes.map(p => p.id)).toEqual(['orchestrator'])

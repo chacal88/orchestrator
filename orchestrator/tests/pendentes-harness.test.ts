@@ -215,10 +215,10 @@ test('the app refusing the start leaves the list as it was and says to type it o
   await press($)
   expect(starts(w)).toHaveLength(1)
   expect(saved(w).pendingStarts?.map(p => p.key)).toEqual(['1', '2', '3'])
-  expect(w.toasts.at(-1)).toMatch(/^Nenhuma sessão pendente abriu\. Ficaram 3: .*user_asked.* O app não aceitou abrir pelo painel; digite \/orquestrador abrir no desktop\.$/)
+  expect(w.toasts.at(-1)).toMatch(/^Nenhuma sessão pendente abriu\. Ficaram 3: .*user_asked.* O app não aceitou abrir pelo painel; digite \/orchestrator:open no desktop\.$/)
 
   await press($, 'mobile')
-  expect(w.toasts.at(-1)).toMatch(/Pelo celular o app não abre sessões; digite \/orquestrador abrir no desktop\.$/)
+  expect(w.toasts.at(-1)).toMatch(/Pelo celular o app não abre sessões; digite \/orchestrator:open no desktop\.$/)
   expect(saved(w).pendingStarts).toHaveLength(3)
 })
 
