@@ -31,29 +31,29 @@ Arquivos: `orquestrador/hooks/register.tsx`, `orquestrador/hooks/i18n.ts`, `orqu
 `orquestrador/types/index.d.ts`, `orquestrador/tests/permissao-harness.test.ts` (novo), `changes/fases-sem-clique/evidence.md`. Portões: `testes`,
 `tipos`.
 
-- [ ] 1.1 O hook `tool.check` começa com `if (next.origin.plugin === 'orquestrador') return next(e)`. Uma checagem
+- [x] 1.1 O hook `tool.check` começa com `if (next.origin.plugin === 'orquestrador') return next(e)`. Uma checagem
       levantada pelo próprio mod não chama `setWaiting` e não muda o veredito. Verificação: o caso "a checagem do mod
       não marca espera", da 1.6, passa — cx: simple
-- [ ] 1.2 `selfId` com promessa compartilhada (`selfAsk`, no módulo). Chamadas simultâneas esperam a mesma promessa.
+- [x] 1.2 `selfId` com promessa compartilhada (`selfAsk`, no módulo). Chamadas simultâneas esperam a mesma promessa.
       O id vai para o `SELF_ID` quando chega. Uma falha, ou uma resposta sem linha, solta a promessa sem guardar
       nada. Verificação: `grep -n "selfAsk" orquestrador/hooks/register.tsx` acha a definição e o uso só dentro de
       `selfId`; a 1.6 passa — cx: moderate
-- [ ] 1.3 `selfRowNow($)`: junta numa só as chamadas simultâneas de `get_session self` e não guarda a linha entre uma
+- [x] 1.3 `selfRowNow($)`: junta numa só as chamadas simultâneas de `get_session self` e não guarda a linha entre uma
       volta e outra. `loadSessions` (~365), `groupFamily` (~799) e `cleanupChange` (~1643) passam a usar essa função.
       Verificação: `grep -n "GET_SESSION" orquestrador/hooks/register.tsx` acha a constante e só as chamadas dentro
       de `selfId` e `selfRowNow` — cx: moderate
-- [ ] 1.4 `mayList($, tool, input)`: consulta `$.tool.check` com o input da chamada. Com `allow`, chama e apaga o
+- [x] 1.4 `mayList($, tool, input)`: consulta `$.tool.check` com o input da chamada. Com `allow`, chama e apaga o
       `permission-needed`. Com `ask`/`deny`, não chama, grava `permission-needed` (`{ tools, since }`) no `$.state` e
       devolve "não sei". A chave `permission-needed` é declarada em `orquestrador/types/index.d.ts`, junto das outras. Passam por ela o `get_session`/`list_sessions` do refresh, de `publishActivity`,
       `restoreActivity`, do agrupamento, do aviso, de `refuseStart`, `folderIsOwn`, `loadFamily` e de
       `openChildren` (~1455). Uma ação do dono chama direto. Sem permissão, a mensagem do `refuseStart` diz que
       falta permitir. Verificação: `grep -n "LIST_SESSIONS" orquestrador/hooks/register.tsx` mostra cada chamada
       dentro de `mayList` ou de um caminho do dono (comentado); a 1.6 passa — cx: complex
-- [ ] 1.5 O aviso: texto no `i18n.ts`, em pt-BR e inglês (pt-BR: `Permita get_session e list_sessions para o painel
+- [x] 1.5 O aviso: texto no `i18n.ts`, em pt-BR e inglês (pt-BR: `Permita get_session e list_sessions para o painel
       ver as sessões.`), mostrado nos `warnings` do Pane e na faixa (`AbovePrompt`/`renderBand`), também sem plano
       carregado. O mod não escreve em nenhum `settings*.json`. Verificação: a 1.6 confere o texto no painel e na
       faixa; `grep -n "settings" orquestrador/hooks/register.tsx` não acha escrita nova — cx: moderate
-- [ ] 1.6 Harness `tests/permissao-harness.test.ts`. O mundo falso responde "ask" no `tool.check` de
+- [x] 1.6 Harness `tests/permissao-harness.test.ts`. O mundo falso responde "ask" no `tool.check` de
       `get_session`/`list_sessions` e segura um `get_session` pendente. Casos:
       - com um `get_session` pendente, `publishActivity`, `setWaiting` e 3 voltas do relógio fazem no máximo 1
         chamada de `get_session` (C7);
@@ -65,7 +65,7 @@ Arquivos: `orquestrador/hooks/register.tsx`, `orquestrador/hooks/i18n.ts`, `orqu
       - o resto do repo passa sem mudar (`harness.test.ts`, `grupos-harness.test.ts`, `autowake-harness.test.ts`).
       Rodar o primeiro caso uma vez sem as tarefas 1.1 a 1.4 e anotar no `evidence.md` que ele falha. Verificação:
       `claude plugin test orquestrador` sai com 0, e os casos novos aparecem como `(pass)` — cx: complex
-- [ ] 1.7 Evidência: seção "Fase 1" do `evidence.md` com a saída dos portões `testes` e `tipos`, os casos novos como
+- [x] 1.7 Evidência: seção "Fase 1" do `evidence.md` com a saída dos portões `testes` e `tipos`, os casos novos como
       `(pass)` e a nota da 1.6. Verificação: a seção preenchida, sem "a preencher" — cx: simple
 
 ## 2. Abrir as fases sem um clique por card

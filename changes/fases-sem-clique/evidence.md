@@ -17,23 +17,55 @@ exit=0
 
 ### Testes
 
-Gate testes: `claude plugin test orquestrador` na raiz do repo.
+Gate testes: `claude plugin test orquestrador` na raiz do repo (binário do app 2.1.309).
 
 ```
-a preencher
+$ export PATH="…/claude-code/2.1.309/5af865b9901c/claude.app/Contents/MacOS:$PATH" && command claude plugin test orquestrador
+tests/permissao-harness.test.ts:
+(pass) with a get_session pending, publishing, waiting and three turns of the clock make at most one get_session
+(pass) with "ask" on the session tools the clock makes no call to them, and the panel and the band say what to allow
+(pass) the mod's own check marks no wait; a model tool with "ask" still does
+(pass) once the owner allows, the next turn calls and the notice goes away
+(pass) a phase session is refused with the reason "allow the session tools" while they are on "ask"
+ 417 pass
+ 0 fail
+Ran 417 tests across 34 files.
+exit=0
 ```
+
+Antes: 412 testes em 33 arquivos. Entram 5 (arquivo novo). `harness`, `grupos-harness`, `autowake-harness`,
+`lifecycle-harness`, `merge-scope-harness`, `pane` e `activation` ganharam uma linha no mundo falso,
+`on('tool.check', … allow)`: sem ela o `$.tool.check` do `mayList` volta "ask" (o padrão do engine para uma
+ferramenta MCP sem regra) e as chamadas de sessão deixam de sair. Nenhuma expectativa deles mudou.
 
 ### Tipos
 
 Gate tipos: `tsc` sobre hooks, types e tests com os tipos do engine.
 
 ```
-a preencher
+$ npx -y -p typescript@5.6.3 tsc -p <scratchpad>/tc/tsconfig.json   # tipos do engine 2.1.309 (plugin-authoring), hooks + types + tests
+exit=0
 ```
 
 ### Notas
 
-- 1.6: o primeiro caso rodado sem as tarefas 1.1 a 1.4 falha: a preencher.
+- 1.6: o primeiro caso (um `get_session` pendente) rodado com o `register.tsx` do commit anterior, sem as tarefas 1.1
+  a 1.4, falha: `expect(count).toBeLessThanOrEqual(1)` recebe 3 (um por volta do relógio e por publicação, enquanto o
+  primeiro ainda pende). Com as tarefas, passa.
+- Verificações das tarefas: `grep -n selfAsk` acha a definição e o uso só em `selfId`; `GET_SESSION` aparece na
+  constante, no `canCall` e na chamada de `selfRowNow` (única); toda chamada a `LIST_SESSIONS` passa por `listCall`
+  (que consulta `mayList`), fora o `canCall`; nenhuma linha nova escreve em `settings*.json`.
+- Decisões que a revisão do plano pediu:
+  - `cleanupChange` (passo automático de lançar a versão) **passa** pelo `mayList`. Sem `get_session` o `self` fica
+    indefinido e `phaseSessions` poderia contar a própria coordenação como fase para arquivar; por isso, sem `self`
+    ou sem a lista, o passo registra "sessions not read" e deixa as sessões e o grupo como estão.
+  - `selfId` e `selfRowNow` **passam** pelo `mayList`: são o primeiro elo do loop (`publishActivity` → `selfId`).
+    `selfId` pede uma vez por vez (`selfAsk`), e `selfRowNow` junta as chamadas simultâneas e não guarda a linha.
+  - O `mayList` vale para chamadas em segundo plano (refresh, `publishActivity`, `restoreActivity`, agrupamento,
+    aviso, `refuseStart`, `folderIsOwn`, `loadFamily`, `openChildren`). Uma ação do dono (botão) pode chamar direto
+    com "ask"; esse caminho é da fase 2 (o `openPending` passa a chamar sem recusar por falta de permissão).
+  - Sem permissão, `refuseStart` recusa dizendo que falta permitir `get_session` e `list_sessions`.
+  - O hook `tool.check` do mod sai cedo quando `next.origin.plugin === 'orquestrador'`.
 
 ## Fase 2 — abrir as fases sem um clique por card
 

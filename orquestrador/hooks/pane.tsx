@@ -1177,13 +1177,15 @@ export const renderPane = (
 /** The thin band above the prompt: the flow's step, phases in flight, what waits on the owner; a button for the pane. */
 export const renderBand = (
   { Box, Text, Button }: Pick<PaneElements, 'Box' | 'Text' | 'Button'>,
-  summary: BandSummary,
+  summary: BandSummary | undefined,
   paneOpen: boolean,
   togglePane: () => void,
   lang?: Lang,
+  /** A warning the band carries even with no plan loaded (the session list is not allowed yet). */
+  notice?: string,
 ): RenderElement => {
   const t = uiText(lang).band
-  const parts = [
+  const parts = summary === undefined ? [] : [
     summary.step === undefined ? undefined : t.step(summary.step),
     t.inFlight(summary.inFlight),
   ].filter((part): part is string => part !== undefined)
@@ -1192,9 +1194,10 @@ export const renderBand = (
       <Box flexShrink={1} minWidth={0}>
         <Text wrap="truncate-end">
           <Text dimColor>🧭 {parts.join(' · ')}</Text>
-          {summary.waiting > 0 && (
+          {summary !== undefined && summary.waiting > 0 && (
             <Text color="warning">{` · ${t.waiting(summary.waiting)}`}</Text>
           )}
+          {notice !== undefined && <Text color="warning">{`${parts.length === 0 ? '' : ' · '}${notice}`}</Text>}
         </Text>
       </Box>
       <Button key="band:pane" plain dimColor onPress={togglePane}>

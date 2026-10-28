@@ -91,6 +91,7 @@ const seed = ($: Env[0], on: Env[1], { sites = [{ id: 'c1', url: 'https://a.atla
       .filter(k => k.startsWith(`${e.path}/`) && !k.slice(e.path.length + 1).includes('/'))
       .map(k => ({ name: k.slice(e.path.length + 1), kind: 'file', size: 1, mtimeMs: 0, isLink: false })) as never,
   }))
+  on('tool.check', () => ({ decision: 'allow' }) as never)
   on('tool.list', () => ({
     value: [
       { name: 'mcp__x__getJiraIssue' },

@@ -57,6 +57,7 @@ const world = (on: On): World => {
     }
     return { value: { exitCode: 0, stdout: '', stderr: '' } as never }
   })
+  on('tool.check', () => ({ decision: 'allow' }) as never)
   on('tool.list', () => ({
     value: [{ name: 'mcp__ccd_session_mgmt__list_sessions' }, { name: 'mcp__ccd_session_mgmt__get_session' }] as never,
   }))

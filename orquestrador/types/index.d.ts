@@ -581,6 +581,8 @@ declare module 'claude-code' {
       tried: GateAttempt[]
       /** This session's id in the app's session list, once asked; its activity file is keyed by it. */
       selfId: string
+      /** The session-list tools the owner has not allowed (`ask`/`deny`), and since when; the panel and the band ask for them. */
+      'permission-needed': { tools: string[]; since: number } | null
       /** Whether the pane is up, so the band's button says "Abrir" or "Fechar". */
       paneOpen: boolean
       /** What the owner has typed so far in the grill's answer fields, by question text. */

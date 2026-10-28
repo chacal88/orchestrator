@@ -63,6 +63,7 @@ const world = (on: On, rows: Row[]): World => {
       .map(k => ({ name: k.slice(e.path.length + 1), kind: 'file', size: 1, mtimeMs: clock.now(), isLink: false })) as never,
   }))
   on('process.run', () => ({ value: { exitCode: 128, stdout: '', stderr: 'not a repo' } as never }))
+  on('tool.check', () => ({ decision: 'allow' }) as never)
   on('tool.list', () => ({ value: Object.values(T).map(name => ({ name })) as never }))
   const answer = (text: string) => ({ result: text, text }) as never
   on('tool.call', async ($, e) => {

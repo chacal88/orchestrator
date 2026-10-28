@@ -318,6 +318,7 @@ const pt = {
   },
   warning: {
     noSessions: 'Sessões filhas indisponíveis: o app não expõe a lista de sessões aqui.',
+    permission: 'Permita get_session e list_sessions para o painel ver as sessões.',
     tampered: 'A ativação foi mudada fora do painel: vale "barrar" até você confirmar por aqui (Workflows, "Este projeto").',
     reminded: (count: number, last: string) => `Em "lembrar", ${count} recusa(s) viraram só aviso. Última: ${last}`,
   },
@@ -528,6 +529,7 @@ const en: UiText = {
   },
   warning: {
     noSessions: 'Child sessions unavailable: the app does not expose the session list here.',
+    permission: 'Allow get_session and list_sessions so the panel can see the sessions.',
     tampered: 'The activation was changed outside the panel: "block" applies until you confirm it here (Workflows, "Este projeto").',
     reminded: (count: number, last: string) => `In "remind", ${count} refusal(s) became a warning only. Last: ${last}`,
   },

@@ -89,6 +89,7 @@ const world = (on: On): World => {
     if (argv[0] === 'gh') return { value: { exitCode: 0, stdout: 'claude/other\n', stderr: '' } as never }
     return { value: { exitCode: 0, stdout: 'main\n', stderr: '' } as never }
   })
+  on('tool.check', ($, e) => ({ decision: e.tool === 'Bash' ? 'ask' : 'allow' }) as never)
   on('tool.list', () => ({ value: [{ name: 'mcp__ccd_session_mgmt__list_sessions' }, { name: 'mcp__ccd_session_mgmt__get_session' }] as never }))
   on('tool.call', ($, e) => {
     const input = e as unknown as Record<string, unknown>
@@ -343,7 +344,6 @@ test('without the mark a session start opens no panel; with it, it does', async 
 test('an inactive clone does not track permission waits or prompts; an active one does', async ($, on) => {
   const w = world(on)
   withRun(w)
-  on('tool.check', ($, e) => ({ decision: e.tool === 'Bash' ? 'ask' : 'allow' }) as never)
   on('prompt.submit', ($, e) => ({ text: e.text }) as never)
   const kept = w.kept
   const waiting = async () => ({ value: kept.get('waiting') })
