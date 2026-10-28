@@ -317,7 +317,7 @@ const pt = {
     failed: 'Não consegui abrir as sessões pendentes.',
   },
   command: {
-    description: 'Abre ou fecha o painel da orquestração: OpenSpec, gates, pendências e tarefas',
+    description: 'Abre ou fecha o painel da orquestração. Subcomandos: status, aprovar, abrir, pular-portão, encerrar, ajuda',
     closed: 'Painel do orquestrador fechado.',
     opened: 'Painel do orquestrador aberto.',
     waiting: 'Painel pronto; amplie a janela para vê-lo.',
@@ -325,6 +325,31 @@ const pt = {
     workflowsClosed: 'Painel de workflows fechado.',
     workflowsOpened: 'Painel de workflows aberto.',
     workflowsWaiting: 'Painel de workflows pronto; amplie a janela para vê-lo.',
+    notFromOwner: 'Esse subcomando só vale digitado por você, no prompt ou no Remote Control.',
+    noFlow: 'Nenhum flow em andamento nesta sessão; use na sessão da coordenação.',
+    help:
+      'Subcomandos de /orquestrador:\n' +
+      'status: onde o flow está\n' +
+      'aprovar <saída> [nota]: responde o passo do dono (a liberação vem do plan mode)\n' +
+      'abrir: abre as sessões pendentes\n' +
+      'pular-portão <fase> <portão> confirmar: pula um portão\n' +
+      'encerrar [motivo] confirmar: encerra o flow\n' +
+      'ajuda: esta lista',
+    unknown: (word: string) => `Não conheço "${word}".`,
+    statusFlow: (change: string, title: string, status: string) => `Flow de ${change} (${title}): ${status}`,
+    statusStep: (step: string) => `Passo: ${step}`,
+    statusChoices: (outcomes: string) => `Você responde com: ${outcomes}`,
+    statusGates: (gates: string) => `Portões abertos: ${gates}`,
+    statusPending: (titles: string) => `Sessões pendentes: ${titles}`,
+    noPending: 'Nenhuma sessão pendente para abrir.',
+    skipUnknown: (phase: string, gate: string) => `Não achei o portão "${gate}" aberto na fase "${phase}".`,
+    skipAsk: (phase: string, gate: string) => `Vou pular o portão ${gate} da fase ${phase}. Para confirmar, digite o mesmo comando com confirmar no fim.`,
+    skipDone: (gate: string) => `Portão ${gate} pulado por você.`,
+    endAsk: (change: string, step: string) =>
+      `Vou encerrar o flow de ${change} no passo ${step}. Nada é arquivado. Para confirmar, digite o mesmo comando com confirmar no fim.`,
+    endDone: (change: string) => `Flow de ${change} encerrado por você.`,
+    endButton: 'Encerrar o flow',
+    endConfirm: (change: string) => `Confirmar: encerrar o flow de ${change}`,
   },
   warning: {
     noSessions: 'Sessões filhas indisponíveis: o app não expõe a lista de sessões aqui.',
@@ -538,7 +563,7 @@ const en: UiText = {
     failed: 'Could not open the pending sessions.',
   },
   command: {
-    description: 'Opens or closes the orchestration panel: OpenSpec, gates, pending items and tasks',
+    description: 'Opens or closes the orchestration panel. Subcommands: status, aprovar, abrir, pular-portão, encerrar, ajuda',
     closed: 'Orchestrator panel closed.',
     opened: 'Orchestrator panel opened.',
     waiting: 'Panel ready; widen the window to see it.',
@@ -546,6 +571,31 @@ const en: UiText = {
     workflowsClosed: 'Workflows panel closed.',
     workflowsOpened: 'Workflows panel opened.',
     workflowsWaiting: 'Workflows panel ready; widen the window to see it.',
+    notFromOwner: 'This subcommand only counts when you type it, at the prompt or in Remote Control.',
+    noFlow: 'No flow running in this session; use it in the coordination session.',
+    help:
+      'Subcommands of /orquestrador:\n' +
+      'status: where the flow is\n' +
+      "aprovar <outcome> [note]: answers the owner's step (the release comes from plan mode)\n" +
+      'abrir: opens the pending sessions\n' +
+      'pular-portão <phase> <gate> confirmar: skips a gate\n' +
+      'encerrar [reason] confirmar: ends the flow\n' +
+      'ajuda: this list',
+    unknown: word => `I do not know "${word}".`,
+    statusFlow: (change, title, status) => `Flow of ${change} (${title}): ${status}`,
+    statusStep: step => `Step: ${step}`,
+    statusChoices: outcomes => `You answer with: ${outcomes}`,
+    statusGates: gates => `Open gates: ${gates}`,
+    statusPending: titles => `Pending sessions: ${titles}`,
+    noPending: 'No pending session to open.',
+    skipUnknown: (phase, gate) => `Could not find the gate "${gate}" open in phase "${phase}".`,
+    skipAsk: (phase, gate) => `I will skip gate ${gate} of phase ${phase}. To confirm, type the same command with confirmar at the end.`,
+    skipDone: gate => `Gate ${gate} skipped by you.`,
+    endAsk: (change, step) =>
+      `I will end the flow of ${change} at step ${step}. Nothing is archived. To confirm, type the same command with confirmar at the end.`,
+    endDone: change => `Flow of ${change} ended by you.`,
+    endButton: 'End the flow',
+    endConfirm: change => `Confirm: end the flow of ${change}`,
   },
   warning: {
     noSessions: 'Child sessions unavailable: the app does not expose the session list here.',

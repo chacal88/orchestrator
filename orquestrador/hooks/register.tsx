@@ -63,6 +63,7 @@ import {
   describeWorkflow,
   detectedOutcome,
   dropPending,
+  endFlow,
   executedTextShort,
   noteOwnerStep,
   observeDeploy,
@@ -98,6 +99,7 @@ import {
   rejectPlan,
 } from './grill'
 import { bandSummary, parseEvents, stepTimes } from './glance'
+import { fromOwner, parseCommand, statusText } from './command'
 import { DEFAULT_LANGUAGES, contentRule, uiText } from './i18n'
 import type { UiText } from './i18n'
 import { renderBand, renderPane } from './pane'
@@ -144,6 +146,8 @@ const CREATE_GROUP = 'mcp__ccd_sidebar__create_group'
 const MOVE_SESSIONS = 'mcp__ccd_sidebar__move_sessions'
 const DELETE_GROUP = 'mcp__ccd_sidebar__delete_group'
 const REFRESH_MS = 15_000
+/** How long the wake of a typed `aprovar` waits: past the end of the command's hook, which cannot submit a prompt. */
+const WAKE_AFTER_COMMAND_MS = 50
 /** Jira is asked again at most this often; the panel refreshes every 15 s. */
 const JIRA_TTL_MS = 120_000
 
@@ -1963,38 +1967,160 @@ const observeFlows = async ($: EngineInterface, command: string, failed: boolean
   }
 }
 
+/** What an owner press says back: the text for the toast or the command's answer, or why nothing changed. */
+type Pressed = { ok: true; text: string } | { error: string }
+
 /**
- * Only the panel's press reaches this: no tool call answers an owner step. When the flow lands on a
- * step the coordinator drives, the press also wakes it with a message in the mod's name.
+ * Only the owner reaches this (the panel's press, or `/orquestrador aprovar` typed by them): no tool call
+ * answers an owner step. When the flow lands on a step the coordinator drives, the press also wakes it with
+ * a message in the mod's name. The click waits for that message; the command does not (it would hold its answer).
  */
-const pressFlow = async ($: EngineInterface, change: string, step: string, outcome: string, note?: string): Promise<void> => {
-  const state = await loadFlowState($, change)
-  if (state === undefined) return
-  const running = state.status === 'running' && state.current === step
+const pressFlow = async (
+  $: EngineInterface,
+  change: string,
+  step: string,
+  outcome: string,
+  note?: string,
+  wait = true,
+): Promise<Pressed> => {
   const { languages } = await loadConfig($)
   const t = uiText(languages.ui)
-  if (running && step === RELEASE_STEP && outcome === RELEASE_OUTCOME) {
-    $.ui.toast(t.toast.releaseFromPlanMode)
-    return
-  }
+  const state = await loadFlowState($, change)
+  if (state === undefined) return { error: t.command.noFlow }
+  const running = state.status === 'running' && state.current === step
+  if (running && step === RELEASE_STEP && outcome === RELEASE_OUTCOME) return { error: t.toast.releaseFromPlanMode }
   const at = await $.clock.now()
   const prep = running && step === MOCKUP_STEP ? pressMockup(await loadPrep($, change), outcome, note, at) : undefined
-  if (prep !== undefined && 'error' in prep) {
-    $.ui.toast(t.toast.notRecorded(prep.error))
-    return
-  }
+  if (prep !== undefined && 'error' in prep) return { error: t.toast.notRecorded(prep.error) }
   const noted = note === undefined || note.trim() === '' ? undefined : note.trim()
   const moved = ownerPress(state, step, outcome, at, noted)
-  if ('error' in moved) {
-    $.ui.toast(t.toast.notRecorded(moved.error))
-    return
-  }
+  if ('error' in moved) return { error: t.toast.notRecorded(moved.error) }
   if (prep !== undefined) await savePrep($, state, prep, undefined)
   await saveFlow($, moved.state, moved.events)
   await refreshQuietly($)
-  $.ui.toast(pressedToast(state, moved.state, step, outcome, languages.ui))
   const wake = wakePrompt(state, moved.state, step, outcome, noted)
-  if (wake !== undefined) await $.prompt.submit({ text: wake })
+  if (wake !== undefined) {
+    // a command's hook holds the turn the prompt would wait on: the engine refuses it there, so it goes after
+    if (wait) await $.prompt.submit({ text: wake })
+    else $.clock.after(WAKE_AFTER_COMMAND_MS, () => void $.prompt.submit({ text: wake }).catch(error => $.ui.log(`orquestrador: ${describeError('aviso', error)}`)))
+  }
+  return { ok: true, text: pressedToast(state, moved.state, step, outcome, languages.ui) }
+}
+
+/** The click's side of a press: the toast is the text, or the reason it was not recorded. */
+const clickFlow = async ($: EngineInterface, change: string, step: string, outcome: string, note?: string): Promise<void> => {
+  const done = await pressFlow($, change, step, outcome, note)
+  $.ui.toast('error' in done ? done.error : done.text)
+}
+
+/**
+ * The owner ends the flow (the second press of "Encerrar o flow", or `/orquestrador encerrar ... confirmar`).
+ * Nothing is archived, the group stays, and no message goes to the coordination: the `aborted` flow stops the
+ * warnings by itself. The only caller of `endFlow` besides the escalation's answer.
+ */
+const endByOwner = async ($: EngineInterface, change: string, note?: string): Promise<Pressed> => {
+  const t = uiText((await loadConfig($)).languages.ui)
+  const state = await loadFlowState($, change)
+  if (state === undefined) return { error: t.command.noFlow }
+  const ended = endFlow(state, await $.clock.now(), note)
+  if ('error' in ended) return { error: ended.error }
+  await saveFlow($, ended.state, ended.events)
+  await refreshQuietly($)
+  return { ok: true, text: t.command.endDone(change) }
+}
+
+/**
+ * The flow this session coordinates, for the owner's subcommands: `running` or `escalated` (an escalated flow
+ * is still the owner's to answer or to end), the latest started. A child of the same folder is not its coordinator.
+ */
+const commandFlow = async ($: EngineInterface, root: string): Promise<FlowState | undefined> => {
+  const self = await selfId($).catch(() => undefined)
+  return (await allFlowStates($))
+    .filter(
+      s =>
+        (s.status === 'running' || s.status === 'escalated') &&
+        ownsFlow(s, root) &&
+        (s.coordinatorSession === undefined || s.coordinatorSession === self),
+    )
+    .sort((a, b) => b.startedAt - a.startedAt)[0]
+}
+
+/** The gates still open in the last panel view, by phase: what `status` lists and `pular-portão` can reach. */
+const openGatesNow = async ($: EngineInterface): Promise<{ phase: string; gate: GateView }[]> => {
+  const { value: view } = await $.state.get(VIEW)
+  if (view?.run === undefined) return []
+  const own = await ownCheck($)
+  const skips = view.skips ?? {}
+  const phases = phaseViews(view.run, view.children).flat()
+  const phaseGates = phases.flatMap(phase =>
+    phase.gates === undefined
+      ? []
+      : gateViews(phase.gates, phase.id, phase.session === undefined ? own : (phase.card?.gates ?? { records: {}, editedAt: undefined }), skips)
+          .filter(isOpenGate)
+          .map(gate => ({ phase: phase.id, gate })),
+  )
+  const check = familyCheck([own, ...view.children.map(c => c.gates ?? { records: {}, editedAt: undefined })])
+  const final = gateViews(view.run.finalGates, FINAL_SCOPE, check, skips)
+    .filter(isOpenGate)
+    .map(gate => ({ phase: 'final', gate }))
+  return [...phaseGates, ...final]
+}
+
+/** `/orquestrador <subcommand>`: the owner's chat, which the Remote Control reaches too. Plain text answers. */
+const runSubcommand = async ($: EngineInterface, args: string, origin: { readonly kind: string }): Promise<string> => {
+  const config = await loadConfig($)
+  const t = uiText(config.languages.ui)
+  const parsed = parseCommand(args)
+  if (parsed.kind === 'toggle') {
+    const done = await togglePane($)
+    return done === 'closed' ? t.command.closed : done === 'opened' ? t.command.opened : t.command.waiting
+  }
+  if (!fromOwner(origin)) return t.command.notFromOwner
+  if (parsed.kind === 'help') return t.command.help
+  if (parsed.kind === 'unknown') return `${t.command.unknown(parsed.word)}\n${t.command.help}`
+  const flow = await commandFlow($, await $.session.root())
+  if (flow === undefined) return t.command.noFlow
+  const change = flow.change
+  switch (parsed.kind) {
+    case 'status': {
+      await refreshQuietly($)
+      const { value: view } = await $.state.get(VIEW)
+      const { value: needed } = await $.state.get(PERMISSION_NEEDED)
+      return statusText(
+        {
+          flow: flowView(flow, config.languages),
+          gates: (await openGatesNow($)).map(g => `${g.phase}: ${g.gate.gate}`),
+          pending: (flow.pendingStarts ?? []).map(p => p.title),
+          permission: needed === null || needed === undefined || view === undefined ? undefined : t.warning.permission,
+        },
+        t.command,
+      )
+    }
+    case 'approve': {
+      const done = await pressFlow($, change, flow.escalation?.step ?? flow.current, parsed.outcome, parsed.note, false)
+      return 'error' in done ? done.error : done.text
+    }
+    case 'open': {
+      if ((flow.pendingStarts ?? []).length === 0) return t.command.noPending
+      const done = await openPending($, change, 'The user typed "/orquestrador abrir".')
+      await refreshQuietly($)
+      return t.pending.result(done.opened.length, done.left, done.why) + (done.byApp ? ` ${origin.kind === 'bridge' ? t.pending.appRefusedMobile : t.pending.appRefused}` : '')
+    }
+    case 'skip': {
+      await refreshQuietly($)
+      const hit = (await openGatesNow($)).find(g => g.phase === parsed.phase && (g.gate.gate === parsed.gate || g.gate.label === parsed.gate))
+      if (hit === undefined) return t.command.skipUnknown(parsed.phase, parsed.gate)
+      if (!parsed.confirmed) return t.command.skipAsk(parsed.phase, hit.gate.gate)
+      await skipGate($, change, hit.gate)
+      await refreshQuietly($)
+      return t.command.skipDone(hit.gate.gate)
+    }
+    case 'end': {
+      if (!parsed.confirmed) return t.command.endAsk(change, flow.escalation?.step ?? flow.current)
+      const done = await endByOwner($, change, parsed.reason)
+      return 'error' in done ? done.error : done.text
+    }
+  }
 }
 
 /**
@@ -2220,11 +2346,9 @@ export const register: Register = on => {
     return next(e)
   })
 
-  on('command.run', { command: 'orquestrador' }, async $ => {
-    const done = await togglePane($)
-    const t = (await textNow($)).command
-    return { text: done === 'closed' ? t.closed : done === 'opened' ? t.opened : t.waiting }
-  })
+  on('command.run', { command: 'orquestrador' }, async ($, e) => ({
+    text: await runSubcommand($, e.args ?? '', e.origin).catch(error => describeError('orquestrador', error)),
+  }))
 
   on('command.run', { command: 'orquestrador-workflows' }, async $ => {
     const done = await toggleWorkflowsPane($)
@@ -2414,7 +2538,12 @@ export const register: Register = on => {
           .catch(() => $.ui.toast(t.skipFailed))
       },
       answerFlow: (change, step, outcome) => () => {
-        void pressFlow($, change, step, outcome).catch(() => $.ui.toast(t.flowFailed))
+        void clickFlow($, change, step, outcome).catch(() => $.ui.toast(t.flowFailed))
+      },
+      endFlow: change => () => {
+        void endByOwner($, change)
+          .then(done => $.ui.toast('error' in done ? done.error : done.text))
+          .catch(() => $.ui.toast(t.flowFailed))
       },
       openPending: (change, label) => () => {
         void pressPending($, change, label, e.surface === 'mobile').catch(() => $.ui.toast(uiText(view.languages?.ui).pending.failed))
@@ -2424,7 +2553,7 @@ export const register: Register = on => {
           $.ui.toast(t.adjustEmpty)
           return
         }
-        void pressFlow($, change, step, outcome, value).catch(() => $.ui.toast(t.flowFailed))
+        void clickFlow($, change, step, outcome, value).catch(() => $.ui.toast(t.flowFailed))
       },
       drafts,
       draftAnswer: question => (value: string) => {

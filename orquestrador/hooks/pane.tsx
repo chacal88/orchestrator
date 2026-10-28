@@ -61,6 +61,8 @@ export type PaneActions = {
   answerFlow: (change: string, step: string, outcome: string) => () => void
   /** The owner's "Abrir as N sessões pendentes": opens what the coordination kept with `flow pending`. */
   openPending: (change: string, label: string) => () => void
+  /** The owner's end of the flow: armed by a first press, fired by the second. */
+  endFlow: (change: string) => () => void
   /** The same answer with the owner's note typed in the panel (a mockup adjustment). */
   noteFlow: (change: string, step: string, outcome: string) => (value: string) => void
   /** What the owner has typed in the grill's answer fields, by question text. */
@@ -1064,6 +1066,25 @@ export const renderPane = (
     )
   }
 
+  /** "Encerrar o flow", while the flow is going: two presses, on every surface (the phone's panel too). */
+  const endBlock = (): RenderElement | undefined => {
+    if (flow === undefined || (flow.status !== 'running' && flow.status !== 'escalated')) return undefined
+    const id = `arm:end:${flow.change}`
+    const armed = isOpen(id, false)
+    return (
+      <Box flexDirection="row" columnGap={1} marginTop={1} minWidth={0}>
+        {armed ? (
+          <Button key="end:confirm" variant="primary" onPress={actions.endFlow(flow.change)}>
+            {t.command.endConfirm(flow.change)}
+          </Button>
+        ) : undefined}
+        <Button key="end:arm" plain dimColor onPress={actions.toggle(id, false)}>
+          {armed ? t.cancel : t.command.endButton}
+        </Button>
+      </Box>
+    )
+  }
+
   /** The harness the change follows: the flow's steps, the phases' gates while the loop runs, the final gates. */
   const gatesCard = (): RenderElement[] => {
     const anyPhaseGates = waves.flat().some(p => (p.gates?.length ?? 0) > 0)
@@ -1074,6 +1095,7 @@ export const renderPane = (
     const folded = flow.steps.filter(s => s.state === 'done' || s.state === 'skipped')
     const shown = flow.steps.filter(s => s.state === 'current' || s.state === 'pending')
     const hasLoop = flow.steps.some(s => s.kind === 'loop')
+    const end = endBlock()
     return [
       card(
         'gates',
@@ -1110,6 +1132,7 @@ export const renderPane = (
               : []),
           ...(!hasLoop && anyPhaseGates ? [<Box flexDirection="column" marginTop={1} minWidth={0}>{loopPhases()}</Box>] : []),
           ...finalGateRows(),
+          ...(end === undefined ? [] : [end]),
           <Text dimColor wrap="wrap">
             {t.steps.legend}
           </Text>,

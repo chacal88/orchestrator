@@ -176,14 +176,83 @@ sessão; a 2.6 fica desmarcada.
 
 ### Testes
 
+Gate testes: `claude plugin test orquestrador` na raiz do repo (app 2.1.309), rodado sozinho, saída 0.
+
 ```
-a preencher
+$ export PATH="…/claude-code/2.1.309/5af865b9901c/claude.app/Contents/MacOS:$PATH" && command claude plugin test orquestrador
+exit=0
+tests/comando-harness.test.ts:
+(pass) aprovar from the composer leaves the flow, the log and the wake as a click on the same button does
+(pass) aprovar with a note records it like the "Pedir ajuste" press, and an outcome the step does not declare is refused
+(pass) only composer and bridge are the owner: plugin, peer and the rest are refused and the flow does not change
+(pass) through the bridge it works, and the answer is plain text: no table, no heading, no bold
+(pass) status does not list sessions beyond what the permission lets, and says so
+(pass) the release step is refused with the plan-mode notice, and liberar is only the help
+(pass) abrir opens the pending sessions as the owner typed it, and the phone is told when the app refuses
+(pass) abrir through the bridge, with the app refusing, says the phone cannot open sessions
+(pass) pular-portão asks for confirmar; with it, it records the skip the panel records
+(pass) with no argument the command opens and closes the pane as before, for any origin
+(pass) encerrar without confirmar changes nothing; with it, the flow is aborted like the second press of the button, and nothing is sent
+(pass) encerrar with a reason keeps it on the event; a plugin origin is refused and the flow runs on
+(pass) an escalated flow ends by the command and by the button; a flow already ended answers the reason
+(pass) no tool of the model ends the flow, and endFlow is reached only by the button, the command and the escalation
+tests/command.test.ts:
+(pass) parseCommand > no argument toggles the panel, whatever the spaces
+(pass) parseCommand > status, ajuda and abrir
+(pass) parseCommand > aprovar takes the outcome and keeps the rest of the line as the note
+(pass) parseCommand > pular-portão, with or without the accent, asks for the phase and the gate; confirmar is the last word
+(pass) parseCommand > encerrar takes an optional reason; confirmar at the end confirms
+(pass) parseCommand > there is no liberar: it is an unknown word, like any other
+(pass) fromOwner > composer is the owner typing
+(pass) fromOwner > bridge is the owner typing
+(pass) fromOwner > sdk is not
+(pass) fromOwner > task-notification is not
+(pass) fromOwner > scheduled-trigger is not
+(pass) fromOwner > peer is not
+(pass) fromOwner > peer-send-message is not
+(pass) fromOwner > projects-relay is not
+(pass) fromOwner > channel is not
+(pass) fromOwner > coordinator is not
+(pass) fromOwner > observer is not
+(pass) fromOwner > observer-activity is not
+(pass) fromOwner > auto-continuation is not
+(pass) fromOwner > unclassified is not
+(pass) fromOwner > slack-ping is not
+(pass) fromOwner > plugin is not
+(pass) statusText > short plain lines: no table, no heading, no bold
+(pass) statusText > without a flow it says to use the coordination session
+tests/flow.test.ts:
+(pass) endFlow > a running flow becomes aborted, with the owner and the note on the event, and its pending starts go
+(pass) endFlow > an escalated flow ends too, on the step that escalated
+(pass) endFlow > a flow already done or aborted is refused with the reason
+(pass) endFlow > the escalation answered with encerrar is the same state and event as endFlow
+…
+ 476 pass
+ 0 fail
+Ran 476 tests across 37 files. [9.81s]
 ```
+
+Antes da fase: 434 testes em 35 arquivos (a fase 2 deixou 434). Entraram 42: `command.test.ts` (parse de cada forma, `statusText` e
+`fromOwner` para as 16 origens do `PromptOrigin`, incluindo `plugin`), 4 de `endFlow` no `flow.test.ts` e 14 em
+`comando-harness.test.ts`. Os testes de painel e de flow existentes passam sem mudar (3.2).
+
+Fatos do código que o harness fixou:
+
+- `prompt.submit` chamado de dentro de um `command.run` é recusado pelo engine ("it would wait on the turn this hook is
+  holding"). O `aprovar` digitado por isso manda o `wakePrompt` por `$.clock.after(50, …)`; o clique segue esperando o
+  envio, como antes. O teste C9 compara os prompts do clique e do comando e eles saem iguais.
+- `grep -n "endFlow" orquestrador/hooks/register.tsx` acha o import, o `endByOwner` (único chamador: o clique do botão e
+  `/orquestrador encerrar confirmar` passam por ele) e a prop `endFlow` do painel; a escalada usa o `endFlow` de
+  `flow.ts` (`resolveEscalation`). O `FLOW_SCHEMA` não mudou, e o teste "no tool of the model ends the flow" confere.
+- `grep -n "consent"` segue achando só o `openPending` (1780).
 
 ### Tipos
 
+Gate tipos: `tsc` sobre hooks, types e tests com os tipos do engine 2.1.309.
+
 ```
-a preencher
+$ npx -y -p typescript@5.6.3 tsc -p <scratchpad>/tc/tsconfig.json
+exit=0
 ```
 
 ## Fase 4 — skill, README e versão

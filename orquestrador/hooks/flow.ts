@@ -855,14 +855,30 @@ export const pendingCodeReview = (state: FlowState): FlowStep | undefined => {
     )
 }
 
+/**
+ * The owner ends a flow that is still going (`running` or `escalated`): `aborted`, the event with the owner
+ * and the note, the pending starts dropped. Nothing is archived. A flow already `done` or `aborted` is refused.
+ */
+export const endFlow = (state: FlowState, at: number, note?: string): Moved | { error: string } => {
+  if (state.status === 'done') return { error: `the flow of ${state.change} is already done.` }
+  if (state.status === 'aborted') return { error: `the flow of ${state.change} was already ended by the owner.` }
+  const { pendingStarts: _dropped, ...rest } = state
+  const event: FlowEvent = {
+    seq: state.seq + 1,
+    at,
+    kind: 'aborted',
+    step: state.escalation?.step ?? state.current,
+    by: 'owner',
+    ...(note === undefined || note.trim() === '' ? {} : { note: note.trim() }),
+  }
+  return { state: { ...rest, status: 'aborted', seq: state.seq + 1, updatedAt: at }, events: [event] }
+}
+
 /** The owner's answer to an escalation: go again with a fresh count, or end the flow. */
 export const resolveEscalation = (state: FlowState, choice: string, at: number): Moved | { error: string } => {
   if (state.status !== 'escalated' || state.escalation === undefined) return { error: 'nothing is escalated.' }
   const step = state.escalation.step
-  if (choice === 'encerrar') {
-    const event: FlowEvent = { seq: state.seq + 1, at, kind: 'aborted', step, by: 'owner' }
-    return { state: { ...state, status: 'aborted', seq: state.seq + 1, updatedAt: at }, events: [event] }
-  }
+  if (choice === 'encerrar') return endFlow(state, at)
   if (choice !== 'tentar-de-novo') return { error: `an escalation is answered with tentar-de-novo or encerrar, not "${choice}".` }
   const retried: FlowEvent = { seq: state.seq + 1, at, kind: 'retried', step, by: 'owner' }
   const moved = enter(

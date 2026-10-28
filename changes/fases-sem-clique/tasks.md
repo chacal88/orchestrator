@@ -122,27 +122,27 @@ Arquivos: `orquestrador/hooks/command.ts` (novo), `orquestrador/hooks/flow.ts`, 
 `orquestrador/tests/command.test.ts` (novo), `orquestrador/tests/comando-harness.test.ts` (novo),
 `changes/fases-sem-clique/evidence.md`. Depende das fases 1 e 2. Portões: `testes`, `tipos`.
 
-- [ ] 3.1 `hooks/command.ts`: `parseCommand(args)` (`toggle`, `status`, `help`, `open`, `approve { outcome, note? }`,
+- [x] 3.1 `hooks/command.ts`: `parseCommand(args)` (`toggle`, `status`, `help`, `open`, `approve { outcome, note? }`,
       `skip { phase, gate, confirmed }`, `end { reason?, confirmed }`, `unknown`), com `pular-portão` e `pular-portao`, e `fromOwner(origin)`
       (só `composer` e `bridge`). Testes em `tests/command.test.ts`, um por forma e um por origem do `PromptOrigin`.
       Verificação: `command.test.ts` passa — cx: simple
-- [ ] 3.2 O `pressFlow` passa a devolver `{ ok: true, text } | { error }`. O clique continua com o mesmo toast (os
+- [x] 3.2 O `pressFlow` passa a devolver `{ ok: true, text } | { error }`. O clique continua com o mesmo toast (os
       testes de painel existentes passam sem mudar), e o `wakePrompt` sai igual. Verificação: `panel-flow.test.ts` e
       `flow-harness.test.ts` passam sem mudar — cx: moderate
-- [ ] 3.3 O hook `command.run` lê `e.args` e `e.origin`. Sem argumentos, abre e fecha o painel como hoje, com
+- [x] 3.3 O hook `command.run` lê `e.args` e `e.origin`. Sem argumentos, abre e fecha o painel como hoje, com
       qualquer origem. Os outros subcomandos são recusados sem `fromOwner`. Implementar `status` (texto simples, sem
       chamar sessão fora do `mayList`), `aprovar` (o mesmo `pressFlow`; liberação recusada com o aviso do plan mode),
       `abrir` (o `openPending` com `The user typed "/orquestrador abrir".` e a limitação do Remote Control quando
       `bridge` e o app recusou), `pular-portão` (pede `confirmar`; com ele, o mesmo `skipGate`) e `ajuda`. Sem flow
       desta coordenação, responde que é para usar na coordenação. Os textos ficam no `i18n.ts`, nos dois idiomas, e a
       descrição do comando lista os subcomandos. Não existe `liberar`. Verificação: a 3.6 passa — cx: complex
-- [ ] 3.4 `endFlow(state, at, note?)` em `flow.ts` (função pura): um flow `running` ou `escalated` passa a `aborted`,
+- [x] 3.4 `endFlow(state, at, note?)` em `flow.ts` (função pura): um flow `running` ou `escalated` passa a `aborted`,
       com o evento `aborted` `by: 'owner'` e a nota; `pendingStarts` esvazia; um flow `done` ou `aborted` é recusado
       com o motivo. O `resolveEscalation` com `encerrar` passa a usar a mesma função (mesmo estado e mesmo evento de
       hoje). Nada é arquivado e o grupo da sidebar fica: o `cleanupChange` continua só no passo `arquivar`. Testes em
       `flow.test.ts`: encerrar de `running`, de `escalated`, recusa de `done`/`aborted` e a escalada sem mudança.
       Verificação: `flow.test.ts` passa — cx: moderate
-- [ ] 3.5 Encerrar pelo dono a qualquer momento:
+- [x] 3.5 Encerrar pelo dono a qualquer momento:
       - botão **"Encerrar o flow"** sempre visível no painel enquanto o flow está `running` ou `escalated`, com dois
         cliques, como o pulo de portão (o primeiro pede a confirmação, o segundo encerra), no desktop e no celular;
       - `/orquestrador encerrar [motivo]`: sem `confirmar` no fim, responde o que vai ser encerrado e pede o mesmo
@@ -152,7 +152,7 @@ Arquivos: `orquestrador/hooks/command.ts` (novo), `orquestrador/hooks/flow.ts`, 
         para. Nenhuma chamada de ferramenta do modelo encerra o flow (o `FLOW_SCHEMA` não ganha ação nova).
       Verificação: a 3.6 passa; `grep -n "endFlow" orquestrador/hooks/register.tsx` acha só o clique, o comando e a
       escalada — cx: moderate
-- [ ] 3.6 Harness `tests/comando-harness.test.ts` (C3):
+- [x] 3.6 Harness `tests/comando-harness.test.ts` (C3):
       - `/orquestrador aprovar <saída>` com `origin: { kind: 'composer' }` deixa o flow, o log e o `wakePrompt`
         iguais aos de um clique no mesmo botão (comparar com um segundo mundo que clica) (C9);
       - com `origin: { kind: 'plugin', name: 'x' }` é recusado e o flow não muda; com `peer` também (C9);
@@ -167,7 +167,7 @@ Arquivos: `orquestrador/hooks/command.ts` (novo), `orquestrador/hooks/flow.ts`, 
         mundo; nenhum `$.prompt.submit` sai; com `origin` `plugin` é recusado e o flow segue `running`; num flow já
         encerrado, responde o motivo (C11).
       Verificação: `claude plugin test orquestrador` sai com 0, e os casos novos aparecem como `(pass)` — cx: complex
-- [ ] 3.7 Evidência: seção "Fase 3" do `evidence.md` com a saída dos portões `testes` e `tipos` e os casos novos como
+- [x] 3.7 Evidência: seção "Fase 3" do `evidence.md` com a saída dos portões `testes` e `tipos` e os casos novos como
       `(pass)`. Verificação: a seção preenchida — cx: simple
 
 ## 4. Skill, README e versão

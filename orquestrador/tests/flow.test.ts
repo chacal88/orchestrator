@@ -6,6 +6,7 @@ import {
   automaticOutcome,
   describeFlow,
   dropPending,
+  endFlow,
   flowView,
   mergeFlows,
   ownerPress,
@@ -351,5 +352,44 @@ describe('flow pending', () => {
     expect(dropPending(kept, p => p.title === 'Fase 1').pendingStarts?.map(p => p.key)).toEqual(['2'])
     expect('pendingStarts' in dropPending(kept, () => true)).toBe(false)
     expect(dropPending(kept, () => false)).toBe(kept)
+  })
+})
+
+describe('endFlow', () => {
+  const escalate = (): FlowState => {
+    const fail: Report[] = [
+      ['planejar', 'pronto', 'session'],
+      ['validar', 'falhou', 'automatic'],
+    ]
+    return walk(start(rapido), [...fail, ...fail, ...fail])
+  }
+
+  test('a running flow becomes aborted, with the owner and the note on the event, and its pending starts go', () => {
+    const running = ok(registerPending(start(rapido), [{ key: '1', title: 'Fase 1', prompt: 'x' }], 5)).state
+    expect(running.pendingStarts).toHaveLength(1)
+    const ended = ok(endFlow(running, 50, '  mudou o escopo  '))
+    expect(ended.state.status).toBe('aborted')
+    expect(ended.state.pendingStarts).toBeUndefined()
+    expect([ended.state.seq, ended.state.updatedAt]).toEqual([running.seq + 1, 50])
+    expect(ended.events).toEqual([{ seq: running.seq + 1, at: 50, kind: 'aborted', step: 'planejar', by: 'owner', note: 'mudou o escopo' }])
+  })
+
+  test('an escalated flow ends too, on the step that escalated', () => {
+    const escalated = escalate()
+    expect(escalated.status).toBe('escalated')
+    const ended = ok(endFlow(escalated, 60))
+    expect(ended.state.status).toBe('aborted')
+    expect(ended.events).toEqual([{ seq: escalated.seq + 1, at: 60, kind: 'aborted', step: 'planejar', by: 'owner' }])
+  })
+
+  test('a flow already done or aborted is refused with the reason', () => {
+    const aborted = ok(endFlow(start(rapido), 50)).state
+    expect(err(endFlow(aborted, 51))).toMatch(/already ended/)
+    expect(err(endFlow({ ...start(rapido), status: 'done' }, 51))).toMatch(/already done/)
+  })
+
+  test('the escalation answered with encerrar is the same state and event as endFlow', () => {
+    const escalated = escalate()
+    expect(ok(ownerPress(escalated, 'planejar', 'encerrar', 20))).toEqual(ok(endFlow(escalated, 20)))
   })
 })
