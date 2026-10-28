@@ -1,16 +1,16 @@
 {
-  "name": "orquestrador",
+  "name": "orchestrator",
   "owner": {
     "name": "kaue rodrigues dos santos",
     "url": "https://github.com/chacal88"
   },
   "metadata": {
-    "description": "Orquestrador: painel lateral e flows declarados para orquestrar changes com várias sessões do Claude Code."
+    "description": "Orchestrator: painel lateral e flows declarados para orquestrar changes com várias sessões do Claude Code."
   },
   "plugins": [
     {
-      "name": "orquestrador",
-      "source": "./orquestrador",
+      "name": "orchestrator",
+      "source": "./orchestrator",
       "description": "Painel lateral e flow declarado para orquestrar changes com várias sessões do Claude Code, com gates de qualidade e decisões do dono no painel."
     }
   ]

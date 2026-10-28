@@ -51,16 +51,16 @@ Este repositório não usa OpenSpec.
 
 Arquivos: os listados no `design.md`, §11. Portões: `testes`, `tipos`, `lint`.
 
-- [ ] 1.1 `git mv orquestrador orchestrator` e ajuste dos caminhos que citam a pasta: o `.gitignore`
+- [x] 1.1 `git mv orquestrador orchestrator` e ajuste dos caminhos que citam a pasta: o `.gitignore`
       (`orchestrator/.claude-plugin/types/`), os `tsconfig` e os imports relativos dos testes, se houver.
       Verificação: `git status` mostra o rename (R), e `claude plugin test orchestrator` roda — cx: simple
-- [ ] 1.2 Manifestos. `orchestrator/.claude-plugin/plugin.json` passa a ter `name` `orchestrator`, e `homepage` e
+- [x] 1.2 Manifestos. `orchestrator/.claude-plugin/plugin.json` passa a ter `name` `orchestrator`, e `homepage` e
       `repository` apontam para `https://github.com/chacal88/orchestrator`. Em `.claude-plugin/marketplace.json`, o
       `name` passa a `orchestrator`, e `plugins[0].name` e `source` passam a `orchestrator` e `./orchestrator`.
       As descrições ficam em inglês ou pt-BR, como hoje. Verificação: `grep -rn "orquestrador"
       .claude-plugin orchestrator/.claude-plugin` não acha nada, e `claude plugin validate orchestrator` sai com 0 —
       cx: simple
-- [ ] 1.3 Ferramentas e identidade do mod em `register.tsx`:
+- [x] 1.3 Ferramentas e identidade do mod em `register.tsx`:
       - `PLUGIN_NAME = 'orchestrator'`;
       - `PLAN_TOOL = 'mcp__orchestrator__plan'` e `FLOW_TOOL = 'mcp__orchestrator__flow'`;
       - `$.tool.register({ name: 'plan' })`;
@@ -70,11 +70,11 @@ Arquivos: os listados no `design.md`, §11. Portões: `testes`, `tipos`, `lint`.
 
       Verificação: `grep -rn "mcp__orquestrador\|name: 'plano'\|plugin: 'orquestrador'" orchestrator/hooks
       orchestrator/types` não acha nada — cx: moderate
-- [ ] 1.4 Textos que citam a ferramenta, o painel ou o plugin pelo nome, em `flow.ts` (prompts de aviso e de sessões
+- [x] 1.4 Textos que citam a ferramenta, o painel ou o plugin pelo nome, em `flow.ts` (prompts de aviso e de sessões
       pendentes, `:1158`), `i18n.ts`, `i18n-workflows.ts` e `workflows-pane.tsx`. A tabela está no `design.md`, §5. Os
       textos de `/orquestrador <sub>` só mudam na fase 3. Verificação: `grep -rn "mcp__orquestrador\|painel do
       orquestrador\|orquestrador panel" orchestrator/hooks` não acha nada — cx: moderate
-- [ ] 1.5 Testes. Os asserts com nome de ferramenta, painel ou chave de estado passam aos nomes novos, e nenhum teste é
+- [x] 1.5 Testes. Os asserts com nome de ferramenta, painel ou chave de estado passam aos nomes novos, e nenhum teste é
       removido. Verificação: `claude plugin test orchestrator` sai com 0, com o mesmo número de testes de antes (anotar
       os dois números no `evidence.md`) — cx: moderate
 
