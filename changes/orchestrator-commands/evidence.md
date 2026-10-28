@@ -414,11 +414,154 @@ Ficou fora do escopo, como pedido:
 
 ### Testes
 
-_a preencher_
+Antes, no commit `ec82af8` (fim da fase 3), numa cópia do `orchestrator/` desse commit (`git archive`): 500 testes em
+37 arquivos, todos `(pass)`.
+
+```
+$ export PATH="…/claude-code/2.1.309/5af865b9901c/claude.app/Contents/MacOS:$PATH" && command claude plugin test orchestrator
+…
+(pass) C10: approve with nothing after it, at the grill, records fechado and goes to the mockup, as the click does
+(pass) approve and reject on a step that is not the owner's say the step and who answers it, and change nothing
+(pass) C8: status through the bridge, at the mockup, is the mockup's four plain lines
+(pass) C10: reject with free text at the mockup records ajustes with that note, as "Pedir ajuste" does
+(pass) C10: reject at production, which has no adjustments, says so and points to approve; the flow does not move
+(pass) C12: skip-gate lists the open gates numbered; a number the list does not have, or no number, answers the list
+(pass) C12: skip-gate 2 asks; the same again within 60 s skips the gate the panel skips
+(pass) C12: the repetition after 121 s only asks again, and the one right after that skips
+(pass) C12: skip-gate 2 then skip-gate 1 skips neither; 1 again then skips only that one, and the ask is gone
+(pass) C12: when the list changes between the two, the gate now numbered N is never skipped on the old ask
+(pass) skip-gate and status read the open gates from disk: with the mod's state emptied, as a reinstall leaves it, they are still listed
+(pass) C11: end ends the flow at once, as the second press of the button does, and nothing is sent
+(pass) C11: end mudou o escopo leaves the flow aborted with that note, in one call; a plugin origin is refused and the flow runs on
+(pass) on an escalation approve tries again, as its first button, and reject points to end; nothing asks for a word
+(pass) pickOutcome > completo: the owner's five steps, as the design's table
+(pass) pickOutcome > rapido: the owner's steps
+(pass) pickOutcome > a project flow with two outcomes forward takes the first declared, and one back to an earlier step is the adjustment
+(pass) pickOutcome > a step without adjustments is none; an outcome to an unknown step counts for neither
+(pass) pickOutcome > an escalation goes forward by trying again and has no adjustments
+(pass) statusText > the mockup's answer: the flow, the step and both commands spelled out whole
+(pass) gateList > numbered, phases first, with how to skip one, as the mockup
+…
+ 517 pass
+ 0 fail
+Ran 517 tests across 37 files.
+exit=0
+```
+
+500 → 517: 17 testes a mais, nenhum removido sem substituto. O que mudou:
+
+- `command.test.ts`:
+  - os testes de `parseAction` de `approve`, `skip-gate` e `end` passaram à forma sem palavra. O texto depois de
+    `approve` é nota, até `fechado`. `skip-gate` aceita só um número positivo, e `x`, `0`, `2.5` e `2 testes confirmar`
+    são a lista. `confirmar` depois de `end` é só uma palavra do motivo;
+  - entraram 5 testes de `pickOutcome`, 3 de `statusText` e 1 de `gateList`.
+- `comando-harness.test.ts`:
+  - o mundo ganhou `advance(ms)`, o relógio que o teste move;
+  - ganhou também `ownState`, que guarda o `$.state` do mod no mundo para o teste esvaziar como a reinstalação. Só os
+    testes sem painel usam, porque com esse estado o painel não desenha os botões;
+  - os testes de `aprovar <saída>`, `pular-portão … confirmar`, `encerrar confirmar` e `aprovar encerrar` viraram os
+    testes C10, C11 e C12 acima;
+  - o teste de "saída que o passo não declara" virou o de "passo que não é do dono".
 
 ### Tipos
 
-_a preencher_
+```
+$ npx -y -p typescript@5.6.3 tsc -p <scratchpad>/tc/tsconfig.json   # tipos do engine 2.1.309 (plugin-authoring), hooks + types + tests de orchestrator/
+(sem saída)
+exit=0
+```
+
+### Validação
+
+```
+$ export PATH="…/claude-code/2.1.309/5af865b9901c/claude.app/Contents/MacOS:$PATH" && command claude plugin validate orchestrator
+  ❯ types ./types/index.d.ts declares state: …, orchestrator.skip-ask, …
+  ❯ ./register.tsx state writes: …, orchestrator.skip-ask, …   state reads: …, orchestrator.skip-ask, …
+⚠ Found 1 plugin directory warning: ICON_MISSING (já existia; não muda o resultado)
+✔ Validation passed
+exit=0
+```
+
+### Tarefas
+
+- 4.1: `pickOutcome(state, 'forward' | 'adjust')` em `command.ts`. Ela devolve `{ outcome } | { none: true }` pela
+  posição do `next` em `state.flow.steps`:
+  - para frente é um passo depois do atual, `fim` ou `$seguinte`;
+  - ajuste é o próprio passo ou um anterior;
+  - um `next` desconhecido não conta para nenhum lado;
+  - vale a primeira saída declarada;
+  - numa escalada, para frente é `escalationChoices()[0]` (`tentar-de-novo`), e não há ajustes.
+
+  Os testes cobrem os cinco passos do `completo` (a tabela do §2), `qa` e `producao` do `rapido`, um flow de projeto
+  com duas saídas para frente e uma para trás, e o caso `none`.
+- 4.2: `approve [nota]` chama o `pressFlow` com a saída "forward" e a nota, a mesma chamada do botão. Numa escalada, o
+  passo é o da escalada e a saída é `tentar-de-novo`. Num passo que não é do dono, a resposta é
+  `O passo atual (<título>) não é seu: quem responde é <quem>.`. Num passo em que o dono só confirma (o deploy à
+  espera do CI), vale a única escolha que o painel mostra. O teste C10 compara o estado, o log (`kind: outcome`,
+  `by: owner`) e o aviso à coordenação com os do clique em `flow:grill:fechado`, e a resposta é
+  `Registrado: Entendimento fechado. Próximo passo: Mockup.`.
+- 4.3: `reject [nota]` usa a saída "adjust" com a nota, e a resposta repete a nota, como no mockup:
+  `Registrado: Pedir ajustes (nota: trocar skip-gate por skip). Próximo passo: Mockup.`. O toast do clique não muda: o
+  `pressedToast` ganhou um `note` opcional, que só o comando passa. Sem saída de ajustes, a resposta é
+  `O passo atual (<título>) não tem opção de ajustes. Para seguir: /orchestrator:approve`. Numa escalada, ela aponta
+  `/orchestrator:end [motivo]`.
+
+  Desvio do texto do mockup: o mockup diz `(Está em produção)`, que é o rótulo da saída. O código usa o título do
+  passo, `(Em produção)`, como a tarefa pede (`<título>`).
+- 4.4: `end [motivo]` chama o `endByOwner` direto, sem confirmação. Saíram o `endAsk`, o `approveEnd` e o
+  `confirmation` de `command.ts`. A resposta é `Flow de b encerrado (motivo: mudou o escopo).`, ou
+  `Flow de b encerrado.` sem motivo. O toast do botão "Encerrar o flow" usa o mesmo texto. O
+  `grep -n "confirmar\|endAsk" orchestrator/hooks/command.ts orchestrator/hooks/i18n.ts` não acha nada (exit 1).
+
+  Para isso, o aviso `tampered` do `i18n.ts`, da ativação mudada fora do painel, passou de "até você confirmar por aqui"
+  para "até você escolher de novo por aqui". Ele fala de um botão do painel, não de uma palavra. O texto equivalente em
+  `i18n-workflows.ts` fica como está, porque está fora do grep e da fase.
+- 4.5: `skip-gate [N]`, com a chave `skip-ask` em `types/index.d.ts` e `SKIP_CONFIRM_MS = 120_000` em `command.ts`:
+  - sem número, ou com um número fora da lista, a resposta é a lista numerada
+    (`1. fase 2: testes` … `Para pular: /orchestrator:skip-gate N`), e nada é gravado;
+  - `skip-gate N` grava `{ change, phase, gate, n, at }` e pergunta
+    `Pular "<rótulo>"? Rode /orchestrator:skip-gate N de novo em até 2 minutos.`;
+  - a repetição só pula se a chave tem a mesma change e o mesmo N, se passaram no máximo 120 s (`$.clock.now()`), e
+    se o portão número N de agora é o mesmo `phase`/`gate`. Antes de pular, a chave vira `null`. Fora isso, grava de
+    novo e pergunta de novo.
+
+  O pulo usa o mesmo `skipGate` do painel, e o teste compara o `gates/b.json` com o do clique.
+
+  `openGatesFor($, flow)` substitui o `openGatesNow`. Ela lê do disco o plano (`runs/<change>.json`), os pulos
+  (`loadSkips`) e os arquivos de atividade das sessões (`freshActivity`, que o `loadSessions` também passou a usar).
+  Os registros da própria sessão vêm do `ownCheck`, depois do `restoreActivity`. Ela monta a lista com o mesmo
+  `phaseViews`/`gateViews`/`familyCheck`.
+
+  Uma sessão de fase é achada pelo id no arquivo de atividade. Pelo nome ou pelo título, só pelas filhas que o painel
+  listou por último. Uma sessão não achada deixa os portões abertos, como no painel. O `status` usa a mesma função.
+
+  Desvio: o `refresh` não monta lista de portões. O painel desenha os portões do `PanelView`, então não há o que trocar
+  lá. A ordem é a mesma porque as duas partem de `phaseViews` sobre o mesmo plano.
+
+  O teste extra esvazia o `$.state` (`ownState` e `w.kept.clear()`), e o `skip-gate` e o `status` ainda listam os dois
+  portões. O `grep -n "openGatesNow" orchestrator/hooks/register.tsx` não acha nada (exit 1).
+- 4.6: o `status` responde no molde do mockup:
+
+  ```
+  Flow de <change> (<flow>): em andamento
+  Passo: <título> (você)
+  Para seguir: /orchestrator:approve
+  Para pedir ajustes: /orchestrator:reject <o que mudar>
+  ```
+
+  - a linha do `reject` só aparece quando o `pickOutcome(…, 'adjust')` acha uma saída;
+  - a palavra do estado vem do `i18n`, por exemplo `em andamento` ou `parado no limite de tentativas`;
+  - um passo que não é do dono diz quem responde e não oferece comando;
+  - numa escalada, o status oferece `Para tentar de novo: /orchestrator:approve` e
+    `Para encerrar: /orchestrator:end [motivo]`;
+  - depois vêm os portões abertos (`Portões abertos: fase 2: testes, final: check`), as sessões pendentes e o aviso de
+    permissão.
+
+  O teste C8, com `origin: { kind: 'bridge' }` no mockup, confere as quatro linhas exatas, sem `|`, `#`, `*`, crases
+  nem marcador de lista.
+
+Ficou fora do escopo, como pedido: o `sessionFlow` (o `openGatesFor` recebe o flow do `commandFlow`, e a fase 5 o troca),
+o `background` das sessões pendentes, o README, a versão e a config deste repo em `.orquestrador/`.
 
 ## Fase 5 — painel da sessão e sessões pendentes
 

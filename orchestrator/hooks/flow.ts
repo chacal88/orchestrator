@@ -1014,9 +1014,11 @@ export const pressedToast = (
   step: string,
   outcome: string,
   lang: Lang = DEFAULT_LANGUAGES.ui,
+  note?: string,
 ): string => {
   const t = uiText(lang)
-  const label = pressedLabel(before, step, outcome, lang)
+  const pressed = pressedLabel(before, step, outcome, lang)
+  const label = note === undefined ? pressed : t.command.noted(pressed, note)
   const nextStep = stepOf(after.flow, after.current)
   const next =
     after.status === 'done'

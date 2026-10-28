@@ -100,8 +100,8 @@ import {
   rejectPlan,
 } from './grill'
 import { bandSummary, parseEvents, stepTimes } from './glance'
-import { fromOwner, parseAction, statusText } from './command'
-import type { Action } from './command'
+import { SKIP_CONFIRM_MS, fromOwner, gateLabel, gateList, parseAction, pickOutcome, statusText, answerer } from './command'
+import type { Action, OpenGate } from './command'
 import { DEFAULT_LANGUAGES, contentRule, uiText } from './i18n'
 import type { UiText } from './i18n'
 import { renderBand, renderPane } from './pane'
@@ -176,6 +176,8 @@ const AUTOWAKE_MAX_SAME_CHILD = 3
 /** Stops told to the coordination while the flow does not move, any child, before the mod stops telling at all. */
 const AUTOWAKE_MAX_SAME_PROGRESS = 10
 const GRILL_DRAFTS = { plugin: 'orchestrator', key: 'grillDrafts' } as const
+/** The `skip-gate N` that waits for its repetition (`design.md`, §3): the session's own, gone on a restart. */
+const SKIP_ASK = { plugin: 'orchestrator', key: 'skip-ask' } as const
 const START_SESSION = 'mcp__ccd_session__start_session'
 const SET_SESSION_MODEL = 'mcp__ccd_session_mgmt__set_session_model'
 const SET_SESSION_EFFORT = 'mcp__ccd_session_mgmt__set_session_effort'
@@ -447,15 +449,7 @@ const loadSessions = async (
   for (const row of [...family, ...grouped]) {
     if (!row.isArchived && row.sessionId !== selfRow?.sessionId) others.set(row.sessionId, row)
   }
-  const dir = `${base}/sessions`
-  const files = (await $.fs.exists(dir)) ? await $.fs.list(dir) : []
-  // a file per session id is never removed (the mod cannot delete), so a refresh skips the
-  // ones untouched for a week instead of opening every session this machine ever ran
-  const cutoff = (await $.clock.now()) - ACTIVITY_TTL_MS
-  const fresh = files.filter(f => f.name.endsWith('.json') && f.mtimeMs >= cutoff)
-  const records = (await Promise.all(fresh.map(f => readJson<ActivityRecord>($, `${dir}/${f.name}`)))).filter(
-    (r): r is ActivityRecord => r !== undefined,
-  )
+  const records = await freshActivity($, base)
   const children = [...others.values()].map(row => toCard(row, activityFor(records, row, selfRow?.cwd)))
   const self =
     selfRow === undefined
@@ -2035,7 +2029,8 @@ const pressFlow = async (
     if (wait) await $.prompt.submit({ text: wake })
     else $.clock.after(WAKE_AFTER_COMMAND_MS, () => void $.prompt.submit({ text: wake }).catch(error => $.ui.log(`orchestrator: ${describeError('aviso', error)}`)))
   }
-  return { ok: true, text: pressedToast(state, moved.state, step, outcome, languages.ui) }
+  // the command's answer says the note back, as the mockup does; the click's toast stays as it was
+  return { ok: true, text: pressedToast(state, moved.state, step, outcome, languages.ui, wait ? undefined : noted) }
 }
 
 /** The click's side of a press: the toast is the text, or the reason it was not recorded. */
@@ -2045,7 +2040,7 @@ const clickFlow = async ($: EngineInterface, change: string, step: string, outco
 }
 
 /**
- * The owner ends the flow (the second press of "Encerrar o flow", or `/orchestrator:end ... confirmar`).
+ * The owner ends the flow (the second press of "Encerrar o flow", or `/orchestrator:end [motivo]`, at once).
  * Nothing is archived, the group stays, and no message goes to the coordination: the `aborted` flow stops the
  * warnings by itself. The only caller of `endFlow` besides the escalation's answer.
  */
@@ -2057,7 +2052,7 @@ const endByOwner = async ($: EngineInterface, change: string, note?: string): Pr
   if ('error' in ended) return { error: ended.error }
   await saveFlow($, ended.state, ended.events)
   await refreshQuietly($)
-  return { ok: true, text: t.command.endDone(change) }
+  return { ok: true, text: t.command.endDone(change, note) }
 }
 
 /**
@@ -2076,30 +2071,99 @@ const commandFlow = async ($: EngineInterface, root: string): Promise<FlowState 
     .sort((a, b) => b.startedAt - a.startedAt)[0]
 }
 
-/** The gates still open in the last panel view, by phase: what `status` lists and `pular-portão` can reach. */
-const openGatesNow = async ($: EngineInterface): Promise<{ phase: string; gate: GateView }[]> => {
-  const { value: view } = await $.state.get(VIEW)
-  if (view?.run === undefined) return []
-  const own = await ownCheck($)
-  const skips = view.skips ?? {}
-  const phases = phaseViews(view.run, view.children).flat()
-  const phaseGates = phases.flatMap(phase =>
-    phase.gates === undefined
-      ? []
-      : gateViews(phase.gates, phase.id, phase.session === undefined ? own : (phase.card?.gates ?? { records: {}, editedAt: undefined }), skips)
-          .filter(isOpenGate)
-          .map(gate => ({ phase: phase.id, gate })),
+/**
+ * Every session's activity file of the last week: what the cards and the gates read. A file per session id is
+ * never removed (the mod cannot delete), so the ones untouched for a week are skipped instead of opening every
+ * session this machine ever ran.
+ */
+const freshActivity = async ($: EngineInterface, base: string): Promise<ActivityRecord[]> => {
+  const dir = `${base}/sessions`
+  if (!(await $.fs.exists(dir))) return []
+  const cutoff = (await $.clock.now()) - ACTIVITY_TTL_MS
+  const fresh = (await $.fs.list(dir)).filter(f => f.name.endsWith('.json') && f.mtimeMs >= cutoff)
+  return (await Promise.all(fresh.map(f => readJson<ActivityRecord>($, `${dir}/${f.name}`)))).filter(
+    (r): r is ActivityRecord => r !== undefined,
   )
-  const check = familyCheck([own, ...view.children.map(c => c.gates ?? { records: {}, editedAt: undefined })])
-  const final = gateViews(view.run.finalGates, FINAL_SCOPE, check, skips)
+}
+
+/**
+ * The gates still open in a flow's plan, phases first and then the final gates, in the panel's order: what
+ * `status` lists and `skip-gate N` numbers. Read from disk (the plan, the owner's skips, the sessions' activity
+ * files) and not from the panel's view, which a reinstall empties. A phase session is matched by its id in its
+ * activity file, or by name and title through the children the panel last listed; one not found proves nothing,
+ * so its gates stay open, as on the panel.
+ */
+const openGatesFor = async ($: EngineInterface, flow: FlowState): Promise<{ phase: string; gate: GateView }[]> => {
+  const run = await readJson<OrchestrationRun>($, `${await baseDir($)}/runs/${runKey(flow.change)}.json`)
+  if (run === undefined) return []
+  await restoreActivity($).catch(() => undefined)
+  const own = await ownCheck($)
+  const skips = await loadSkips($, flow.change)
+  const records = await freshActivity($, await baseDir($))
+  const self = await selfId($).catch(() => undefined)
+  const { value: view } = await $.state.get(VIEW)
+  const listed = (view?.children ?? []).map(card => toCard(card, activityFor(records, card, flow.coordinatorCwd)))
+  const unlisted = records
+    .filter(r => r.sessionId !== undefined && r.sessionId !== self && !listed.some(c => c.sessionId === r.sessionId))
+    .map(r => toCard(unlistedRow(r.sessionId as string, r.cwd), r))
+  const children = [...listed, ...unlisted]
+  const phaseGates = phaseViews(run, children)
+    .flat()
+    .flatMap(phase =>
+      phase.gates === undefined
+        ? []
+        : gateViews(phase.gates, phase.id, phase.session === undefined ? own : (phase.card?.gates ?? { records: {}, editedAt: undefined }), skips)
+            .filter(isOpenGate)
+            .map(gate => ({ phase: phase.id, gate })),
+    )
+  const check = familyCheck([own, ...children.map(c => c.gates)])
+  const final = gateViews(run.finalGates, FINAL_SCOPE, check, skips)
     .filter(isOpenGate)
     .map(gate => ({ phase: 'final', gate }))
   return [...phaseGates, ...final]
 }
 
+/** A session known only by its activity file: enough of a row to match a phase by its id. */
+const unlistedRow = (sessionId: string, cwd: string): SessionRow => ({
+  sessionId, title: '', cwd, branch: undefined, isRunning: false, isArchived: false, prNumber: undefined, prState: undefined,
+  lastActivityAt: undefined, name: undefined, startedBy: undefined, link: undefined, groupId: undefined, groupName: undefined,
+})
+
+const asOpenGate = (g: { phase: string; gate: GateView }): OpenGate => ({ phase: g.phase, gate: g.gate.gate })
+
+/**
+ * `skip-gate N`: the first asks and keeps the ask for two minutes; the same N again within them skips, only when
+ * the gate numbered N now is still the one asked about. Anything else asks again, so a list that changed order
+ * never skips the wrong gate. A number the list does not have answers the list, keeping nothing.
+ */
+const skipByNumber = async ($: EngineInterface, flow: FlowState, n: number | undefined, t: UiText): Promise<string> => {
+  const gates = await openGatesFor($, flow)
+  const hit = n === undefined ? undefined : gates[n - 1]
+  if (n === undefined || hit === undefined) return gateList(gates.map(asOpenGate), t.command)
+  const label = gateLabel(asOpenGate(hit), t.command)
+  const now = await $.clock.now()
+  const { value: ask } = await $.state.get(SKIP_ASK)
+  const repeated =
+    ask !== undefined && ask !== null && ask.change === flow.change && ask.n === n && now - ask.at <= SKIP_CONFIRM_MS &&
+    ask.phase === hit.phase && ask.gate === hit.gate.gate
+  if (!repeated) {
+    await $.state.set(SKIP_ASK, { change: flow.change, phase: hit.phase, gate: hit.gate.gate, n, at: now })
+    return t.command.skipAsk(label, n)
+  }
+  await $.state.set(SKIP_ASK, null)
+  await skipGate($, flow.change, hit.gate)
+  await refreshQuietly($)
+  return t.command.skipDone(label)
+}
+
+/** Whether `reject` has an outcome to press at the flow's step. */
+const canAdjust = (flow: FlowState): boolean => !('none' in pickOutcome(flow, 'adjust'))
+
 /**
  * `/orchestrator:<action> <args>`: the owner's chat, which the Remote Control reaches too. Plain text answers.
  * Opening a pane decides nothing, so any origin may; every other action counts only typed by the owner.
+ * No action asks for a word: approve and reject pick the step's outcome themselves (`pickOutcome`), end ends
+ * at once, and skip-gate confirms by being repeated.
  */
 const runCommand = async ($: EngineInterface, action: Action, args: string, origin: { readonly kind: string }): Promise<string> => {
   const config = await loadConfig($)
@@ -2115,7 +2179,6 @@ const runCommand = async ($: EngineInterface, action: Action, args: string, orig
   }
   if (!fromOwner(origin)) return t.command.notFromOwner
   if (parsed.kind === 'help') return t.command.help
-  if (parsed.kind === 'usage') return `${t.command.usage(parsed.action)}\n${t.command.help}`
   const flow = await commandFlow($, await $.session.root())
   if (flow === undefined) {
     // no flow of this session may be a flow of a session whose id is not read yet: say the permission, not "no flow"
@@ -2123,14 +2186,18 @@ const runCommand = async ($: EngineInterface, action: Action, args: string, orig
     return waiting ?? t.command.noFlow
   }
   const change = flow.change
+  const view = flowView(flow, config.languages)
+  const stepName = view.current?.title ?? flow.current
+  const step = flow.escalation?.step ?? flow.current
   switch (parsed.kind) {
     case 'status': {
       await refreshQuietly($)
       const { value: needed } = await $.state.get(PERMISSION_NEEDED)
       return statusText(
         {
-          flow: flowView(flow, config.languages),
-          gates: (await openGatesNow($)).map(g => `${g.phase}: ${g.gate.gate}`),
+          flow: view,
+          canAdjust: canAdjust(flow),
+          gates: (await openGatesFor($, flow)).map(asOpenGate),
           pending: (flow.pendingStarts ?? []).map(p => p.title),
           permission: needed === null || needed === undefined ? undefined : t.warning.permission,
         },
@@ -2138,9 +2205,20 @@ const runCommand = async ($: EngineInterface, action: Action, args: string, orig
       )
     }
     case 'approve': {
-      // ending always asks for confirmation (C11): `aprovar encerrar` on an escalation points to the command that does
-      if (flow.status === 'escalated' && parsed.outcome === 'encerrar') return t.command.approveEnd
-      const done = await pressFlow($, change, flow.escalation?.step ?? flow.current, parsed.outcome, parsed.note, false)
+      if (view.ownerChoices.length === 0) return t.command.notOwnerStep(stepName, answerer(view.waitingOn, t.command))
+      const picked = pickOutcome(flow, 'forward')
+      // a step the owner only confirms (a deploy waiting on its CI) offers one choice: the panel's one button
+      const outcome =
+        !('none' in picked) && view.ownerChoices.some(c => c.outcome === picked.outcome) ? picked.outcome : view.ownerChoices[0]!.outcome
+      const done = await pressFlow($, change, step, outcome, parsed.note, false)
+      return 'error' in done ? done.error : done.text
+    }
+    case 'reject': {
+      if (flow.status === 'escalated') return t.command.rejectEscalated
+      if (view.ownerChoices.length === 0) return t.command.notOwnerStep(stepName, answerer(view.waitingOn, t.command))
+      const picked = pickOutcome(flow, 'adjust')
+      if ('none' in picked || !view.ownerChoices.some(c => c.outcome === picked.outcome)) return t.command.noAdjust(stepName)
+      const done = await pressFlow($, change, step, picked.outcome, parsed.note, false)
       return 'error' in done ? done.error : done.text
     }
     case 'open': {
@@ -2149,20 +2227,9 @@ const runCommand = async ($: EngineInterface, action: Action, args: string, orig
       await refreshQuietly($)
       return t.pending.result(done.opened.length, done.left, done.why) + (done.byApp ? ` ${origin.kind === 'bridge' ? t.pending.appRefusedMobile : t.pending.appRefused}` : '')
     }
-    case 'skip': {
-      await refreshQuietly($)
-      const hit = (await openGatesNow($)).find(g => g.phase === parsed.phase && (g.gate.gate === parsed.gate || g.gate.label === parsed.gate))
-      if (hit === undefined) return t.command.skipUnknown(parsed.phase, parsed.gate)
-      if (!parsed.confirmed) return t.command.skipAsk(parsed.phase, hit.gate.gate)
-      await skipGate($, change, hit.gate)
-      await refreshQuietly($)
-      return t.command.skipDone(hit.gate.gate)
-    }
-    case 'reject':
-      // the outcome "adjust" of the current step is chosen in phase 4 (pickOutcome); until then the panel's button asks
-      return t.command.rejectLater
+    case 'skip':
+      return skipByNumber($, flow, parsed.n, t)
     case 'end': {
-      if (!parsed.confirmed) return t.command.endAsk(change, flow.escalation?.step ?? flow.current)
       const done = await endByOwner($, change, parsed.reason)
       return 'error' in done ? done.error : done.text
     }

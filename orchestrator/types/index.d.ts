@@ -611,6 +611,8 @@ declare module 'claude-code' {
       paneOpen: boolean
       /** What the owner has typed so far in the grill's answer fields, by question text. */
       grillDrafts: Record<string, string>
+      /** `/orchestrator:skip-gate N` waiting for its repetition within two minutes (`SKIP_CONFIRM_MS`). */
+      'skip-ask': { change: string; phase: string; gate: string; n: number; at: number } | null
       reminded: { count: number; last: string } | null
       running: { root: string; at: number; running: boolean }
       /** "Seguir o flow sem clique": what the coordination's mod last saw of each child, by session id (see `hooks/wake.ts`). */

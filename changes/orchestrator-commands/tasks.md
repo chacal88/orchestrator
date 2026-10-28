@@ -198,30 +198,30 @@ Feito com três desvios, registrados no `evidence.md`:
 
 Portões: `testes`, `tipos`.
 
-- [ ] 4.1 `pickOutcome(state, 'forward' | 'adjust')` em `command.ts` (`design.md`, §2). Testes em `command.test.ts`:
+- [x] 4.1 `pickOutcome(state, 'forward' | 'adjust')` em `command.ts` (`design.md`, §2). Testes em `command.test.ts`:
       - os cinco passos do dono do `completo`, conforme a tabela do design;
       - os passos do dono do `rapido`;
       - um flow de projeto com duas saídas para frente (vale a primeira declarada);
       - um passo sem ajustes (`none`).
 
       Verificação: os testes como `(pass)` — cx: moderate
-- [ ] 4.2 `approve [nota]` chama o `pressFlow`, a mesma chamada do botão do painel, com a saída "forward" e a nota.
+- [x] 4.2 `approve [nota]` chama o `pressFlow`, a mesma chamada do botão do painel, com a saída "forward" e a nota.
       Numa escalada, usa `tentar-de-novo`. Num passo que não é do dono, responde qual é o passo e quem o responde.
       Teste de harness (C10): no `grill`, `orchestrator:approve` sem argumentos registra `fechado`, e o flow vai para
       `mockup`. O log do flow fica igual ao do clique do botão (mesmo `kind`, `by: owner`). Verificação: o teste como
       `(pass)` — cx: moderate
-- [ ] 4.3 `reject [nota]` usa a saída "adjust" com a nota. Sem saída de ajustes, responde
+- [x] 4.3 `reject [nota]` usa a saída "adjust" com a nota. Sem saída de ajustes, responde
       `O passo atual (<título>) não tem opção de ajustes. Para seguir: /orchestrator:approve`. Numa escalada, aponta
       `/orchestrator:end`. Testes de harness (C10):
       - no `mockup`, `orchestrator:reject trocar skip-gate por skip` registra `ajustes` com essa nota;
       - no `producao`, responde o texto acima, e o flow não anda.
 
       Verificação: os testes como `(pass)` — cx: moderate
-- [ ] 4.4 `end [motivo]` chama o `endByOwner` direto, sem confirmação e sem `confirmar` (C11). Sai o `endAsk` do
+- [x] 4.4 `end [motivo]` chama o `endByOwner` direto, sem confirmação e sem `confirmar` (C11). Sai o `endAsk` do
       `i18n`. Teste: `orchestrator:end mudou o escopo` deixa o flow `aborted`, com a nota `mudou o escopo`, numa chamada
       só. Verificação: o teste como `(pass)`, e `grep -n "confirmar\|endAsk" orchestrator/hooks/command.ts
       orchestrator/hooks/i18n.ts` não acha nada — cx: simple
-- [ ] 4.5 `skip-gate [N]` com o estado de 2 minutos (`design.md`, §3): a chave `skip-ask` em `types/index.d.ts` e
+- [x] 4.5 `skip-gate [N]` com o estado de 2 minutos (`design.md`, §3): a chave `skip-ask` em `types/index.d.ts` e
       `SKIP_CONFIRM_MS = 120_000`. Testes com o relógio falso:
       - sem argumento, lista numerada;
       - `skip-gate 2` pergunta;
@@ -238,10 +238,14 @@ Portões: `testes`, `tipos`.
 
       Verificação: os testes como `(pass)`, e `grep -n "openGatesNow" orchestrator/hooks/register.tsx` não acha nada —
       cx: complex
-- [ ] 4.6 `status` em texto simples, no molde do mockup: flow, passo, `Para seguir: /orchestrator:approve` e
+- [x] 4.6 `status` em texto simples, no molde do mockup: flow, passo, `Para seguir: /orchestrator:approve` e
       `Para pedir ajustes: /orchestrator:reject <o que mudar>`, este só quando o passo tem ajustes. Também mostra os
       portões abertos e as sessões pendentes. Teste: com `origin: { kind: 'bridge' }`, a resposta não tem tabela nem
       markdown além das palavras (C8). Verificação: o teste como `(pass)` — cx: simple
+
+Feito com dois desvios, registrados no `evidence.md`:
+- a resposta sem ajustes usa o título do passo (`Em produção`), e não o rótulo da saída que o mockup mostra;
+- o `refresh` não monta lista de portões, então só o `status` e o `skip-gate` passam a usar o `openGatesFor`.
 
 ## 5. Painel da sessão e sessões pendentes
 
