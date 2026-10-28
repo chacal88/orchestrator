@@ -13,3 +13,9 @@ As fases rodam em série, nesta mesma pasta.
 | 4 Nenhum comando exige palavra | 🛠️ | local_3048d186 | feito (6858089) | — |
 | 5 Painel e sessões pendentes | 🛠️ | local_87754a2f | feito (4c615bc) | — |
 | 6 README, versão, conferência | 📖 | local_038a0e10 | feito (6.4 → 7.3, QA do dono) | — |
+
+## Depois das fases
+- revisao-codigo: aprovado (local_671ce755).
+- checagem: `claude plugin test orchestrator` saiu 0. tipos: `tsc` saiu 0.
+- pr: #23 aberto (local_12d11ff6).
+- Próximo: QA do dono (tarefa 7.3), depois o rename do repo (7.1, com ok), o merge e a reinstalação (7.2).
