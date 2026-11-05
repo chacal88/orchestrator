@@ -23,7 +23,7 @@ import type {
   Translations,
 } from '../types'
 import { libraryStep, NEXT_STEP, overlay } from './flows/library'
-import { executedText, isAgentName, masksExitCode } from './gates'
+import { MAX_LIVE_SESSIONS, executedText, isAgentName, masksExitCode } from './gates'
 import { DEFAULT_LANGUAGES, baseText, localize, parseLocalized, uiText } from './i18n'
 import type { UiText } from './i18n'
 import { MOCKUP_STEP } from './grill'
@@ -1207,15 +1207,28 @@ const projectNote = (step: FlowStep): string => {
   return fields.length === 0 ? '' : ` From the project's settings (not the workflow): ${fields.join(', ')}.`
 }
 
+/** The Agent tool's model alias for a step's model id (`claude-opus-5-5` → `opus`), or undefined to inherit. */
+export const modelAlias = (model: string | undefined): string | undefined =>
+  model === undefined ? undefined : (['fable', 'opus', 'sonnet', 'haiku'].find(alias => model.toLowerCase().includes(alias)) ?? undefined)
+
 /**
- * What the coordination does when the app refuses a start in its turn: the mod keeps the session and the owner
- * opens every pending one with a single press, instead of one card per phase.
+ * How a step's agent runs (design of 0.16.0): as a subagent of the coordination, never as a session of the app. The
+ * app opens a session only in a turn the owner typed, so a session per step or phase stopped the flow on every
+ * one of them; a subagent starts in any turn and the engine wakes the coordination when it ends.
  */
-const PENDING_RULE =
-  'If the app refuses the start in this turn (it was set off by another session\'s message or an automatic event), ' +
-  'register the session with action "pending" (`sessions`: key = the phase id or this step id, title, the same prompt, model, effort, use_worktree, ' +
-  'and a background of at least 80 characters: the change\'s goal and what this session delivers) ' +
-  'and tell the owner it is one press on "Abrir as N sessões pendentes" in the orchestrator panel; then wait, and never do the step here.'
+const agentCall = (step: FlowStep, name: string, extra: string): string => {
+  const agent = step.agent === undefined ? 'general-purpose' : `orchestrator:${step.agent}`
+  const model = modelAlias(step.model)
+  return (
+    `the Agent tool with subagent_type "${agent}", name "${name}"` +
+    (model === undefined ? '' : `, model "${model}"`) +
+    (step.effort === undefined ? '' : `, effort "${step.effort}"`) +
+    extra +
+    (step.agent === undefined
+      ? ''
+      : ` (a project's own .orchestrator/agents/${step.agent}.md wins: put its body first in the prompt)`)
+  )
+}
 
 const describeStep = (state: FlowState, step: FlowStep, where: string, outcomes: string): string =>
   describeStepBody(state, step, where, outcomes) + projectNote(step)
@@ -1244,16 +1257,21 @@ const describeStepBody = (state: FlowState, step: FlowStep, where: string, outco
   switch (step.kind) {
     case 'session':
       return (
-        `${where}. Open a session for this step with start_session (initiation "user_asked" with wake_when_done, the owner asked to orchestrate), ` +
-        "using the step's agent, model and effort; do not do the step in this session. " + PENDING_RULE + ' The session ends its turn with its result. ' +
+        `${where}. Run this step as a subagent of this session, never as a session of the app and never yourself: ` +
+        `${agentCall(step, `passo-${step.id}`, '')}, with a self-contained prompt (the change, its folder, what to read, what to deliver). ` +
+        'It needs no press of the owner: start it now, in this turn, whatever started the turn. ' +
         `When it answers, report one of the step's outcomes with action "report": ${outcomes}.`
       )
     case 'loop': {
       const closed = Object.keys(state.closed ?? {})
       return (
-        `${where}. Run the phases of tasks.md, one session per phase (start_session, initiation "user_asked" with wake_when_done, never this session). ${PENDING_RULE} Close each phase with action "close" and its \`phase\` id once its gates ` +
-        'passed, its tasks are ticked and its work is committed (the mod then archives its session). The step ends ' +
-        `on its own when every phase is closed (→ ${step.outcomes[LOOP_DONE]?.next}).` +
+        `${where}. Run the phases of tasks.md, each as a background subagent of this session, never as a session of the app and never yourself: ` +
+        `${agentCall(step, 'fase-<id>', ', isolation "worktree" and run_in_background true')}, ` +
+        `one per phase whose dependencies are closed, at most ${MAX_LIVE_SESSIONS} at once, each with a self-contained prompt that names only that phase's tasks and gates. ` +
+        'Start them now, in this turn, whatever started it: they need no press of the owner, and the engine wakes you when each one ends. ' +
+        'The gates the subagent runs count for its phase; for the "regras" gate run the reviewer yourself in the foreground with name "revisao-fase-<id>". ' +
+        'When a phase subagent ends, merge its worktree branch into this checkout, check its claim, and close it with action "close" and its `phase` id: ' +
+        `the mod checks its gates and that tasks.md here has its tasks ticked. The step ends on its own when every phase is closed (→ ${step.outcomes[LOOP_DONE]?.next}).` +
         (closed.length > 0 ? ` Closed: ${closed.join(', ')}.` : '')
       )
     }

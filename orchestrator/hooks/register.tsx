@@ -2,6 +2,7 @@ import { update } from 'claude-code'
 import type { EngineInterface, Register, ToolCallResult } from 'claude-code'
 
 import type {
+  AgentRun,
   ActivationLevel,
   ActivityRecord,
   Attention,
@@ -52,8 +53,10 @@ import {
   mergeRecords,
   observeTool,
   phaseRefusal,
+  REVIEWER,
 } from './gates'
 import type { MergeCall, MergeTarget } from './gates'
+import { agentCard, agentRole, keepRuns, latestFor, livePhaseAgents, recordAgentCall, reviewedPhase } from './agents'
 import {
   DEFAULT_FLOW_IDS,
   applyOutcome,
@@ -164,6 +167,8 @@ const ANSWERED = { plugin: 'orchestrator', key: 'answered' } as const
 const GATES_SEEN = { plugin: 'orchestrator', key: 'gates' } as const
 const EDITED_AT = { plugin: 'orchestrator', key: 'editedAt' } as const
 const TRIED = { plugin: 'orchestrator', key: 'tried' } as const
+/** The subagents this coordination started for phases and steps (`hooks/agents.ts`). */
+const AGENTS = { plugin: 'orchestrator', key: 'agents' } as const
 const SELF_ID = { plugin: 'orchestrator', key: 'selfId' } as const
 const PERMISSION_NEEDED = { plugin: 'orchestrator', key: 'permission-needed' } as const
 const ACTIVITY_TTL_MS = 7 * 24 * 60 * 60 * 1000
@@ -455,6 +460,37 @@ const describeError = (step: string, error: unknown): string =>
 /** $.state takes JSON data only: an `undefined` field anywhere refuses the whole write. */
 const asJson = <T,>(value: T): T => JSON.parse(JSON.stringify(value)) as T
 
+/** What the engine says of each subagent of this session now, by agent id. */
+const agentStatuses = async ($: EngineInterface): Promise<Map<string, string>> =>
+  new Map((await $.agent.list().catch(() => [])).map(agent => [agent.id, agent.status] as const))
+
+/**
+ * The phases run by subagents of this coordination, as cards the panel and the phase's close read, the newest
+ * run of a phase first. Only phase runs: a step's subagent is reported by the coordination, not closed.
+ */
+const agentCards = async ($: EngineInterface, change?: string): Promise<SessionCard[]> => {
+  const { value: agents = {} } = await $.state.get(AGENTS)
+  const runs = Object.entries(agents).filter(
+    ([, run]) => run.kind === 'phase' && (change === undefined || run.change === undefined || run.change === change),
+  )
+  if (runs.length === 0) return []
+  const statuses = await agentStatuses($)
+  const root = await $.session.root()
+  return runs.sort((a, b) => b[1].at - a[1].at).map(([id, run]) => agentCard(id, run, statuses.get(id), root))
+}
+
+/**
+ * Whose gates a finished call proves: the phase subagent it ran in (its `agentId`), or the phase a reviewer
+ * the coordination ran for it names (`revisao-fase-<id>`); undefined for the coordination's own.
+ */
+const gateTarget = async ($: EngineInterface, tool: string, input: Record<string, unknown>): Promise<string | undefined> => {
+  const { value: agents = {} } = await $.state.get(AGENTS)
+  if (typeof input.agentId === 'string') return agents[input.agentId] === undefined ? undefined : input.agentId
+  if (tool !== 'Agent' || typeof input.subagent_type !== 'string' || !REVIEWER.test(input.subagent_type)) return undefined
+  const phase = reviewedPhase(typeof input.name === 'string' ? input.name : undefined, typeof input.description === 'string' ? input.description : undefined)
+  return phase === undefined ? undefined : latestFor(agents, undefined, phase)
+}
+
 const loadSessions = async (
   $: EngineInterface,
   base: string,
@@ -472,7 +508,7 @@ const loadSessions = async (
     if (!row.isArchived && row.sessionId !== selfRow?.sessionId) others.set(row.sessionId, row)
   }
   const records = await freshActivity($, base)
-  const children = [...others.values()].map(row => toCard(row, activityFor(records, row, selfRow?.cwd)))
+  const children = [...(await agentCards($)), ...[...others.values()].map(row => toCard(row, activityFor(records, row, selfRow?.cwd)))]
   const self =
     selfRow === undefined
       ? undefined
@@ -1050,7 +1086,7 @@ const phaseRefusals = (
     .flat()
     .flatMap(phase => {
       if (phase.gates === undefined || !include(phase, phase.card)) return []
-      const own = phase.session === undefined
+      const own = phase.session === undefined && phase.card === undefined
       const check = own ? self : (phase.card?.gates ?? { records: {}, editedAt: undefined })
       const where = own ? 'this session' : phase.card === undefined ? `session "${phase.session}" (not found)` : `session "${phase.card.title}"`
       const refusal = phaseRefusal(phase, gateViews(phase.gates, phase.id, check, skips).filter(isOpenGate), where, check.tried)
@@ -1361,7 +1397,9 @@ const observeGates = async (
 ): Promise<void> => {
   if (ran.deny !== undefined) return
   const now = await $.clock.now()
-  const root = await $.session.root()
+  // a phase subagent works in a worktree of its own, wherever it is: any edit there but prose unproves its gates
+  const target = await gateTarget($, tool, input)
+  const root = target === undefined ? await $.session.root() : ''
   const failed = ran.isError === true
   let edited = false
   let observed: GateRecord[] = []
@@ -1377,6 +1415,15 @@ const observeGates = async (
     edited = !failed && editsCode(input.file_path ?? input.notebook_path, root)
   } else {
     observed = observeTool(tool, input, failed, ran.text ?? '', now)
+  }
+  if (target !== undefined) {
+    if (observed.length === 0 && attempt === undefined && !edited) return
+    await update($, AGENTS, agents => {
+      const run = agents?.[target]
+      if (run === undefined) return agents ?? {}
+      return asJson({ ...agents, [target]: recordAgentCall(run, observed, attempt, edited ? now : undefined) })
+    })
+    return
   }
   if (edited) await $.state.set(EDITED_AT, now)
   if (observed.length > 0) {
@@ -1883,30 +1930,44 @@ const closeLoopPhase = async ($: EngineInterface, state: FlowState, phase: unkno
     }
     if (!isClosed(state, unit)) {
       const family = await loadFamily($)
-      const card = run === undefined ? undefined : phaseViews(run, family?.children ?? []).flat().find(p => p.id === unit.id)?.card
-      const own = unit.session === undefined
-      const check = own ? await ownCheck($) : (card?.gates ?? { records: {}, editedAt: undefined })
-      const where = own ? 'this session' : card === undefined ? `session "${unit.session}" (not found)` : `session "${card.title}"`
+      // the subagents' cards come with the family; without the session list they are still this session's to read
+      const children = family?.children ?? (await agentCards($, state.change))
+      const card = run === undefined ? undefined : phaseViews(run, children).flat().find(p => p.id === unit.id)?.card
+      // a plan with no phases names no subagent: the loop's own unit finds the newest `fase-<id>` run itself
+      const agentRun = card ?? (run === undefined || run.waves.length === 0 ? children.find(c => c.agent === true && c.name === `fase-${unit.id}`) : undefined)
+      const byAgent = agentRun?.agent === true
+      const own = unit.session === undefined && agentRun === undefined
+      const check = own ? await ownCheck($) : (agentRun?.gates ?? { records: {}, editedAt: undefined })
+      const where = own
+        ? 'this session'
+        : byAgent
+          ? `subagent "${agentRun?.name}" (merge its worktree branch into this checkout before closing, so tasks.md shows its ticks)`
+          : agentRun === undefined
+            ? `session "${unit.session}" (not found)`
+            : `session "${agentRun.title}"`
       const skips = await loadSkips($, state.change)
-      const label = card?.name ?? card?.title
+      const label = agentRun?.name ?? agentRun?.title
       const why =
         unitRefusal(unit, gateViews(unit.gates, unit.id, check, skips).filter(isOpenGate), where, check.tried) ??
-        (card === undefined || card.isArchived ? undefined : dirtyReason(label ?? card.sessionId, card.cwd, await dirtyPaths($, card.cwd)))
+        (agentRun === undefined || agentRun.isArchived || byAgent ? undefined : dirtyReason(label ?? agentRun.sessionId, agentRun.cwd, await dirtyPaths($, agentRun.cwd)))
       if (why !== undefined) {
         await logFlowRefusal($, state, state.current, 'session', why)
         return flowError(`refused: ${why}`)
       }
+      // a subagent is no session of the app: there is nothing to archive
       const failure =
-        card === undefined || card.isArchived ? undefined : await archiveSession($, card.sessionId, `Fase ${unit.id} fechada`)
+        agentRun === undefined || agentRun.isArchived || byAgent ? undefined : await archiveSession($, agentRun.sessionId, `Fase ${unit.id} fechada`)
       moved = closePhase(
         state,
         unit,
-        { session: label, archived: card !== undefined && failure === undefined, ...(failure === undefined ? {} : { note: failure }) },
+        byAgent
+          ? { session: undefined, archived: false }
+          : { session: label, archived: agentRun !== undefined && failure === undefined, ...(failure === undefined ? {} : { note: failure }) },
         await $.clock.now(),
       )
       closedNow =
         `Phase ${unit.id} closed` +
-        (card === undefined ? '' : failure === undefined ? `, session "${label}" archived` : `; its session was not archived: ${failure}`) +
+        (agentRun === undefined || byAgent ? '' : failure === undefined ? `, session "${label}" archived` : `; its session was not archived: ${failure}`) +
         '. '
     }
   }
@@ -2135,17 +2196,19 @@ const openGatesFor = async ($: EngineInterface, flow: FlowState): Promise<{ phas
   const records = await freshActivity($, await baseDir($))
   const self = await selfId($).catch(() => undefined)
   const { value: view } = await $.state.get(VIEW)
-  const listed = (view?.children ?? []).map(card => toCard(card, activityFor(records, card, flow.coordinatorCwd)))
+  // a subagent's card keeps its own gates (it has no activity file); a session's is read again from its file
+  const agents = await agentCards($, flow.change)
+  const listed = (view?.children ?? []).filter(card => card.agent !== true).map(card => toCard(card, activityFor(records, card, flow.coordinatorCwd)))
   const unlisted = records
     .filter(r => r.sessionId !== undefined && r.sessionId !== self && !listed.some(c => c.sessionId === r.sessionId))
     .map(r => toCard(unlistedRow(r.sessionId as string, r.cwd), r))
-  const children = [...listed, ...unlisted]
+  const children = [...agents, ...listed, ...unlisted]
   const phaseGates = phaseViews(run, children)
     .flat()
     .flatMap(phase =>
       phase.gates === undefined
         ? []
-        : gateViews(phase.gates, phase.id, phase.session === undefined ? own : (phase.card?.gates ?? { records: {}, editedAt: undefined }), skips)
+        : gateViews(phase.gates, phase.id, phase.session === undefined && phase.card === undefined ? own : (phase.card?.gates ?? { records: {}, editedAt: undefined }), skips)
             .filter(isOpenGate)
             .map(gate => ({ phase: phase.id, gate })),
     )
@@ -2527,6 +2590,50 @@ export const register: Register = on => {
       void togglePane($).catch(() => $.ui.toast(uiText(lang).toast.paneFailed))
     }, lang, notice)
   })
+
+  /**
+   * The coordination's subagents (`hooks/agents.ts`): a phase (`fase-<id>`) or a step (`passo-<step>`) is kept by
+   * its agent id, so its own tool calls prove its gates; at most `MAX_LIVE_SESSIONS` phases run at once; and a
+   * reviewer runs in the foreground, so the verdict is the Agent call's result and the `regras` gate can read it
+   * (in the background the result is only the notice that it started).
+   */
+  on('agent.spawn', async ($, e, next) => {
+    if (e.parentAgentId !== undefined || e.workflow !== undefined || e.isTeammate === true || e.resume !== undefined) return next(e)
+    const mode = await activeMode($)
+    if (mode === undefined) return next(e)
+    const role = agentRole(e.name)
+    if (role?.kind === 'phase') {
+      const { value: agents = {} } = await $.state.get(AGENTS)
+      const live = livePhaseAgents(agents, await agentStatuses($))
+      if (live.length >= MAX_LIVE_SESSIONS) {
+        const why =
+          `Orchestrator gate: at most ${MAX_LIVE_SESSIONS} phases run at once and ${live.join(', ')} still run; ` +
+          `start ${e.name ?? 'this phase'} when one of them ends (the engine tells you).`
+        if (mode === 'barrar') return { deny: why }
+        $.ui.toast(why)
+        await noteReminded($, why).catch(() => undefined)
+      }
+    }
+    const reviewer = REVIEWER.test(e.subagentType)
+    const ran = await next(reviewer && e.background !== false ? { ...e, background: false } : e)
+    if (role !== undefined && ran.deny === undefined && ran.agentId !== undefined) {
+      const id = ran.agentId
+      const flow = await sessionFlow($, await $.session.root()).catch(() => undefined)
+      const run: AgentRun = {
+        kind: role.kind,
+        key: role.key,
+        name: e.name ?? '',
+        description: e.description,
+        type: e.subagentType,
+        ...(flow === undefined ? {} : { change: flow.change }),
+        at: await $.clock.now(),
+        gates: {},
+      }
+      await update($, AGENTS, agents => keepRuns({ ...(agents ?? {}), [id]: run }))
+      await refreshQuietly($).catch(() => undefined)
+    }
+    return ran
+  }).catch(($, e, next) => next(e))
 
   on('tool.call', async ($, e, next) => {
     const tool = e.tool as string

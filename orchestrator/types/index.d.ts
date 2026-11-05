@@ -374,6 +374,26 @@ export type SessionRow = {
   link: string | undefined
   groupId: string | undefined
   groupName: string | undefined
+  /** A phase run by a subagent of the coordination, not a session of the app (see `hooks/agents.ts`). */
+  agent?: true
+}
+
+/**
+ * One subagent the coordination started for a phase (`fase-<id>`) or a session step (`passo-<step>`), by its
+ * agent id: what it runs and what its own tool calls proved for the gates.
+ */
+export type AgentRun = {
+  kind: 'phase' | 'step'
+  /** The phase id or the step id. */
+  key: string
+  name: string
+  description: string
+  type: string
+  change?: string
+  at: number
+  gates: Record<string, GateRecord>
+  editedAt?: number
+  tried?: GateAttempt[]
 }
 
 export type SessionCard = SessionRow & {
@@ -610,6 +630,8 @@ declare module 'claude-code' {
       editedAt: number | null
       /** This session's latest commands that looked like a gate run but did not count. */
       tried: GateAttempt[]
+      /** The subagents this coordination started for phases and steps, by agent id (`hooks/agents.ts`). */
+      agents: Record<string, AgentRun>
       /** This session's id in the app's session list, once asked; its activity file is keyed by it. */
       selfId: string
       /** The session-list tools the owner has not allowed (`ask`/`deny`), and since when; the panel and the band ask for them. */

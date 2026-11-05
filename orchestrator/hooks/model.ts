@@ -170,7 +170,10 @@ const matches = (card: SessionCard, ref: string): boolean => {
   )
 }
 
-/** Joins each phase of the coordinator's plan to the live session doing it. */
+/**
+ * Joins each phase of the coordinator's plan to the live session doing it, or to the subagent running it: a
+ * phase with no `session` finds the subagent named `fase-<id>` (the newest first, as the cards come).
+ */
 export const phaseViews = (
   run: OrchestrationRun,
   cards: readonly SessionCard[],
@@ -180,7 +183,7 @@ export const phaseViews = (
       ...phase,
       card:
         phase.session === undefined
-          ? undefined
+          ? cards.find(card => card.agent === true && card.name?.toLowerCase() === `fase-${phase.id}`.toLowerCase())
           : cards.find(card => matches(card, phase.session ?? '')),
     })),
   )
@@ -364,7 +367,7 @@ const questionGate = (view: PanelView, ref: { phase: string; gate: string }): Ga
   if (view.run === undefined) return undefined
   const phase = phaseViews(view.run, view.children).flat().find(p => p.id === ref.phase)
   if (phase === undefined) return undefined
-  const check = phase.session === undefined ? self : (phase.card?.gates ?? { records: {}, editedAt: undefined })
+  const check = phase.session === undefined && phase.card === undefined ? self : (phase.card?.gates ?? { records: {}, editedAt: undefined })
   return gateViews([ref.gate], phase.id, check, view.skips ?? {})[0]
 }
 

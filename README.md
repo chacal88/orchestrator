@@ -1,13 +1,13 @@
 # Orchestrator
 
-Plugin para o Claude Code que orquestra uma change com várias sessões em paralelo e mostra tudo num painel lateral: em que passo o trabalho está, o que cada sessão está fazendo, quais gates de qualidade passaram e o que espera uma decisão sua.
+Plugin para o Claude Code que orquestra uma change com vários subagentes em paralelo e mostra tudo num painel lateral: em que passo o trabalho está, o que cada fase está fazendo, quais gates de qualidade passaram e o que espera uma decisão sua.
 
 *A Claude Code plugin (mod) that orchestrates a change across parallel sessions through a declared flow, with a live side panel and owner decisions as panel buttons. The UI speaks Brazilian Portuguese or English, set per project (see "Idioma").*
 
 ## O que ele faz
 
 - **Flow declarado.** O trabalho segue um flow escrito em arquivo, passo a passo. Cada passo diz quem responde:
-  - **sessão:** uma sessão faz o trabalho e informa o resultado;
+  - **sessão:** um subagente da coordenação faz o trabalho e informa o resultado;
   - **automático:** o mod observa um comando rodar, e o código de saída decide;
   - **dono:** só um clique seu no painel responde, e nenhuma sessão responde por você.
 - **Dois flows prontos:**
@@ -21,20 +21,20 @@ Plugin para o Claude Code que orquestra uma change com várias sessões em paral
   - **Deploy:** espera o deploy do CI, roda rotinas fora do CI, ou faz os dois; pode ser automático, logo depois do merge.
 - **Painel ⚙️ Workflows (`/orchestrator:workflows`).** Fica separado do painel 🧭 e mostra os workflows disponíveis com a configuração de cada passo. Ali você também cria e edita os workflows do projeto.
 - **Gates de qualidade por fase.** São checagens como testes, lint, `check.sh`, `openspec validate`, print da tela e revisão de regras:
-  - **comprovação:** o mod só aceita um gate quando vê o comando rodar e passar;
+  - **comprovação:** o mod só aceita um gate quando vê o comando rodar e passar. Os testes valem com os executores comuns: vitest, jest, pytest, `node --test`, `bun test`, `deno test`, `npm`/`pnpm`/`yarn test`, `go test`, `cargo test`, `make test`, gradle, maven, dotnet e `claude plugin test`. A revisão de regras vale com o veredito do agente revisor, e o mod roda o revisor em primeiro plano para ler esse veredito;
   - **validade:** editar arquivos depois da comprovação desatualiza o gate;
   - **pulo:** só você pula um gate, com dois cliques.
 - **Painel lateral (`/orchestrator:panel`).** Mostra o andamento da change, o OpenSpec (proposta, tarefas e evidência), os gates do flow, o que precisa de você e as tarefas de cada fase com a sessão que as executa. Uma faixa acima do campo de mensagem resume o estado.
 - **Grill com respostas no painel.** As rodadas de perguntas viram critérios de aceite, e você responde cada pergunta num campo do próprio painel.
-- **Sessões em paralelo.** Cada fase roda numa sessão própria, com teto de 3 sessões vivas. As sessões entram sozinhas no grupo da change na barra lateral e são arquivadas quando a fase fecha.
-- **Seguir o flow sem clique.** Opção do cartão "Este projeto" no painel ⚙️. Desligada por padrão e só nesta máquina. Ligada, o painel avisa a coordenação quando termina uma sessão do flow que o app não acompanha (as abertas com `wake_when_done` já acordam a coordenação sozinhas). O painel para de avisar depois de 10 avisos sem o flow andar e mostra um aviso ao dono.
-- **Abrir as sessões pendentes.** Quando o app recusa abrir uma sessão, a coordenação a guarda. O botão "Abrir as N sessões pendentes" no painel, ou `/orchestrator:open`, abre todas de uma vez. Pelo Remote Control o app só abre sessão a partir de mensagem digitada no desktop, e o comando avisa isso.
+- **Fases em paralelo, sem clique seu.** Cada fase roda num subagente da coordenação, em segundo plano e numa worktree própria, com teto de 3 ao mesmo tempo. Cada passo de sessão também roda num subagente. Desde a 0.16.0 nenhum passo nem fase abre sessão do app. O app só abre sessão num turno que você digitou, e por isso as sessões paravam o flow em cada fase, também pelo celular. Um subagente abre em qualquer turno e avisa a coordenação sozinho quando termina. Os gates que ele roda contam para a fase dele, e a fase fecha depois que a coordenação faz o merge da branch dele.
+- **Seguir o flow sem clique.** Opção do cartão "Este projeto" no painel ⚙️. Vale só para sessões filhas de flows de antes da 0.16.0. Ligada, o painel avisa a coordenação quando termina uma sessão do flow que o app não acompanha. O painel para de avisar depois de 10 avisos sem o flow andar e mostra um aviso ao dono.
+- **Abrir as sessões pendentes.** Também só para flows de antes da 0.16.0: o botão "Abrir as N sessões pendentes" e `/orchestrator:open` abrem as sessões que a coordenação guardou. No modo automático do app o botão não consegue abrir sessão, porque nenhum pedido do modelo originou a chamada.
 - **Onze comandos `/orchestrator:<ação>`.** Nenhum pede palavra-chave: o que vier depois do comando é texto livre e opcional. Funcionam também pelo Remote Control (veja [Comandos](#comandos)). Só o dono digitando vale; sessão, plugin ou tarefa agendada são recusados. Não existe `liberar`: a liberação do plano segue pelo plan mode.
 - **Encerrar o flow.** Em qualquer momento, só o dono: pelo botão no painel ou por `/orchestrator:end`.
 - **Aviso de permissão.** O painel só lê as sessões (`get_session`) com a permissão do app, uma chamada por vez. Se faltar permissão, o painel e a faixa avisam em vez de pedir de novo a cada atualização.
 - **Jira com o seu ok.** O painel avisa quando uma issue deve mudar de estado e só a move depois do seu clique.
 
-A skill `change-orchestrator`, que vem junto, ensina a sessão coordenadora a seguir o flow: ela pergunta ao mod qual é o próximo passo em vez de decidir sozinha.
+A skill `change-orchestrator`, que vem junto, ensina a sessão coordenadora a seguir o flow: ela pergunta ao mod qual é o próximo passo em vez de decidir sozinha, e roda cada passo e cada fase num subagente.
 
 ## Requisitos
 

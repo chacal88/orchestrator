@@ -952,7 +952,7 @@ export const renderPane = (
     gateViews(
       phase.gates,
       phase.id,
-      phase.session === undefined ? (view.self?.gates ?? NO_CHECK) : (phase.card?.gates ?? NO_CHECK),
+      phase.session === undefined && phase.card === undefined ? (view.self?.gates ?? NO_CHECK) : (phase.card?.gates ?? NO_CHECK),
       skips,
     )
 
