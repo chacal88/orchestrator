@@ -31,18 +31,26 @@ const PACKAGE_SCRIPT =
 /** A turbo task, alone or among others: `pnpm turbo lint --filter=api`, `npx turbo run build test`. */
 const TURBO_TASK = String.raw`\bturbo\s+(run\s+)?([\w@][\w:#@/.-]*\s+)*?`
 
-const REVIEWER = /adr-reviewer|spec-reviewer|reviewer-architecture|reviewer-quality/
+/** The review agents whose verdict proves the `regras` gate: the kit's and this plugin's own. */
+export const REVIEWER = /adr-reviewer|spec-reviewer|reviewer-architecture|reviewer-quality|reviewer-security|plan-reviewer|code-reviewer/
+
+/**
+ * A test runner of its own (not a package script): vitest, jest, pytest and the like, Node's and Bun's and
+ * Deno's built-in runners (`node --test`, `node --experimental-strip-types --test`, `bun test`, `deno test`),
+ * and the build tools' test tasks.
+ */
+const TEST_RUNNER =
+  String.raw`\b(vitest|jest|pytest|mocha|go test|cargo test|playwright test|claude plugin test|bun test|deno test|` +
+  String.raw`dotnet test|mvn(w)?\s+(\S+\s+)*test|(\./)?gradle(w)?\s+(\S+\s+)*test|phpunit|rspec|ctest|mix test|swift test|make\s+test)\b|` +
+  String.raw`\b(node|tsx|ts-node)\s+(-{1,2}[\w-]+(=\S+)?\s+)*--test\b`
 
 export const GATES: Readonly<Record<string, GateDef>> = {
   testes: {
     label: 'testes',
-    how: 'a test command (vitest, jest, pytest, npm test, claude plugin test…) exiting 0',
+    how: 'a test command (vitest, jest, pytest, node --test, bun test, npm/pnpm test, claude plugin test…) exiting 0',
     matcher: {
       kind: 'bash',
-      pattern: new RegExp(
-        String.raw`\b(vitest|jest|pytest|mocha|go test|cargo test|playwright test|claude plugin test)\b|` +
-          String.raw`${PACKAGE_SCRIPT}test(:\S+)?\b|${TURBO_TASK}test(:\S+)?\b`,
-      ),
+      pattern: new RegExp(`${TEST_RUNNER}|${PACKAGE_SCRIPT}test(:\\S+)?\\b|${TURBO_TASK}test(:\\S+)?\\b`),
     },
   },
   lint: {
@@ -73,7 +81,7 @@ export const GATES: Readonly<Record<string, GateDef>> = {
   },
   regras: {
     label: 'regras',
-    how: 'a rules review (adr-reviewer, spec-reviewer, reviewer-architecture or reviewer-quality agent) approving',
+    how: 'a rules review (adr-reviewer, spec-reviewer, reviewer-architecture, reviewer-quality, plan-reviewer or code-reviewer agent) approving, run in the foreground so its verdict is the result',
     matcher: {
       kind: 'tool',
       matches: (tool, input) => tool === 'Agent' && typeof input.subagent_type === 'string' && REVIEWER.test(input.subagent_type),

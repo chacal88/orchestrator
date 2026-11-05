@@ -5,6 +5,7 @@ import {
   applyOutcome,
   automaticOutcome,
   describeFlow,
+  modelAlias,
   dropPending,
   endFlow,
   flowView,
@@ -165,28 +166,37 @@ describe('the engine', () => {
     expect(ok(ownerPress(third, 'planejar', 'encerrar', 20)).state.status).toBe('aborted')
   })
 
-  test('a session step tells the coordination to open a session for it, never to do it there', () => {
+  test('a session step runs as a named subagent of the coordination, never as an app session nor in the coordination', () => {
     const text = describeFlow(start(rapido))
-    expect(text).toMatch(/start_session/)
-    expect(text).toMatch(/"user_asked"/)
-    expect(text).toMatch(/do not do the step in this session/)
-    expect(text).toMatch(/user_asked" with wake_when_done/)
-    // a refused start is kept for the owner's single press, never proposed as a card
-    expect(text).toMatch(/action "pending"/)
-    expect(text).toMatch(/Abrir as N sessões pendentes/)
-    expect(text).not.toMatch(/own_initiative|as a card/)
-    expect(text).toMatch(/agent, model and effort/)
-    expect(text).not.toMatch(/Do the step/)
+    expect(text).toMatch(/the Agent tool with subagent_type "orchestrator:planner", name "passo-planejar"/)
+    expect(text).toMatch(/model "opus", effort "high"/)
+    expect(text).toMatch(/never as a session of the app and never yourself/)
+    // no session to open, so nothing waits on the owner's press or typing
+    expect(text).toMatch(/needs no press of the owner/)
+    expect(text).not.toMatch(/start_session|user_asked|action "pending"|Abrir as N sessões pendentes|own_initiative/)
   })
 
-  test('the loop step says one session per phase', () => {
+  test('the loop step runs each phase as a background subagent in its own worktree, named fase-<id>', () => {
     const atExecutar = walk(start(rapido), [
       ['planejar', 'pronto', 'session'],
       ['validar', 'passou', 'automatic'],
     ])
     expect(atExecutar.current).toBe('executar')
-    expect(describeFlow(atExecutar)).toMatch(/one session per phase/)
-    expect(describeFlow(atExecutar)).toMatch(/action "pending"/)
+    const text = describeFlow(atExecutar)
+    expect(text).toMatch(/name "fase-<id>"/)
+    expect(text).toMatch(/isolation "worktree" and run_in_background true/)
+    expect(text).toMatch(/at most 3 at once/)
+    expect(text).toMatch(/name "revisao-fase-<id>"/)
+    expect(text).toMatch(/merge its worktree branch into this checkout/)
+    expect(text).not.toMatch(/start_session|action "pending"/)
+  })
+
+  test('modelAlias reads the Agent tool alias out of a model id', () => {
+    expect(modelAlias('claude-opus-5-5')).toBe('opus')
+    expect(modelAlias('claude-sonnet-5-5')).toBe('sonnet')
+    expect(modelAlias('claude-haiku-5-5')).toBe('haiku')
+    expect(modelAlias(undefined)).toBeUndefined()
+    expect(modelAlias('gpt-x')).toBeUndefined()
   })
 
   test('QA asking for changes goes back to the phases and forgets what came after', () => {

@@ -5,7 +5,7 @@ import { inPlan } from './model'
 export type Seen = { running: boolean; activity?: string; told?: string }
 
 /**
- * The children whose end of turn wakes the coordination: not archived, not the coordination itself, and
+ * The children whose end of turn wakes the coordination: sessions (never a subagent), not archived, not the coordination itself, and
  * kept in the current flow's `sessions` or tied to a phase of its plan. The children of an earlier change
  * (`earlier`, or another flow's `sessions`) never count, even when the plan names them.
  */
@@ -18,7 +18,8 @@ export const eligibleChildren = <R extends SessionRow>(
   const own = new Set(flow.sessions ?? [])
   const excluded = new Set(flow.excluded ?? [])
   return children.filter(
-    row => !row.isArchived && row.sessionId !== self && !excluded.has(row.sessionId) && (own.has(row.sessionId) || inPlan(run, row)),
+    // a phase subagent is no session: the engine itself wakes the coordination when it ends
+    row => row.agent !== true && !row.isArchived && row.sessionId !== self && !excluded.has(row.sessionId) && (own.has(row.sessionId) || inPlan(run, row)),
   )
 }
 
